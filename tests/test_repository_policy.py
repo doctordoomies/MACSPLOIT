@@ -17,6 +17,15 @@ spec = importlib.util.spec_from_file_location("audit", ROOT / "scripts/check_rep
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
 
+# Rejection-only fixture. This repository identity must never be approved.
+FORMER_REPOSITORY = "Zyrencodes/MACSPLOIT"
+CANONICAL_REMOTES = {
+    "https://github.com/doctordoomies/MACSPLOIT.git",
+    "https://github.com/doctordoomies/MACSPLOIT",
+    "git@github.com:doctordoomies/MACSPLOIT.git",
+    "ssh://git@github.com/doctordoomies/MACSPLOIT.git",
+}
+
 
 class RepositoryPolicyTests(unittest.TestCase):
     def setUp(self):
@@ -136,16 +145,61 @@ class RepositoryPolicyTests(unittest.TestCase):
             with self.subTest(category=index):
                 self.assertTrue(audit.content_issues(value.encode()))
 
+    def test_only_canonical_owner_is_approved(self):
+        self.assertEqual(audit.EXPECTED_REPOSITORY, "doctordoomies/MACSPLOIT")
+        self.assertEqual(audit.ALLOWED_REMOTES, CANONICAL_REMOTES)
+
     def test_private_destination_passes(self):
-        metadata = dict(nameWithOwner=audit.EXPECTED_REPOSITORY,
+        metadata = dict(nameWithOwner="doctordoomies/MACSPLOIT",
                         isPrivate=True, visibility="PRIVATE")
-        with patch.object(audit, "run", return_value=json.dumps(metadata).encode()):
-            audit.verify_private_remote(f"https://github.com/{audit.EXPECTED_REPOSITORY}.git")
+        for remote in sorted(CANONICAL_REMOTES):
+            with self.subTest(remote=remote):
+                with patch.object(audit, "run", return_value=json.dumps(metadata).encode()) as query:
+                    audit.verify_private_remote(remote)
+                    query.assert_called_once_with(
+                        "gh", "repo", "view", "doctordoomies/MACSPLOIT",
+                        "--json", "nameWithOwner,isPrivate,visibility")
+
+    def test_former_owner_is_rejected_before_redirect_or_metadata_lookup(self):
+        # Even valid canonical metadata must not allow an old-owner remote.
+        metadata = dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                        isPrivate=True, visibility="PRIVATE")
+        for repository in (FORMER_REPOSITORY, FORMER_REPOSITORY.lower()):
+            for remote in (
+                f"https://github.com/{repository}.git",
+                f"https://github.com/{repository}",
+                f"git@github.com:{repository}.git",
+                f"ssh://git@github.com/{repository}.git",
+            ):
+                with self.subTest(remote=remote):
+                    with patch.object(audit, "run", return_value=json.dumps(metadata).encode()) as query:
+                        with self.assertRaisesRegex(RuntimeError, "not the approved"):
+                            audit.verify_private_remote(remote)
+                        query.assert_not_called()
+
+    def test_pre_push_hook_rejects_former_owner(self):
+        # Exercise the actual tracked hook without performing a push or network query.
+        (self.repo / "scripts").mkdir()
+        shutil.copyfile(ROOT / "scripts/check_repository.py",
+                        self.repo / "scripts/check_repository.py")
+        result = subprocess.run(
+            [str(ROOT / ".githooks/pre-push"), "origin",
+             f"https://github.com/{FORMER_REPOSITORY}.git"],
+            cwd=self.repo, env=self.env, input="", capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not the approved MACSPLOIT repository", result.stderr)
 
     def test_public_wrong_and_unverifiable_destinations_fail(self):
-        remote = f"https://github.com/{audit.EXPECTED_REPOSITORY}.git"
-        for metadata in [dict(nameWithOwner=audit.EXPECTED_REPOSITORY,
+        remote = "https://github.com/doctordoomies/MACSPLOIT.git"
+        for metadata in [dict(nameWithOwner="doctordoomies/MACSPLOIT",
                               isPrivate=False, visibility="PUBLIC"), {},
+                         dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                              isPrivate=True, visibility="PUBLIC"),
+                         dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                              isPrivate=False, visibility="PRIVATE"),
+                         dict(nameWithOwner=FORMER_REPOSITORY,
+                              isPrivate=True, visibility="PRIVATE"),
                          dict(nameWithOwner="unexpected/repository",
                               isPrivate=True, visibility="PRIVATE")]:
             with patch.object(audit, "run", return_value=json.dumps(metadata).encode()):

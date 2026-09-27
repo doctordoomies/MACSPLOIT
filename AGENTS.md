@@ -2,8 +2,10 @@
 
 ## Repository controls
 
-- Keep `Zyrencodes/MACSPLOIT` PRIVATE. Never make it public without an explicit
+- Keep `doctordoomies/MACSPLOIT` PRIVATE. Never make it public without an explicit
   subsequent instruction from the owner.
+- The canonical GitHub username is `doctordoomies`; the product is `MACSPLOIT`.
+  Do not change the repository owner unless explicitly instructed by the owner.
 - Do not add collaborators, enable GitHub Pages, or publish releases without
   explicit owner approval.
 - Before every push, inspect all outgoing commits and run the repository audit.

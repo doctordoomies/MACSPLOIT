@@ -3,6 +3,9 @@
 **Active private development.** This repository must remain private unless its
 owner explicitly authorizes a visibility change. It is not a published product.
 
+Canonical repository: [doctordoomies/MACSPLOIT](https://github.com/doctordoomies/MACSPLOIT).
+The local `origin` must be `https://github.com/doctordoomies/MACSPLOIT.git`.
+
 MACSPLOIT is a native macOS modular cybersecurity workbench for authorized
 security research. Its goal is to connect targets, discoveries, findings, and
 evidence in one workspace and asset graph. External tools are independent

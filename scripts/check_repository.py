@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-EXPECTED_REPOSITORY = "Zyrencodes/MACSPLOIT"
+EXPECTED_REPOSITORY = "doctordoomies/MACSPLOIT"
 MAX_BLOB_BYTES = 2 * 1024 * 1024
 ALLOWED_REMOTES = {
     f"https://github.com/{EXPECTED_REPOSITORY}.git",

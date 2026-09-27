@@ -1,10 +1,17 @@
 # Private repository policy
 
-The sole approved remote is `https://github.com/Zyrencodes/MACSPLOIT.git` (or its
+The sole approved remote is `https://github.com/doctordoomies/MACSPLOIT.git` (or its
 equivalent GitHub SSH URL). Visibility must remain **PRIVATE**. Publishing a
 release, enabling Pages, adding collaborators, or changing visibility requires
 the owner's explicit approval. No public license or distribution grant has been
 selected.
+
+The canonical GitHub owner is `doctordoomies`. Both the supplied remote URL and
+GitHub's repository metadata must identify `doctordoomies/MACSPLOIT`. Every other
+owner is rejected, including former-owner URLs that GitHub may redirect. Keep
+the identity pinned in the audit and its tests; changing ownership requires an
+explicit instruction from the owner. Rejection-only test fixtures do not grant
+approval to the destinations they exercise.
 
 ## Data that never belongs in Git
 
