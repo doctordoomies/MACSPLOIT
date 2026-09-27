@@ -1,0 +1,359 @@
+use macsploit_core::{
+    assets::{AssetType, Discovery, Id, RelationshipType},
+    database::Store,
+    events::{ChainStatus, TaskStatus},
+    orchestration::{Engine, Snapshot},
+};
+use serde_json::json;
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
+fn setup() -> (tempfile::TempDir, Engine, Id, Id) {
+    let temp = tempfile::tempdir().unwrap();
+    let engine = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
+    let workspace = engine
+        .store
+        .create_workspace(
+            "Test Assessment",
+            &[
+                "example.test".into(),
+                "*.example.test".into(),
+                "192.0.2.0/24".into(),
+            ],
+        )
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "example.test")
+        .unwrap();
+    (temp, engine, workspace.id, target.id)
+}
+
+fn wait(engine: &Engine, workspace: Id) -> Snapshot {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !engine.idle() {
+        assert!(Instant::now() < deadline, "chain timed out");
+        thread::sleep(Duration::from_millis(5));
+    }
+    engine.store.snapshot(workspace).unwrap()
+}
+
+#[test]
+fn complete_vertical_slice_persists_graph_events_evidence_and_restart() {
+    let (temp, engine, workspace, target) = setup();
+    let cursor = engine.store.snapshot(workspace).unwrap().last_sequence;
+    let chain = engine.start(workspace, target).unwrap();
+    let snapshot = wait(&engine, workspace);
+    assert_eq!(snapshot.chains[0].id, chain.id);
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
+    assert_eq!(snapshot.assets.len(), 11);
+    assert_eq!(snapshot.relationships.len(), 10);
+    let identity = |id| {
+        snapshot
+            .assets
+            .iter()
+            .find(|a| a.id == id)
+            .unwrap()
+            .canonical_identity
+            .as_str()
+    };
+    let actual: std::collections::BTreeSet<_> = snapshot
+        .relationships
+        .iter()
+        .map(|edge| {
+            (
+                identity(edge.source_asset_id),
+                identity(edge.destination_asset_id),
+                macsploit_core::database::encoded(&edge.relationship_type),
+            )
+        })
+        .collect();
+    let expected = [
+        ("example.test", "api.example.test", "has_subdomain"),
+        ("example.test", "dev.example.test", "has_subdomain"),
+        ("api.example.test", "192.0.2.10", "resolves_to"),
+        ("dev.example.test", "192.0.2.11", "resolves_to"),
+        ("192.0.2.10", "192.0.2.10/tcp/443", "exposes"),
+        ("192.0.2.11", "192.0.2.11/tcp/22", "exposes"),
+        ("192.0.2.11", "192.0.2.11/tcp/443", "exposes"),
+        ("192.0.2.10/tcp/443", "192.0.2.10/tcp/443/https", "serves"),
+        ("192.0.2.11/tcp/22", "192.0.2.11/tcp/22/ssh", "serves"),
+        ("192.0.2.11/tcp/443", "192.0.2.11/tcp/443/https", "serves"),
+    ]
+    .into_iter()
+    .map(|(source, destination, kind)| (source, destination, kind.to_owned()))
+    .collect();
+    assert_eq!(actual, expected);
+    assert_eq!(snapshot.evidence.len(), 3);
+    assert_eq!(snapshot.provider_runs.len(), 3);
+    assert!(snapshot
+        .tasks
+        .iter()
+        .all(|t| t.status == TaskStatus::Completed));
+    assert!(snapshot
+        .stages
+        .iter()
+        .all(|s| s.status == TaskStatus::Completed));
+    assert!(snapshot
+        .provider_runs
+        .iter()
+        .all(|r| r.raw_output_reference.is_some() && r.exit_status == Some(0)));
+    for evidence in &snapshot.evidence {
+        let raw = engine.store.read_evidence(workspace, evidence.id).unwrap();
+        assert_eq!(
+            macsploit_core::evidence::digest(raw.as_bytes()),
+            evidence.sha256
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["synthetic"],
+            true
+        );
+    }
+    let replay = engine.store.events_after(workspace, cursor).unwrap();
+    assert!(replay.len() > 30);
+    assert!(replay.iter().all(|e| e.sequence > cursor));
+    assert!(replay.windows(2).all(|w| w[0].sequence < w[1].sequence));
+    drop(engine);
+    let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
+    let persisted = reopened.store.snapshot(workspace).unwrap();
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap(),
+        serde_json::to_value(&persisted).unwrap()
+    );
+}
+
+#[test]
+fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
+    let (_temp, engine, workspace, target) = setup();
+    engine.start(workspace, target).unwrap();
+    let first = wait(&engine, workspace);
+    let api = first
+        .assets
+        .iter()
+        .find(|a| a.canonical_identity == "api.example.test")
+        .unwrap();
+    assert_eq!(
+        first
+            .observations
+            .iter()
+            .filter(|o| o.asset_id == api.id)
+            .count(),
+        3
+    );
+    engine.start(workspace, target).unwrap();
+    let second = wait(&engine, workspace);
+    assert_eq!(second.assets.len(), 11);
+    assert_eq!(second.relationships.len(), 10);
+    assert_eq!(
+        second
+            .observations
+            .iter()
+            .filter(|o| o.asset_id == api.id)
+            .count(),
+        6
+    );
+    assert_eq!(second.evidence.len(), 6);
+}
+
+#[test]
+fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
+    let (_temp, engine, _, _) = setup();
+    let denied = engine.store.create_workspace("No Scope", &[]).unwrap();
+    let target = engine.store.add_target(denied.id, "example.test").unwrap();
+    assert_eq!(
+        engine.start(denied.id, target.id).unwrap_err().code,
+        "ScopeViolation"
+    );
+    let limited = engine
+        .store
+        .create_workspace("Root only", &["example.test".into()])
+        .unwrap();
+    let target = engine.store.add_target(limited.id, "example.test").unwrap();
+    engine.start(limited.id, target.id).unwrap();
+    let snapshot = wait(&engine, limited.id);
+    assert_eq!(snapshot.assets.len(), 3); // passive out-of-scope subdomains remain visible
+    assert!(snapshot
+        .assets
+        .iter()
+        .all(|a| a.asset_type != AssetType::IPAddress));
+    assert!(snapshot
+        .assets
+        .iter()
+        .filter(|a| a.asset_type == AssetType::Subdomain)
+        .all(|a| a.metadata["in_scope"] == false));
+}
+
+#[test]
+fn evidence_tampering_and_path_traversal_are_rejected() {
+    let (_temp, engine, workspace, target) = setup();
+    engine.start(workspace, target).unwrap();
+    let snapshot = wait(&engine, workspace);
+    let evidence = &snapshot.evidence[0];
+    std::fs::write(
+        engine
+            .store
+            .directory(workspace)
+            .join(&evidence.relative_path),
+        "changed",
+    )
+    .unwrap();
+    assert_eq!(
+        engine
+            .store
+            .read_evidence(workspace, evidence.id)
+            .unwrap_err()
+            .code,
+        "EvidenceIntegrityError"
+    );
+    let conn = engine.store.connect(workspace).unwrap();
+    conn.execute(
+        "UPDATE evidence SET relative_path='../outside' WHERE id=?1",
+        [evidence.id.to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        engine
+            .store
+            .read_evidence(workspace, evidence.id)
+            .unwrap_err()
+            .code,
+        "StorageError"
+    );
+}
+
+#[test]
+fn discovery_transaction_rolls_back_asset_provenance_and_events() {
+    let (_temp, engine, workspace, target) = setup();
+    engine.start(workspace, target).unwrap();
+    let before = wait(&engine, workspace);
+    let discoveries = vec![
+        Discovery {
+            asset_type: AssetType::Subdomain,
+            value: "new.example.test".into(),
+            source: Some("example.test".into()),
+            relationship: Some(RelationshipType::HasSubdomain),
+            metadata: json!({}),
+        },
+        Discovery {
+            asset_type: AssetType::Subdomain,
+            value: "broken.example.test".into(),
+            source: Some("missing.test".into()),
+            relationship: Some(RelationshipType::HasSubdomain),
+            metadata: json!({}),
+        },
+    ];
+    assert!(engine
+        .store
+        .persist_discoveries(
+            workspace,
+            before.provider_runs[0].id,
+            before.evidence[0].id,
+            "SyntheticDiscoveryProvider",
+            &discoveries
+        )
+        .is_err());
+    let after = engine.store.snapshot(workspace).unwrap();
+    assert_eq!(
+        serde_json::to_value(before).unwrap(),
+        serde_json::to_value(after).unwrap()
+    );
+}
+
+#[test]
+fn cancellation_is_durable_and_global_concurrency_is_bounded() {
+    let temp = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        Store::open(temp.path()).unwrap(),
+        Duration::from_millis(100),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Cancel", &["example.test".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "example.test")
+        .unwrap();
+    let run = engine.start(workspace.id, target.id).unwrap();
+    assert_eq!(
+        engine.start(workspace.id, target.id).unwrap_err().code,
+        "CoreBusy"
+    );
+    engine.cancel(workspace.id, run.id).unwrap();
+    let snapshot = wait(&engine, workspace.id);
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Cancelled);
+    assert!(snapshot
+        .tasks
+        .iter()
+        .all(|t| t.status == TaskStatus::Cancelled));
+    let count: i64 = engine
+        .store
+        .connect(workspace.id)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action='ReconCancelled'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn workspace_isolation_and_exclusive_helper_ownership() {
+    let (temp, engine, workspace, target) = setup();
+    assert!(Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).is_err());
+    let other = engine
+        .store
+        .create_workspace("Other", &["example.test".into()])
+        .unwrap();
+    assert_eq!(
+        engine.start(other.id, target).unwrap_err().code,
+        "InvalidTarget"
+    );
+    engine.start(workspace, target).unwrap();
+    let snapshot = wait(&engine, workspace);
+    assert!(engine
+        .store
+        .read_evidence(other.id, snapshot.evidence[0].id)
+        .is_err());
+    let conn = engine.store.connect(other.id).unwrap();
+    assert!(conn
+        .execute(
+            "INSERT INTO asset_relationships VALUES(?1,?2,?3,?3,'resolves_to','now')",
+            rusqlite::params![
+                Id::new_v4().to_string(),
+                other.id.to_string(),
+                snapshot.assets[0].id.to_string()
+            ]
+        )
+        .is_err());
+}
+
+#[test]
+fn interrupted_run_is_recovered_without_rescanning() {
+    let (temp, engine, workspace, target) = setup();
+    engine.start(workspace, target).unwrap();
+    let snapshot = wait(&engine, workspace);
+    let conn = engine.store.connect(workspace).unwrap();
+    conn.execute("UPDATE chain_runs SET status='RUNNING'", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE chain_stages SET status='RUNNING' WHERE position=0",
+        [],
+    )
+    .unwrap();
+    conn.execute("UPDATE tasks SET status='RUNNING'", [])
+        .unwrap();
+    drop(conn);
+    drop(engine);
+    let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
+    let after = reopened.store.snapshot(workspace).unwrap();
+    assert_eq!(after.chains[0].status, ChainStatus::Failed);
+    assert_eq!(after.chains[0].error_code.as_deref(), Some("Interrupted"));
+    assert_eq!(after.assets.len(), snapshot.assets.len());
+    assert!(reopened.idle());
+}
