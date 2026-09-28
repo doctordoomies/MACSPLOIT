@@ -19,11 +19,11 @@ in the Rust/Swift totals; do not add it again.
 
 ### Independent re-verification (2026-09-27, second session)
 
-A follow-up session re-ran the checks that do not require the Rust toolchain
-(which was not installed on that machine) and confirmed the results below. The
-Rust unit/integration suites were **not re-run** there; instead the previously
-compiled `target/debug/macsploit-core` binary was driven directly over the v1
-stdin/stdout protocol.
+A follow-up session re-ran the full suite and confirmed the results below. The
+Rust toolchain was initially absent and was installed via rustup (stable) during
+the session; before that, the previously compiled `target/debug/macsploit-core`
+binary was also driven directly over the v1 stdin/stdout protocol as an
+independent cross-check.
 
 | Check | Result | Detail |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ stdin/stdout protocol.
 | Swift tests | PASS | 8/8 across `ClientTests`, `WorkspaceModelTests`, `BridgeIntegrationTests`, including the live `testSwiftRustSQLiteProviderEventsAndRestart` bridge/SQLite/provider/restart test. |
 | Repository policy tests | PASS | 15/15 (`python3 -m unittest discover -s tests`). |
 | Repository all-history audit | PASS | `check_repository.py --all-history`: 78 file versions, no secrets, canonical owner `doctordoomies`. |
-| Rust unit/integration tests | NOT RE-RUN | Rust toolchain absent this session; compiled core binary exercised instead (see slice check above). |
+| Rust unit/integration tests | PASS | `cargo test --locked --workspace`: 20 unit + 8 integration = **28 passed, 0 failed** (rustup stable installed during the session). |
 | On-screen GUI walkthrough (quit/reopen visual) | BLOCKED | No macOS desktop UI-automation tool available in that session; persistence proven only through the automated/core paths above, which do not substitute for the visual acceptance check. |
 
 A focused code review in the same session found no Phase 0 defects: the only
