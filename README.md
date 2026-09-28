@@ -1,77 +1,76 @@
 # MACSPLOIT
 
-**Active private development.** This repository must remain private unless its
-owner explicitly authorizes a visibility change. It is not a published product.
-
-Canonical repository: [doctordoomies/MACSPLOIT](https://github.com/doctordoomies/MACSPLOIT).
-The local `origin` must be `https://github.com/doctordoomies/MACSPLOIT.git`.
+**Active private development.** The canonical repository is
+[doctordoomies/MACSPLOIT](https://github.com/doctordoomies/MACSPLOIT) and must remain
+PRIVATE. Origin: `https://github.com/doctordoomies/MACSPLOIT.git`.
 
 MACSPLOIT is a native macOS modular cybersecurity workbench for authorized
-security research. Its goal is to connect targets, discoveries, findings, and
-evidence in one workspace and asset graph. External tools are independent
-providers; their output does not define the application's central data model.
+security research. Targets, discoveries, relationships, and evidence belong to
+an independent workspace model; providers supply observations about that model.
 
 ## Current status
 
-Repository setup is complete: monorepo boundaries, foundational design notes,
-data-handling rules, and local commit/push checks. **Application implementation
-has not started.** There is no runnable macOS app, Rust package, scanner
-integration, or database migration yet. The documents describe planned behavior,
-not features that already work.
+**IMPLEMENTED — Phase 0 foundation:** a runnable SwiftUI application communicates
+with a bundled Rust helper, persists workspaces in SQLite, and runs an entirely
+offline synthetic Recon Chain. `example.test` produces two subdomains, two
+documentation IP addresses, three ports, and three services, with provenance,
+SHA-256 evidence, durable events, and replay. No scanner is installed or invoked.
 
-## Planned architecture
+The macOS bundle builds and launches. Rust and Swift integration tests verify
+execution and persisted state after restarting the core. Workspace creation was
+also verified through the UI. The remaining on-screen workflow and full GUI
+quit/reopen check are **blocked by the native UI automation connection**; Phase 0
+acceptance remains open until those checks are completed. See
+[verification](docs/phase-0-verification.md) for precise results and limitations.
 
-- `apps/macos/`: SwiftUI application and native macOS navigation.
-- `core/`: Rust orchestration, target classification, asset graph, provider
-  supervision, events, workspace persistence, findings, and evidence references.
-- `providers/`: independent adapters with capability and risk metadata.
-- `schemas/`: versioned interchange contracts and schema specifications.
-- `fixtures/`: synthetic, offline provider samples only.
-- `tests/`: integration and repository-policy tests.
-- `scripts/`: development and repository safety tooling.
-- `docs/`: architecture, security, contribution guidance, and roadmap.
+## Build and run
 
-SQLite will store workspace state. Raw results will live in per-workspace
-application storage outside Git. A Recon Chain will select work by asset type,
-capability, scope, and discoveries rather than execute a fixed list of tools.
-
-## Requirements and setup
-
-The repository checks use Git, Python 3.10 or newer, and an authenticated GitHub
-CLI (`gh`) with access to this private repository. No third-party Python
-packages are required.
+Requires macOS, Apple Command Line Tools or Xcode with Swift 6+, Rust 1.90+,
+Git, Python 3.10+, and authenticated GitHub CLI for private pushes. The verified
+machine uses Apple Silicon, macOS 26, Swift 6.3.2, and Rust 1.98.1.
 
 ```sh
 ./scripts/setup-hooks.sh
-python3 -m unittest discover -s tests -v
-python3 scripts/check_repository.py --all-history
+./scripts/test.sh
+./scripts/run.sh
 ```
 
-Future application development will require macOS, Xcode with a Swift toolchain,
-and stable Rust. Exact minimum versions and build commands will be established
-and verified with the first implementation slice. Do not install scanner tools
-as part of repository setup.
+`run.sh` builds an ad-hoc signed `build/MACSPLOIT.app` and opens it. Dependencies
+must already be available for an offline build; the application itself performs
+no network requests. Scripts never install toolchains or scanner software.
 
-## Development and providers
+Create **Test Assessment**, keep the suggested synthetic scope, add
+`example.test`, and select **Recon → Run**. Inspect **Assets**, **Evidence**, and
+**Activity**. Quit and reopen the app to check the saved workspace. Runtime data
+lives in `~/Library/Application Support/MACSPLOIT/`, outside this checkout.
 
-Read [development](docs/development.md), [architecture](docs/architecture.md),
-[assets](docs/assets.md), [provider design](docs/providers.md), and
-[Recon Chains](docs/recon-chain.md). The first implementation will connect
-SwiftUI, Rust, SQLite, and one synthetic provider in an offline vertical slice.
-Only after that works will Subfinder, Nmap, and HTTPX be introduced incrementally.
+## Architecture
 
-## Privacy and authorization
+- `apps/macos/`: native SwiftUI app, typed core client, view models, and tests.
+- `core/`: one Rust crate owning classification, scope, assets, orchestration,
+  synthetic provider, evidence, events, migrations, and SQLite persistence.
+- `providers/`: boundary reserved for later external adapters.
+- `schemas/`: internal protocol documentation; no public plugin ABI.
+- `fixtures/`: synthetic offline examples only.
+- `tests/`: repository policy tests; core and app integration tests live beside code.
+- `scripts/`: verified build/test/launch commands and repository safeguards.
 
-Use MACSPLOIT only on systems you own or are explicitly authorized to assess.
-Active work requires an explicit scope; discovered third-party assets do not
-automatically become scan targets. Future validation/lab features remain separate
-from normal reconnaissance.
+Read the [boundary ADR](docs/adr/0001-swift-rust-boundary.md),
+[architecture](docs/architecture.md), [development guide](docs/development.md),
+[asset model](docs/assets.md), [providers](docs/providers.md), and
+[Recon Chains](docs/recon-chain.md).
 
-Never commit API keys, passwords, tokens, cookies, credentials, private keys,
-Keychain exports, `.env` files, real assessment data, or sensitive scanner output.
-Runtime data belongs outside the checkout. See the
-[security model](docs/security-model.md) and [repository policy](docs/repository-policy.md).
-Local hooks are a defense in depth and do not replace review of every commit.
+## Scope and privacy
 
-The [roadmap](docs/roadmap.md) records the planned phases. Collaborators, GitHub
-Pages, releases, and visibility changes require the owner's explicit approval.
+**PLANNED — Phase 1:** incremental real providers after foundation acceptance,
+starting with Subfinder fixtures and supervised execution, then Nmap and HTTPX.
+**FUTURE:** graph visualization, findings, reporting, tool management, OSINT,
+validation/lab, hardware, distribution, and publishing. See the unchanged phase
+sequence in the [roadmap](docs/roadmap.md).
+
+Use only systems you own or are authorized to assess. Discovered assets do not
+automatically become active targets. Never commit credentials, private keys,
+`.env` files, Keychain exports, real assessments, databases, or sensitive captures.
+See [security](docs/security-model.md) and [repository policy](docs/repository-policy.md).
+Every push must pass the existing history audit and exact private-destination
+check. Collaborators, Pages, releases, and visibility changes require owner approval.

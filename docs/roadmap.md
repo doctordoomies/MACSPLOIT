@@ -1,6 +1,9 @@
 # Roadmap
 
-Only repository setup is complete. All application phases below are planned.
+Repository setup is complete. Phase 0 code is implemented and its automated
+checks pass; the remaining native UI walkthrough/restart check is blocked by the
+UI automation connection, so final foundation acceptance is pending. Phase 1
+and later phases remain planned. See [verification](phase-0-verification.md).
 
 | Phase | Scope | Exit condition |
 | --- | --- | --- |
@@ -19,3 +22,10 @@ Do not add an LLM dependency, dozens of providers, broad cloud enumeration,
 traffic interception, wireless attacks, or a public plugin ABI during Phase 0.
 Distribution, signing, notarization, and final branding come later; publishing
 releases or changing repository visibility still requires explicit approval.
+
+## Next starting point
+
+Complete the blocked Phase 0 GUI acceptance check, then begin Phase 1 with a
+Subfinder structured-output parser and synthetic fixtures. Add supervised,
+explicitly authorized execution only after timeout, cancellation, output bounds,
+and scope tests pass. Introduce Nmap and HTTPX independently afterward.

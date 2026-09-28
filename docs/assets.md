@@ -1,55 +1,68 @@
-# Asset and persistence design
+# Assets and persistence
 
-Status: design only; executable schemas and migrations follow in Phase 0.
+Status: **IMPLEMENTED** initial domain, graph, provenance, and migration 001.
 
-Assets are the central model. Scanner runs provide observations about them.
-An asset has an opaque ID, workspace ID, type, canonical identity, display value,
-typed attributes, first/last observation times, and provenance references.
-Uniqueness is scoped to `(workspace, type, canonical identity)`; normalization
-must not collapse distinct endpoints or erase useful evidence.
+## Identity and normalization
 
-Initial types: Domain, Subdomain, Hostname, DNSRecord, IPAddress, CIDR, Port,
-Service, Website, URL, Endpoint, Technology, and Certificate. Findings and evidence
-have their own records and graph references. Person/identity, repository/source,
-wireless, Bluetooth, SDR, and hardware types are later extensions.
+Workspace, target, asset, relationship, run, task, event, and evidence IDs are
+opaque UUIDs. Assets are unique by `(workspace_id, asset_type, canonical_identity)`.
+They store a display value, JSON metadata, and first/last seen times. Repeat
+observations update last-seen without changing identity or deleting provenance.
 
-Relationships have an ID, workspace ID, source and destination asset IDs, typed
-relation, and provenance. Initial relations include `has_subdomain`, `resolves_to`,
-`exposes`, `serves`, `has_endpoint`, and `uses_technology`. Each observation links
-to its source asset, provider run, timestamp, confidence, and evidence where
-available. Multiple sources support one normalized relationship without losing
-their individual observations.
+Implemented asset types: Domain, Subdomain, Hostname, IPAddress, Port, Service,
+Website, URL, Endpoint, Technology, Certificate. Synthetic recon populates Domain, Subdomain, IPAddress, Port, and Service.
+Target classification recognizes domains, HTTP(S) URLs, IPv4/IPv6, CIDRs,
+hostnames, @usernames, and email addresses. PhoneNumber, Repository, and Unknown
+are reserved enum values. CIDR and identity targets currently have no asset nodes
+or providers; domain, hostname, IP, and URL input creates an initial analyst asset.
 
-Normalize IPv4 and IPv6 using address libraries; retain network prefix lengths.
-Use maintained URL, IDNA, Public Suffix List, and phone-parsing implementations
-when those target classes are introduced. Never infer registrable domains by
-splitting the final two labels. Version normalization decisions when identity
-semantics change.
+The URL library supplies URL/IDNA normalization; std IP types and ipnet normalize
+addresses and network prefixes. Domain case and one trailing dot are normalized.
+URLs retain path/query and drop fragments; embedded credentials are rejected.
+Username/email local-part case is retained. No public-suffix inference occurs.
+Port and service identities include address, transport, and port so different
+hosts do not collapse into a single node. Future external adapters need stronger
+typed port/service validation before accepting untrusted output of those types.
 
-## Proposed relational boundaries
+## Relationships and provenance
 
-| Entity | Responsibility |
+Relations: `has_subdomain`, `resolves_to`, `exposes`, `serves`, `has_endpoint`, and
+`uses_technology`. Each relation is unique by workspace, endpoints, and type.
+Assets and edges retain separate observations linked to provider run, evidence,
+source asset, timestamp, and confidence. Original observed values survive
+canonicalization: three reports of `api.example.test` (including uppercase)
+produce one asset and three observations per run.
+
+Raw evidence lives outside SQLite in UUID-named JSON files. The database stores
+its media type, byte count, SHA-256, provider/run, target, timestamp, and relative
+path. Evidence reads check containment and hash integrity. The asset inspector
+shows incoming/outgoing relationships, observation source/value/time,
+and links to evidence. Relationship observations remain available in storage;
+a dedicated edge inspector is future work.
+
+## Migration 001
+
+| Tables | Responsibility |
 | --- | --- |
-| workspaces / scope_entries | Independent assessment identity and allowed boundaries |
-| targets | Analyst inputs, classified type, and normalized asset link |
-| assets / asset_relationships | Canonical graph nodes and edges |
-| observations | Provenance linking entities to runs and evidence |
-| providers / provider_runs | Provider identity/version and reproducible execution metadata |
-| tasks / chain_runs / chain_stages | Durable execution state and dependencies |
-| findings | Title, description, severity, confidence, asset, status, references, remediation |
-| evidence / finding_evidence | Raw artifacts, integrity hashes, timestamps, associations |
-| notes / reports | Analyst context and export metadata |
-| audit_events | Ordered history of state changes and user approvals |
+| workspaces, scope_entries | Workspace identity and explicit scope |
+| targets | Original/normalized inputs and optional initial asset |
+| assets, asset_relationships | Canonical nodes and edges |
+| observations, relationship_observations | Per-run provenance without deduplication loss |
+| provider_runs | Provider/version, input, timing, status, output, exit status |
+| tasks, chain_runs, chain_stages | Durable execution and stage state |
+| evidence | Protected raw-file metadata and integrity hashes |
+| events | Ordered replayable domain changes |
+| audit_events | Workspace creation, target addition, recon start/cancel |
 
-Use foreign keys and workspace isolation checks. Evidence files are referenced
-by contained workspace paths; do not accept arbitrary absolute paths from tools.
-Evidence provenance must survive asset deduplication.
+Migration handling detects `user_version`, applies version 1 transactionally,
+reopens existing stores, and rejects newer schemas. Foreign keys, workspace
+composite keys, enum checks, JSON validity checks, and uniqueness constraints
+backstop application validation. Discovery writes roll back as a unit on an
+invalid relationship or provenance reference.
 
-Severity is INFO, LOW, MEDIUM, HIGH, or CRITICAL. Confidence is LOW, MEDIUM, HIGH,
-or CONFIRMED. Finding status is NEW, REVIEWING, CONFIRMED, FALSE_POSITIVE, RESOLVED,
-or ACCEPTED_RISK. These are separate dimensions. Correlate duplicate findings
-without dropping provider observations or analyst notes.
-
-Version JSON exports independently of database migrations. The planned export
-contains workspace, targets, assets, relationships, findings, and evidence
-references. Exporting private content requires an explicit user action.
+**PLANNED:** DNSRecord/CIDR graph nodes as real adapters require them, provider
+catalog persistence, typed attribute evolution, and normalization versioning.
+**FUTURE:** findings, notes, reports, exports, identity/repository/hardware models.
+The planned finding dimensions remain severity (INFO through CRITICAL), confidence
+(LOW through CONFIRMED), and review status (NEW, REVIEWING, CONFIRMED,
+FALSE_POSITIVE, RESOLVED, ACCEPTED_RISK); none is implemented as findings yet.

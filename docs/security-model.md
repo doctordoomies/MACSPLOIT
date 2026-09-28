@@ -1,50 +1,67 @@
 # Security model
 
-Status: requirements for implementation, plus active repository safeguards.
+Status: **IMPLEMENTED** repository protections and offline foundation controls;
+external-tool and distribution protections remain planned.
 
-## Repository and sensitive data
+## Repository
 
-The repository is private. The ignore policy, commit audit, push audit, and
-private-destination verification are implemented now. See
-[repository policy](repository-policy.md) for prohibited data and limitations.
-Tests and examples must use synthetic information only.
+`doctordoomies/MACSPLOIT` stays PRIVATE. The ignore policy, staged audit, full-history
+push audit, and exact private-destination check remain unchanged. See
+[repository policy](repository-policy.md). Tests contain invented targets only.
+No runtime database, evidence capture, credentials, environment file, Keychain
+export, or build artifact belongs in Git. Local checks supplement review; they
+cannot prove that arbitrary content contains no secret.
 
-## Application trust boundaries
+## Implemented boundaries
 
-Targets, provider output, remote content, filenames, and tool metadata are
-untrusted. Validate input, use process argument arrays, constrain evidence paths,
-parameterize database operations, bound resource use, and sanitize terminal
-control sequences in the viewer. Preserve protected raw evidence separately.
-Do not allow parsers to write arbitrary files or issue further network requests.
+- The only provider is synthetic; the application has no scanner, DNS lookup,
+  socket, external HTTP request, telemetry, tool installer, or privilege request.
+- Foundation Process launches the bundled helper by path and argument array.
+  The environment is minimal; targets are structured JSON, never shell commands.
+- Rust validates targets and UUIDs, uses parameterized SQL, enforces workspace
+  foreign keys, and writes graph/provenance/events in transactions.
+- Each workspace uses a UUID-derived directory outside Git. Newly created private
+  directories use mode 0700 and evidence files 0600. Files are protected by those
+  directories, not encryption. Existing directory permissions are not repaired.
+- Evidence IDs resolve only to their expected relative paths. Symlinks at checked
+  workspace/evidence boundaries and integrity mismatches are rejected. This is
+  not a hardened defense against a malicious process already running as the user.
+- Scope checks use exact domains, wildcard label boundaries, and IP/CIDR parsing.
+  Out-of-scope discoveries are not dispatched downstream. Active risk classes
+  require explicit authorization; validation/lab execution is disabled.
+- One core owns a storage root at a time. Protocol frames, evidence, assets,
+  targets, run count, and concurrency are bounded. Startup recovers interrupted
+  work as FAILED without rescheduling.
 
-Future API credentials belong in macOS Keychain. Never place them in plaintext
-configuration, command history, source, environment files, logs, or reports.
-Redact sensitive display fields without falsely claiming captured evidence
-contains no secrets. Access, retention, deletion, and export controls must be
-designed alongside workspace persistence.
+## Logs, evidence, and audit
 
-## Scope and authorization
+`logs/application.jsonl` contains helper lifecycle and operation status, excluding
+target values and evidence bodies. Successful event polls are omitted. Logs rotate
+on helper startup above 1 MiB, retaining one previous file; they do not yet have
+continuous rotation. Provider runs and raw output live in workspace storage.
+SQLite `audit_events` records WorkspaceCreated, TargetAdded, ReconStarted, and
+ReconCancelled separately from UI activity events.
 
-Require explicit assessment scope before active scanning. Apply controls again
-when targets resolve, redirect, or produce new assets. Scope, exclusions, impact
-class, concurrency, request limits, and discovery budgets are dispatch inputs.
-Passive-only mode excludes active providers even when a preset contains them.
+Structured errors cross the bridge; storage error messages do not expose raw SQL,
+local paths, or captured content. The evidence viewer intentionally shows complete
+synthetic JSON after Rust verifies its SHA-256. General secret redaction and safe
+rendering of arbitrary scanner output are prerequisites for real providers.
+
+## Planned and future controls
+
+**PLANNED before real execution:** supervise subprocesses with argument arrays,
+output/runtime limits and process-group cancellation; validate parser output;
+recheck scope on addresses/redirects; record exact versions/arguments; show tool
+installation and active execution for explicit approval. Expand authorization
+and audit controls when those actions actually exist.
+
+**FUTURE:** Keychain-backed API credentials, retention/deletion/export controls,
+redacted display versus protected originals, signed/notarized distribution and
+App Sandbox decisions, peer authorization for a persistent service. The development
+app is ad-hoc signed and unsandboxed, runs as the current user, and requires no
+root access. There is no release or App Store distribution in this phase.
 
 Normal reconnaissance must not automatically attempt authentication, execute
-payloads, obtain credentials, persist on systems, or escalate a finding into
-compromise. Future authorized-validation/lab functionality is opt-in and
-architecturally separate. Wireless attacks and hardware payloads are out of
-scope for the initial platform.
-
-## Local execution and permissions
-
-Do not run the whole application as root. Research macOS sandbox and helper
-requirements before choosing a distribution architecture. Request only narrow
-privileges for a specific operation when required. A separate core service, if
-chosen, must restrict access to the intended local user and validate all IPC.
-Tool installation/update/repair must show the proposed action for approval.
-
-Audit records should capture user approvals, scope changes, task dispatch,
-provider versions, findings review, and export actions. Logging itself must not
-leak credentials. Security requirements need executable tests as their features
-are implemented; this design document does not claim runtime enforcement exists.
+payloads, obtain credentials, persist remotely, or escalate findings into
+compromise. Validation/lab functionality stays separate and opt-in. Wireless
+attacks and hardware execution remain outside the initial platform.
