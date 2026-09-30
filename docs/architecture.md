@@ -1,7 +1,8 @@
 # Architecture
 
-Status: **IMPLEMENTED** Phase 0 foundation plus Phase 1A (Subfinder) and Phase 1B
-(native DNS resolution); full on-screen UI acceptance pending.
+Status: **IMPLEMENTED** Phase 0 foundation plus Phase 1A (Subfinder), Phase 1B
+(native DNS resolution), and Phase 1C (Nmap port/service discovery); full on-screen
+UI acceptance pending.
 
 ## Ownership
 
@@ -69,10 +70,22 @@ Full on-screen restart verification remains pending, as recorded in the test rep
 
 ## Providers and DNS decision
 
-Providers implement one Rust trait (metadata/installation/execute/parse) and are
-selected by capability, or pinned per chain stage when a capability has more than
-one provider. Three are registered: the offline synthetic provider, Subfinder (an
-external tool run through the process supervisor), and native DNS.
+Providers implement one Rust trait (metadata/installation/execute/parse, plus an
+optional per-provider timeout) and are selected by capability, or pinned per chain
+stage when a capability has more than one provider. Four are registered: the offline
+synthetic provider, Subfinder (passive external tool), native DNS (built-in), and
+Nmap (active external tool). A pinned provider is trusted to operate on the chain's
+input assets, so provider selection by id is validated on capability only — the
+chain target type is not re-checked (Nmap consumes IPAddress assets while the chain
+target is a Domain).
+
+**Nmap (Phase 1C).** The first ACTIVE provider. It runs the external Nmap tool
+through the process supervisor with a conservative, unprivileged profile
+(`-sT -sV --top-ports 100 -oX -`, no NSE, no root), parses XML with `roxmltree`, and
+produces Port/Service assets with `exposes`/`serves` relationships. It has a longer
+per-provider timeout (120 s) than passive providers; scope is re-checked per IP so an
+out-of-scope resolved address is never scanned. Launching a Recon Chain is the
+analyst's explicit approval for its active stages.
 
 **Native DNS (Phase 1B).** DNS resolution is implemented in Rust with
 `hickory-resolver` (pulling `tokio` for a current-thread runtime) rather than an

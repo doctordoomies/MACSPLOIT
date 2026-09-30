@@ -37,8 +37,18 @@ bounded timeouts and concurrency, cancellation, partial-success handling, eviden
 and scope enforcement (ACTIVE_LOW_IMPACT). The `Domain Recon` chain now runs
 Subfinder → DNS Resolution, and the UI surfaces both providers and resolved IPs.
 Automated tests run entirely offline (fake executable + static resolver).
-**PLANNED next:** Nmap (Phase 1C), then HTTPX. See [providers](docs/providers.md)
-and [recon-chain](docs/recon-chain.md).
+
+**IMPLEMENTED — Phase 1C active port/service discovery:** an `NmapProvider` (the
+first ACTIVE provider) runs the external Nmap tool through the shell-free process
+supervisor with a conservative, unprivileged profile (`-sT -sV --top-ports 100`,
+XML output, **no NSE, no root**) to turn in-scope `IPAddress` assets into `Port` and
+`Service` assets (`exposes`/`serves` relationships), with a 120 s provider timeout,
+bounded concurrency, cancellation, raw-XML evidence, provenance, and a scope recheck
+that refuses to scan out-of-scope (e.g. third-party) IPs. The `Domain Recon` chain
+now runs Subfinder → DNS → Nmap, and the UI marks Nmap as ACTIVE and shows ports/
+services. MACSPLOIT never installs Nmap; automated tests run entirely offline (fake
+executable + XML fixtures). **PLANNED next:** HTTPX (Phase 1D). See
+[providers](docs/providers.md) and [recon-chain](docs/recon-chain.md).
 
 ## Build and run
 

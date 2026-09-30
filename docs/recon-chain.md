@@ -1,7 +1,7 @@
 # Recon Chain execution
 
 Status: **IMPLEMENTED** two chain presets — the offline Synthetic Recon chain and
-the real Domain Recon chain (Subfinder + native DNS resolution).
+the real Domain Recon chain (Subfinder + native DNS + Nmap).
 
 A chain requests provider capabilities and feeds scoped discoveries into later
 stages. It is not a shell sequence of installed tools. A stage may pin an exact
@@ -37,36 +37,40 @@ records. Repeat runs keep node/edge IDs and add provenance, run records, and
 evidence. Passive out-of-scope discoveries remain visible with `in_scope=false`
 but are excluded from downstream dispatch. An unscoped root cannot start.
 
-## Domain Recon (Phase 1A + 1B)
+## Domain Recon (Phase 1A + 1B + 1C)
 
-The first real chain runs Subfinder and then native DNS resolution against an
-in-scope domain. Its stages are:
+The real chain runs Subfinder, native DNS resolution, then Nmap against an in-scope
+domain. Its stages are:
 
 1. Target Validation — require a Domain target inside workspace scope.
-2. Subfinder Discovery — request SUBDOMAIN_DISCOVERY, pinned to the `subfinder`
-   provider, executed through the process supervisor.
-3. DNS Resolution — request DNS_RESOLUTION, pinned to the `native_dns` provider,
-   resolving the Subdomain/Hostname/Domain assets from earlier stages into IPs.
-4. Persistence — assets, relationships, observations, and evidence are committed.
-5. Completion — persist final status.
+2. Subfinder Discovery — SUBDOMAIN_DISCOVERY, pinned to `subfinder`, via the
+   process supervisor (PASSIVE).
+3. DNS Resolution — DNS_RESOLUTION, pinned to `native_dns`, resolving the
+   Subdomain/Hostname/Domain assets into IPs (ACTIVE_LOW_IMPACT).
+4. Port + Service Discovery — PORT_DISCOVERY, pinned to `nmap`, scanning the
+   in-scope IP assets for open ports and services (ACTIVE).
+5. Persistence — assets, relationships, observations, and evidence are committed.
+6. Completion — persist final status.
 
-Ports and HTTP are intentionally absent; Domain Recon maps a Domain to Subdomains
-to IP addresses:
+HTTP probing is intentionally absent; Domain Recon maps a Domain → Subdomains → IPs
+→ Ports → Services:
 
 ```text
 example.test
-├── api.example.test  → resolves_to → 192.0.2.10
-├── dev.example.test  → resolves_to → 192.0.2.11
-└── auth.example.test → resolves_to → 192.0.2.12
+└── api.example.test  → resolves_to → 192.0.2.10
+                                      ├── 22/tcp  → serves → ssh
+                                      └── 443/tcp → serves → https
 ```
 
-Each discovered subdomain and resolved IP is traceable to its target, provider run,
-provider version, timestamp, source asset, evidence, and scope decision
-(`in_scope`). If Subfinder is missing the chain fails with `ProviderMissing`; if a
-provider exits non-zero or times out the run is marked FAILED with its evidence
-preserved. DNS "no records"/NXDOMAIN for a host is not a chain failure. Automated
-tests drive this chain entirely offline through a fake executable and a static DNS
-resolver — no real scanning or DNS queries.
+Each asset is traceable to its target, provider run, provider version, timestamp,
+source asset, evidence, and scope decision (`in_scope`). The Nmap stage scans only
+in-scope IPs (an out-of-scope resolved IP is filtered out before the active tool
+runs). If a required tool is missing the chain fails with `ProviderMissing` (earlier
+stages' results are already persisted); if a provider exits non-zero or times out
+the run is marked FAILED with its evidence preserved. DNS "no records"/NXDOMAIN, and
+Nmap "host down"/"no open ports", are not chain failures. Automated tests drive this
+chain entirely offline through fake executables and a static DNS resolver — no real
+scanning, DNS, or port traffic.
 
 ## State and events
 
@@ -84,23 +88,22 @@ between stages and around provider execution; cancelled queued/running work and
 user audit records are durable.
 
 Implemented limits: one active chain globally, 100 targets and 100 chain runs per
-workspace, 1,000 assets, 1 MiB evidence per run, and a 30-second cooperative chain
-budget. The synthetic provider is immediate and bounded. External providers run through
-the process supervisor: an argument array (never a shell), bounded stdout/stderr
-(512 KiB / 64 KiB), a wall-clock deadline within the chain budget, and cancellation
-that kills the whole child process group so a killed tool leaves no orphans. The
-native DNS provider runs in-process with a bounded per-query timeout (default 5 s)
-and bounded concurrency (default 16), still inside the chain deadline and honoring
-cancellation. A dedicated per-provider timeout (beyond the 30-second chain budget)
-is planned.
+workspace, 1,000 assets, 1 MiB evidence per run, per-provider timeouts (30 s default,
+120 s for Nmap), and a 300-second overall chain-budget safety net. The synthetic
+provider is immediate and bounded. External providers run through the process
+supervisor: an argument array (never a shell), bounded stdout/stderr (512 KiB /
+64 KiB), a per-provider deadline, and cancellation that kills the whole child process
+group so a killed tool leaves no orphans. The native DNS provider runs in-process
+with a bounded per-query timeout (default 5 s) and bounded concurrency (default 16).
+Nmap runs at most two processes (one per IP family). Per-host/request limits remain
+planned.
 
 On shutdown the core asks work to cancel. On abnormal interruption, reopening
 marks pending/running work FAILED with `Interrupted`; it never automatically
 restarts it. Completed graph, evidence, provenance, events, and history survive
 restart in the automated tests.
 
-**PLANNED:** Nmap then HTTPX providers, a dedicated per-provider timeout, per-host
-and request limits, dependency scheduling, explicit retry policy, DNS
-freshness/caching, and HTTP/redirect scope rechecks. **FUTURE:** a separately
+**PLANNED:** HTTPX provider, per-host and request limits, dependency scheduling,
+explicit retry policy, DNS freshness/caching, and HTTP/redirect scope rechecks. **FUTURE:** a separately
 managed core service that continues while the UI application is fully quit. The
 helper is app-owned.

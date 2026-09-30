@@ -73,6 +73,18 @@ system resolver configuration. For a manual live check, run Domain Recon (with a
 real Subfinder) against an authorized in-scope domain; otherwise the offline
 coverage is sufficient.
 
+### Testing Nmap (active) offline
+
+Nmap is an ACTIVE external tool. Automated tests never run real Nmap or scan the
+network: Rust tests parse XML fixtures directly and inject `fixtures/fake-nmap.sh`
+via `ToolConfig`, and `test.sh` sets `MACSPLOIT_NMAP` (forwarded to the helper by
+`PipeTransport`) so the Swift bridge test scans deterministic fake XML. To run real
+Nmap manually, install it yourself (for example `brew install nmap`; MACSPLOIT never
+installs it) and run Domain Recon only against IPs you are **explicitly authorized**
+to scan and that are in the workspace scope. The default profile is unprivileged
+(`-sT`), so no root is needed. If you have no authorized target, skip live scanning —
+the offline suite already proves the integration.
+
 `build-macos.sh` assembles `build/MACSPLOIT.app`, bundles the helper, ad-hoc signs
 both, and checks the bundle signature. This is a local development build, not a
 notarized distribution or release. If an agent's execution sandbox blocks nested

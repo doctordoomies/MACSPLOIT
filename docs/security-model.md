@@ -1,8 +1,9 @@
 # Security model
 
 Status: **IMPLEMENTED** repository protections, offline foundation controls, and
-passive external-tool and low-impact native DNS execution controls (Phase 1A/1B);
-higher-risk execution and distribution protections remain planned.
+passive external-tool, low-impact native DNS, and conservative active Nmap execution
+controls (Phase 1A/1B/1C); higher-risk execution and distribution protections remain
+planned.
 
 ## Repository
 
@@ -15,14 +16,23 @@ cannot prove that arbitrary content contains no secret.
 
 ## Implemented boundaries
 
-- Three providers are registered: the offline synthetic provider, Subfinder (a
-  passive external tool), and native DNS (built-in, ACTIVE_LOW_IMPACT). The
-  application has no port scanner, HTTP prober, telemetry, tool installer, or
-  privilege request. Subfinder runs only when the analyst launches Domain Recon and
-  only if it is already installed. Native DNS performs ordinary A/AAAA resolution
-  using the host's own system resolver configuration (never a hardcoded public
-  resolver) and only for in-scope assets; there are no third-party DNS/passive-DNS
-  API integrations (no SecurityTrails, Shodan, VirusTotal, etc.).
+- Four providers are registered: the offline synthetic provider, Subfinder (passive
+  external tool), native DNS (built-in, ACTIVE_LOW_IMPACT), and Nmap (ACTIVE external
+  tool). The application has no HTTP prober, telemetry, tool installer, or privilege
+  request. Subfinder and Nmap run only when the analyst launches Domain Recon and
+  only if the tool is already installed. Native DNS performs ordinary A/AAAA
+  resolution using the host's own system resolver configuration (never a hardcoded
+  public resolver); there are no third-party DNS/passive-DNS API integrations (no
+  SecurityTrails, Shodan, VirusTotal, etc.).
+- Nmap is the only ACTIVE provider. It uses a conservative, unprivileged profile
+  (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
+  SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and
+  no root**. Scope is re-checked per IP immediately before scanning: a resolved IP
+  that is out of workspace scope (e.g. shared third-party infrastructure) is filtered
+  out and never scanned, even when its parent hostname is in scope. Launching the
+  chain is the explicit approval for its active stage; scope is never widened. No CVE
+  lookup, vulnerability scanning, credential testing, or exploitation is performed.
+  An `ActiveProviderStarted` audit event records each active scan.
 - Both the bundled helper and every external provider are launched by executable
   path and argument array — never through a shell. The child environment is minimal;
   targets are validated/normalized before use and can never become shell syntax.
@@ -54,8 +64,8 @@ cannot prove that arbitrary content contains no secret.
 target values and evidence bodies. Successful event polls are omitted. Logs rotate
 on helper startup above 1 MiB, retaining one previous file; they do not yet have
 continuous rotation. Provider runs and raw output live in workspace storage.
-SQLite `audit_events` records WorkspaceCreated, TargetAdded, ReconStarted, and
-ReconCancelled separately from UI activity events.
+SQLite `audit_events` records WorkspaceCreated, TargetAdded, ReconStarted,
+ActiveProviderStarted, and ReconCancelled separately from UI activity events.
 
 Structured errors cross the bridge; storage error messages do not expose raw SQL,
 local paths, or captured content. The evidence viewer shows the stored provider

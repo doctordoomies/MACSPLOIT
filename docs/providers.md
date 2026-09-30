@@ -1,7 +1,8 @@
 # Providers
 
 Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, one
-real external provider (Subfinder), and one built-in native provider (DNS).
+built-in native provider (DNS), and two real external providers (Subfinder,
+passive; Nmap, active).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
@@ -15,11 +16,12 @@ when a capability is offered by more than one provider. SwiftUI never selects
 executables or parses raw provider output. This is an internal interface, not a
 third-party plugin ABI.
 
-Implemented capabilities: SUBDOMAIN_DISCOVERY, DNS_RESOLUTION,
+Implemented capabilities: SUBDOMAIN_DISCOVERY, DNS_RESOLUTION, PORT_DISCOVERY,
 SERVICE_FINGERPRINTING. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
-VALIDATION, LAB_ONLY. Active classes require explicit authorization and scope;
-validation/lab are rejected. Both registered providers are PASSIVE; no active
-provider is registered.
+VALIDATION, LAB_ONLY. Passive and low-impact work runs on any in-scope target;
+full ACTIVE work (Nmap) is authorized by the analyst explicitly launching the
+chain and is still re-checked against per-asset scope before execution;
+validation/lab are rejected.
 
 Provider statuses (metadata plus live installation state) are exposed to the UI
 through the `list_providers` protocol method.
@@ -125,11 +127,60 @@ Domain assets discovered earlier in the chain into IPAddress assets.
 Future providers (`DnsxProvider`, `MassDnsProvider`) could supply the same
 DNS_RESOLUTION capability under this boundary; none are implemented now.
 
+## NmapProvider
+
+Status: **IMPLEMENTED** (Phase 1C; first ACTIVE provider). `nmap`, risk **ACTIVE**,
+capabilities PORT_DISCOVERY and SERVICE_FINGERPRINTING, supported target type
+IPAddress. It turns in-scope IPAddress assets (produced by DNS) into Port and
+Service assets.
+
+- **Active-provider rules.** Nmap runs only when the analyst explicitly launches
+  Domain Recon and only against IPs that are in workspace scope. Scope is enforced
+  by the orchestrator's per-asset in-scope filter immediately before execution, so
+  an out-of-scope resolved IP (e.g. a shared third-party/cloud address) is never
+  handed to Nmap even though its parent hostname is in scope. Scope is never
+  widened. Launching the chain is the explicit approval for its active stage.
+- **Scan profile.** Conservative and unprivileged: `-sT` (TCP connect, no root),
+  `-sV` (service/version), `--top-ports 100`, `-oX -` (XML to stdout). No `-A`,
+  `-O`, `-sS`, NSE (`-sC`/`--script`), timing/stealth presets, decoys, spoofing, or
+  fragmentation. `-6` is added for an IPv6 batch. **No root is required.**
+- **Why no NSE.** NSE scripts (even "default") broaden behavior and risk; Phase 1C
+  is discovery/fingerprinting only. No CVE/vulnerability enrichment is performed.
+- **Executable discovery / installation / version.** Same infrastructure as
+  Subfinder (override → PATH → Homebrew/local → managed dir); MACSPLOIT never
+  installs Nmap. `nmap --version` is parsed for the version, recorded on the run;
+  a missing tool surfaces as MISSING and fails the stage with `ProviderMissing`.
+- **Execution & evidence.** Runs through the centralized process supervisor
+  (argument array, never a shell; bounded stdout/stderr; process-group
+  cancellation). One provider run scans the whole in-scope IP batch (Nmap
+  parallelizes internally); IPv4 and IPv6 are scanned in separate invocations
+  (Nmap cannot mix families) and both raw XML documents are preserved in the
+  evidence envelope before parsing.
+- **Timeout / concurrency.** Nmap has a per-provider timeout of **120 s** (via
+  `Provider::timeout`), independent of fast passive providers, inside an outer
+  300 s chain-budget safety net. Concurrency is bounded to at most two processes
+  (one per family).
+- **XML parsing.** XML output only (never terminal text), parsed with `roxmltree`.
+  Fields consumed: host address/status, port number/protocol/state, and service
+  name/product/version/extrainfo/tunnel. Invalid XML fails the run with evidence
+  preserved; unknown/other fields are ignored.
+- **Assets & relationships.** Only reportable states (`open`, `open|filtered`)
+  become assets; closed/filtered ports and down hosts are skipped (raw XML still
+  has everything). A Port asset's canonical identity is `<ip>/<proto>/<portnum>`
+  (so `443/tcp` on different hosts, and `53/tcp` vs `53/udp`, never collapse); a
+  Service is `<ip>/<proto>/<portnum>/<name>`. Relationships: IP `exposes` Port,
+  Port `serves` Service. Service fingerprints are stored as provider observations,
+  not confirmed facts. Host down / no open ports is a successful (empty) run.
+
+**Manual installation.** Install Nmap yourself (for example `brew install nmap`);
+MACSPLOIT never installs it. Automated tests use `fixtures/fake-nmap.sh` (emitting
+deterministic XML) injected via `MACSPLOIT_NMAP` — no real scanning.
+
 ## Next adapter boundary
 
-**PLANNED — Nmap** (ports/services on resolved IP addresses) is the next step
-(Phase 1C), followed by **HTTPX** (HTTP probing), each introduced independently and
-only after its timeout, cancellation, output-bound, and scope tests pass.
+**PLANNED — HTTPX** (HTTP/HTTPS probing of discovered web services) is the next
+step (Phase 1D). It is not implemented; Nmap stores the Service asset (e.g. `http`,
+`https`) but no web probing is performed yet.
 
 **FUTURE:** approved installation/update tooling (Tool Manager), dependency and
 license metadata, version compatibility policy, and a public provider SDK. No
