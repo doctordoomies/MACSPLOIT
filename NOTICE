@@ -1,0 +1,10 @@
+MACSPLOIT
+Copyright 2026 The MACSPLOIT Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+MACSPLOIT orchestrates external, separately licensed security tools (for example
+Subfinder, Nmap, and httpx). Those tools are NOT bundled or redistributed with
+MACSPLOIT; they remain external dependencies that the user installs independently
+under their own licenses. MACSPLOIT's Rust dependencies are fetched at build time
+under their respective licenses and are not vendored into this repository.

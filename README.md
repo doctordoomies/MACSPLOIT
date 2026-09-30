@@ -1,103 +1,146 @@
 # MACSPLOIT
 
-**Active private development.** The canonical repository is
-[doctordoomies/MACSPLOIT](https://github.com/doctordoomies/MACSPLOIT) and must remain
-PRIVATE. Origin: `https://github.com/doctordoomies/MACSPLOIT.git`.
+**A native macOS modular security reconnaissance and assessment workbench for
+authorized testing.**
 
-MACSPLOIT is a native macOS modular cybersecurity workbench for authorized
-security research. Targets, discoveries, relationships, and evidence belong to
-an independent workspace model; providers supply observations about that model.
+MACSPLOIT models an engagement as a durable graph of **targets → assets →
+relationships → evidence**, produced by modular **providers** (wrappers around
+security tools, or native capabilities) and organized into **Recon Chains**.
+Scope is a first-class safety boundary, every discovery keeps its provenance and
+raw evidence, and the whole thing runs locally with no telemetry.
 
-## Current status
+> **Status: v0.1 public beta (pre-1.0).** APIs, schemas, and the provider contract
+> may change between pre-1.0 releases. See [feature status](docs/features.md).
 
-**IMPLEMENTED — Phase 0 foundation:** a runnable SwiftUI application communicates
-with a bundled Rust helper, persists workspaces in SQLite, and runs an entirely
-offline synthetic Recon Chain. `example.test` produces two subdomains, two
-documentation IP addresses, three ports, and three services, with provenance,
-SHA-256 evidence, durable events, and replay. No scanner is installed or invoked.
+---
 
-The macOS bundle builds and launches. Rust and Swift integration tests verify
-execution and persisted state after restarting the core. Workspace creation was
-also verified through the UI. The remaining on-screen workflow and full GUI
-quit/reopen check are **blocked by the native UI automation connection**; that GUI
-acceptance check remains open. See
-[verification](docs/phase-0-verification.md) for precise results and limitations.
+## What it does today
 
-**IMPLEMENTED — Phase 1A first real provider:** a `SubfinderProvider` runs the
-external ProjectDiscovery `subfinder` tool through a centralized, shell-free process
-supervisor to turn an in-scope domain into subdomains, with executable discovery,
-installation/version detection, structured JSONL parsing, raw evidence, provenance,
-scope enforcement, and durable events — plugged into the same provider architecture
-as the synthetic provider, which is retained. MACSPLOIT never installs Subfinder.
-
-**IMPLEMENTED — Phase 1B native DNS resolution:** a built-in `NativeDnsProvider`
-(no external tool, `hickory-resolver`, system resolver config) resolves discovered
-subdomains into IPv4/IPv6 `IPAddress` assets with `resolves_to` relationships,
-bounded timeouts and concurrency, cancellation, partial-success handling, evidence,
-and scope enforcement (ACTIVE_LOW_IMPACT). The `Domain Recon` chain now runs
-Subfinder → DNS Resolution, and the UI surfaces both providers and resolved IPs.
-Automated tests run entirely offline (fake executable + static resolver).
-
-**IMPLEMENTED — Phase 1C active port/service discovery:** an `NmapProvider` (the
-first ACTIVE provider) runs the external Nmap tool through the shell-free process
-supervisor with a conservative, unprivileged profile (`-sT -sV --top-ports 100`,
-XML output, **no NSE, no root**) to turn in-scope `IPAddress` assets into `Port` and
-`Service` assets (`exposes`/`serves` relationships), with a 120 s provider timeout,
-bounded concurrency, cancellation, raw-XML evidence, provenance, and a scope recheck
-that refuses to scan out-of-scope (e.g. third-party) IPs. The `Domain Recon` chain
-now runs Subfinder → DNS → Nmap, and the UI marks Nmap as ACTIVE and shows ports/
-services. MACSPLOIT never installs Nmap; automated tests run entirely offline (fake
-executable + XML fixtures). **PLANNED next:** HTTPX (Phase 1D). See
-[providers](docs/providers.md) and [recon-chain](docs/recon-chain.md).
-
-## Build and run
-
-Requires macOS, Apple Command Line Tools or Xcode with Swift 6+, Rust 1.90+,
-Git, Python 3.10+, and authenticated GitHub CLI for private pushes. The verified
-machine uses Apple Silicon, macOS 26, Swift 6.3.2, and Rust 1.98.1.
-
-```sh
-./scripts/setup-hooks.sh
-./scripts/test.sh
-./scripts/run.sh
+```
+Domain
+  └─ Subdomain Discovery      (Subfinder)
+       └─ DNS Resolution      (native, built-in)
+            └─ IP Address
+                 └─ Port + Service Discovery  (Nmap, conservative & unprivileged)
+                      └─ HTTP Probing         (HTTPX)
+                           └─ Website / Technology
 ```
 
-`run.sh` builds an ad-hoc signed `build/MACSPLOIT.app` and opens it. Dependencies
-must already be available for an offline build; the application itself performs
-no network requests. Scripts never install toolchains or scanner software.
+Every stage is a provider selected by **capability**; results flow through
+normalization → SQLite persistence → durable events → the SwiftUI app, with
+per-asset **scope enforcement**, **risk classes** (passive / low-impact / active),
+and **hash-verified evidence** for each provider run.
 
-Create **Test Assessment**, keep the suggested synthetic scope, add
-`example.test`, and select **Recon → Run**. Inspect **Assets**, **Evidence**, and
-**Activity**. Quit and reopen the app to check the saved workspace. Runtime data
-lives in `~/Library/Application Support/MACSPLOIT/`, outside this checkout.
+There is also a fully offline **Synthetic Recon** chain so you can explore the
+whole pipeline without scanning anything real.
+
+## Key features
+
+- **Workspaces** with isolated SQLite storage outside the source tree
+- **Target classification** (domain, URL, IP, CIDR, email, username, …) with IDNA
+- **Asset graph**: domains, subdomains, IPs, ports, services, websites, technologies
+- **Scope engine**: exact hosts, wildcards, CIDR, IPv4/IPv6, redirect-aware, per-IP
+- **Providers**: Synthetic, Subfinder, native DNS, Nmap, HTTPX (see status matrix)
+- **Evidence-first**: raw tool output preserved and SHA-256 verified before parsing
+- **Durable events** with replay; **provenance** on every observation
+- **Safe execution**: shell-free process supervision, timeouts, bounded output,
+  process-group cancellation
+- **No telemetry.** Network traffic happens only when you launch a provider.
+
+See the full, honest [feature status matrix](docs/features.md) — several advanced
+modules (web crawling, content discovery, vulnerability assessment, OSINT,
+reporting) are **PLANNED**, not implemented, and are labeled as such.
 
 ## Architecture
 
-- `apps/macos/`: native SwiftUI app, typed core client, view models, and tests.
-- `core/`: one Rust crate owning classification, scope, assets, orchestration,
-  synthetic provider, evidence, events, migrations, and SQLite persistence.
-- `providers/`: boundary reserved for later external adapters.
-- `schemas/`: internal protocol documentation; no public plugin ABI.
-- `fixtures/`: synthetic offline examples only.
-- `tests/`: repository policy tests; core and app integration tests live beside code.
-- `scripts/`: verified build/test/launch commands and repository safeguards.
+```
+SwiftUI app (MACSPLOIT / MACSPLOITKit)
+        ↕  line-delimited JSON over pipes
+Rust core (macsploit-core helper)
+        ↕
+SQLite (per-workspace)   +   Provider architecture (process supervisor / native)
+```
 
-Read the [boundary ADR](docs/adr/0001-swift-rust-boundary.md),
-[architecture](docs/architecture.md), [development guide](docs/development.md),
-[asset model](docs/assets.md), [providers](docs/providers.md), and
-[Recon Chains](docs/recon-chain.md).
+- **SwiftUI** owns presentation only — it never parses provider output.
+- **Rust core** owns domain logic: classification, scope, the asset graph, task/
+  chain state, provider execution, evidence, and persistence.
+- Details: [architecture](docs/architecture.md), [providers](docs/providers.md),
+  [recon chains](docs/recon-chain.md), [security model](docs/security-model.md),
+  [threat model](docs/threat-model.md).
 
-## Scope and privacy
+## Supported platforms
 
-**PLANNED — Phase 1:** incremental real providers after foundation acceptance,
-starting with Subfinder fixtures and supervised execution, then Nmap and HTTPX.
-**FUTURE:** graph visualization, findings, reporting, tool management, OSINT,
-validation/lab, hardware, distribution, and publishing. See the unchanged phase
-sequence in the [roadmap](docs/roadmap.md).
+- **macOS 13+** (developed and tested on macOS 26, Apple Silicon).
+- Apple Silicon is the primary target; Intel is expected to work from source but is
+  not yet routinely verified.
+- Toolchain: Swift 6+ (Xcode or Command Line Tools) and Rust (stable).
 
-Use only systems you own or are authorized to assess. Discovered assets do not
-automatically become active targets. Never commit credentials, private keys,
-`.env` files, Keychain exports, real assessments, databases, or sensitive captures.
-See [security](docs/security-model.md) and [repository policy](docs/repository-policy.md).
-Every push must pass the existing history audit and exact private-destination
-check. Collaborators, Pages, releases, and visibility changes require owner approval.
+## Build from source
+
+```sh
+git clone https://github.com/doctordoomies/MACSPLOIT.git
+cd MACSPLOIT
+./scripts/setup-hooks.sh     # optional: local commit/push safety hooks
+./scripts/build-core.sh      # Rust core + helper
+./scripts/test.sh            # Rust + Swift + policy tests (all offline)
+./scripts/build-macos.sh     # ad-hoc-signed build/MACSPLOIT.app
+./scripts/run.sh             # build and launch
+```
+
+The app is an **ad-hoc-signed local development build** — not notarized. macOS
+Gatekeeper will warn on first launch; right-click → Open, or clear the quarantine
+attribute, to run a build you compiled yourself.
+
+## Quick start (no scanning required)
+
+1. Launch MACSPLOIT.
+2. Create a workspace **Test Assessment** with scope `example.test`,
+   `*.example.test`, `192.0.2.0/24`.
+3. Add the target `example.test`.
+4. Run **Synthetic Recon** — a fully offline chain that exercises the real
+   orchestration, persistence, evidence, and event pipeline with invented data.
+5. Inspect the assets, relationships, and evidence; quit and reopen to see it
+   persist.
+
+## External tool requirements
+
+Real recon needs the corresponding tools installed (MACSPLOIT **never installs
+them for you** and shows each one's status):
+
+| Provider | Tool | Install |
+| --- | --- | --- |
+| Subfinder | `subfinder` | `brew install subfinder` |
+| Native DNS | *(built-in)* | — |
+| Nmap | `nmap` | `brew install nmap` |
+| HTTPX | `httpx` | `brew install httpx` (ProjectDiscovery) |
+
+## Authorized use
+
+MACSPLOIT is for systems you **own or are explicitly authorized to assess**. Its
+scope engine is a technical control to help you stay within authorization —
+targets and resolved IPs outside your configured scope are not actively scanned.
+You are responsible for the legality of your engagements.
+
+## Feature status & roadmap
+
+See [docs/features.md](docs/features.md) for the authoritative status of every
+capability and [docs/roadmap.md](docs/roadmap.md) for what's next (HTTPX web-recon
+depth, TLS analysis, vulnerability assessment, OSINT, and reporting).
+
+## Contributing
+
+Contributions are welcome — especially new providers. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[provider development guide](docs/provider-development.md). All automated tests for
+security tools must be **offline** (fake executables / fixtures); never commit real
+target data or secrets.
+
+## Reporting security issues
+
+Please report vulnerabilities **in MACSPLOIT itself** privately — see
+[SECURITY.md](SECURITY.md). Do not open public issues for undisclosed
+vulnerabilities.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
