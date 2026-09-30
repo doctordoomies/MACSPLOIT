@@ -59,6 +59,9 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_SUBFINDER") {
             overrides.insert("subfinder".to_owned(), PathBuf::from(path));
         }
+        if let Some(path) = std::env::var_os("MACSPLOIT_NMAP") {
+            overrides.insert("nmap".to_owned(), PathBuf::from(path));
+        }
         let managed_dir = std::env::var_os("MACSPLOIT_TOOLS_DIR").map(PathBuf::from);
         Self {
             overrides,
@@ -132,7 +135,9 @@ pub fn scan_version(text: &str) -> Option<String> {
                 index += 1;
             }
             let token = &text[start..index];
-            if dots >= 2 && !token.ends_with('.') {
+            // Accept two-or-more component versions (e.g. nmap "7.95",
+            // subfinder "2.6.6"); require at least one dot to avoid bare integers.
+            if dots >= 1 && !token.ends_with('.') {
                 return Some(token.to_owned());
             }
         } else {
@@ -246,8 +251,9 @@ mod tests {
     fn scan_version_finds_semver_token() {
         assert_eq!(scan_version("subfinder version v2.6.6").as_deref(), Some("2.6.6"));
         assert_eq!(scan_version("v1.10.0-dev").as_deref(), Some("1.10.0"));
+        assert_eq!(scan_version("Nmap version 7.95 ( https://nmap.org )").as_deref(), Some("7.95"));
         assert_eq!(scan_version("no version here"), None);
-        assert_eq!(scan_version("only 1.2 minor"), None);
+        assert_eq!(scan_version("build 2026"), None);
     }
 
     #[test]

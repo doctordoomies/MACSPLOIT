@@ -27,6 +27,7 @@ pub enum RiskClass {
 pub enum Capability {
     SubdomainDiscovery,
     DnsResolution,
+    PortDiscovery,
     ServiceFingerprinting,
 }
 
@@ -87,6 +88,11 @@ pub trait Provider: Send + Sync {
     /// Report whether the provider's backing tool is available. Offline
     /// providers are always installed.
     fn installation(&self, tools: &ToolConfig) -> Installation;
+    /// Maximum wall-clock time for one execution. Fast providers keep the default;
+    /// heavier active tools (e.g. Nmap) override it.
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(30)
+    }
     fn execute(
         &self,
         target: &str,
@@ -110,6 +116,7 @@ impl ProviderRegistry {
                 Arc::new(SyntheticDiscoveryProvider),
                 Arc::new(SubfinderProvider),
                 Arc::new(NativeDnsProvider::new(resolver)),
+                Arc::new(NmapProvider),
             ],
         }
     }
@@ -142,14 +149,12 @@ impl ProviderRegistry {
             })
     }
 
-    /// Fetch a provider by its stable identifier and verify it still supports the
-    /// requested capability and target type.
-    pub fn named(
-        &self,
-        id: &str,
-        capability: Capability,
-        target_type: TargetType,
-    ) -> Result<Arc<dyn Provider>> {
+    /// Fetch a provider by its stable identifier and verify it advertises the
+    /// requested capability. A pinned provider operates on the chain's input
+    /// assets (whose types differ from the chain target — e.g. Nmap consumes
+    /// IPAddress assets while the chain target is a Domain), so the target type is
+    /// not re-checked here; the stage pin is the authorization.
+    pub fn named(&self, id: &str, capability: Capability) -> Result<Arc<dyn Provider>> {
         let provider = self
             .providers
             .iter()
@@ -158,13 +163,10 @@ impl ProviderRegistry {
             .ok_or_else(|| {
                 CoreError::new("ProviderFailure", "The requested provider is not registered.")
             })?;
-        let metadata = provider.metadata();
-        if !metadata.capabilities.contains(&capability)
-            || !metadata.supported_target_types.contains(&target_type)
-        {
+        if !provider.metadata().capabilities.contains(&capability) {
             return Err(CoreError::new(
                 "ProviderFailure",
-                "The pinned provider does not support this stage.",
+                "The pinned provider does not offer this capability.",
             ));
         }
         Ok(provider)
@@ -285,6 +287,8 @@ impl Provider for SyntheticDiscoveryProvider {
                     );
                 }
             }
+            // The synthetic provider does not model standalone port discovery.
+            Capability::PortDiscovery => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -672,6 +676,277 @@ impl Provider for NativeDnsProvider {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Nmap provider (Phase 1C; first ACTIVE provider). Turns in-scope IPAddress
+// assets into Port and Service assets via a conservative, unprivileged scan.
+// Executes through the process supervisor with XML output; no NSE, no root.
+// ---------------------------------------------------------------------------
+
+pub struct NmapProvider;
+
+/// Separator placed between multiple nmap XML documents in one evidence blob
+/// (one document per address family). The parser splits on it.
+const NMAP_XML_DELIM: &str = "\n<!--MACSPLOIT-NMAP-DOC-->\n";
+const NMAP_STDOUT_CAP: usize = 512 * 1024;
+const NMAP_STDERR_CAP: usize = 64 * 1024;
+
+impl NmapProvider {
+    /// Conservative, unprivileged discovery profile: TCP connect scan (`-sT`, no
+    /// root), service/version detection (`-sV`), a bounded top-100 port set, and
+    /// XML to stdout (`-oX -`). No host-discovery skip, no NSE, no aggressive
+    /// timing or OS detection. `-6` is added for an IPv6 batch.
+    fn arguments(ipv6: bool, targets: &[String]) -> Vec<String> {
+        let mut args = vec![
+            "-sT".into(),
+            "-sV".into(),
+            "--top-ports".into(),
+            "100".into(),
+            "-oX".into(),
+            "-".into(),
+        ];
+        if ipv6 {
+            args.push("-6".into());
+        }
+        args.extend(targets.iter().cloned());
+        args
+    }
+}
+
+impl Provider for NmapProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "nmap".into(),
+            name: "Nmap".into(),
+            description:
+                "Active port and service discovery via the external Nmap tool (unprivileged, no NSE)."
+                    .into(),
+            version: "external".into(),
+            risk_class: RiskClass::Active,
+            offline: false,
+            capabilities: vec![Capability::PortDiscovery, Capability::ServiceFingerprinting],
+            supported_target_types: vec![TargetType::IPAddress],
+        }
+    }
+
+    fn installation(&self, tools: &ToolConfig) -> Installation {
+        let Some(executable) = tools.locate("nmap") else {
+            return Installation::Missing;
+        };
+        let cancelled = AtomicBool::new(false);
+        match process::run(
+            &executable,
+            &["--version".into()],
+            &cancelled,
+            Instant::now() + Duration::from_secs(5),
+            NMAP_STDERR_CAP,
+            NMAP_STDERR_CAP,
+        ) {
+            Ok(outcome) => {
+                let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
+                text.push('\n');
+                text.push_str(&String::from_utf8_lossy(&outcome.stderr));
+                let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
+                Installation::Installed { version }
+            }
+            Err(error) => Installation::ExecutionError {
+                message: error.message,
+            },
+        }
+    }
+
+    fn timeout(&self) -> Duration {
+        // Active scans legitimately take longer than passive discovery.
+        Duration::from_secs(120)
+    }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let started_at = crate::now();
+        // Scan only in-scope IP assets (the orchestrator has already filtered
+        // inputs to workspace scope, so an out-of-scope resolved IP never reaches
+        // an active tool). Partition by family: nmap cannot mix IPv4 and IPv6.
+        let mut v4 = Vec::new();
+        let mut v6 = Vec::new();
+        for asset in inputs.iter().filter(|a| a.asset_type == AssetType::IPAddress) {
+            match asset.canonical_identity.parse::<std::net::IpAddr>() {
+                Ok(std::net::IpAddr::V4(_)) => v4.push(asset.canonical_identity.clone()),
+                Ok(std::net::IpAddr::V6(_)) => v6.push(asset.canonical_identity.clone()),
+                Err(_) => {}
+            }
+        }
+        v4.sort();
+        v4.dedup();
+        v6.sort();
+        v6.dedup();
+
+        if v4.is_empty() && v6.is_empty() {
+            // Nothing in scope to scan; a clean, empty run (not a failure).
+            return Ok(Execution {
+                target: target.into(),
+                capability,
+                command: vec!["nmap".into(), "(no in-scope IP targets)".into()],
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                exit_status: Some(0),
+                pid: None,
+                timed_out: false,
+                started_at,
+                ended_at: crate::now(),
+            });
+        }
+
+        let executable = ctx.tools.locate("nmap").ok_or_else(|| {
+            CoreError::new(
+                "ProviderMissing",
+                "Nmap is not installed. Install it manually to run active discovery.",
+            )
+        })?;
+
+        let mut command = vec![executable.to_string_lossy().into_owned()];
+        let mut xml_docs: Vec<String> = Vec::new();
+        let mut stderr_all = Vec::new();
+        let mut exit_status = Some(0);
+        let mut timed_out = false;
+        for (ipv6, targets) in [(false, &v4), (true, &v6)] {
+            if targets.is_empty() {
+                continue;
+            }
+            let args = Self::arguments(ipv6, targets);
+            let outcome = process::run(
+                &executable,
+                &args,
+                ctx.cancelled,
+                ctx.deadline,
+                NMAP_STDOUT_CAP,
+                NMAP_STDERR_CAP,
+            )?;
+            if outcome.cancelled {
+                return Err(CoreError::new("Cancelled", "Nmap scan cancelled."));
+            }
+            command.extend(args);
+            xml_docs.push(String::from_utf8_lossy(&outcome.stdout).into_owned());
+            stderr_all.extend_from_slice(&outcome.stderr);
+            if outcome.timed_out {
+                timed_out = true;
+            }
+            if outcome.exit_status != Some(0) {
+                exit_status = outcome.exit_status.or(Some(1));
+            }
+        }
+
+        Ok(Execution {
+            target: target.into(),
+            capability,
+            command,
+            stdout: xml_docs.join(NMAP_XML_DELIM).into_bytes(),
+            stderr: stderr_all,
+            exit_status,
+            pid: None,
+            timed_out,
+            started_at,
+            ended_at: crate::now(),
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        let text = String::from_utf8_lossy(&execution.stdout);
+        let mut discoveries = Vec::new();
+        let mut any_document = false;
+        for chunk in text.split(NMAP_XML_DELIM) {
+            let chunk = chunk.trim();
+            if chunk.is_empty() {
+                continue;
+            }
+            any_document = true;
+            let document = roxmltree::Document::parse(chunk).map_err(|_| {
+                CoreError::new("ProviderFailure", "Nmap XML output is malformed.")
+            })?;
+            for host in document.descendants().filter(|n| n.has_tag_name("host")) {
+                // The reportable address is the ipv4/ipv6 address element.
+                let Some(address) = host
+                    .children()
+                    .filter(|n| n.has_tag_name("address"))
+                    .find_map(|n| {
+                        let kind = n.attribute("addrtype").unwrap_or("");
+                        if kind.starts_with("ip") {
+                            n.attribute("addr")
+                        } else {
+                            None
+                        }
+                    })
+                else {
+                    continue;
+                };
+                for port in host.descendants().filter(|n| n.has_tag_name("port")) {
+                    let protocol = port.attribute("protocol").unwrap_or("tcp");
+                    let Some(portid) = port.attribute("portid") else {
+                        continue;
+                    };
+                    let state = port
+                        .children()
+                        .find(|n| n.has_tag_name("state"))
+                        .and_then(|n| n.attribute("state"))
+                        .unwrap_or("");
+                    // Only model reportable open states; raw XML retains everything.
+                    if state != "open" && state != "open|filtered" {
+                        continue;
+                    }
+                    let port_value = format!("{address}/{protocol}/{portid}");
+                    discoveries.push(Discovery {
+                        asset_type: AssetType::Port,
+                        value: port_value.clone(),
+                        source: Some(address.to_owned()),
+                        relationship: Some(RelationshipType::Exposes),
+                        metadata: json!({
+                            "tool": "nmap",
+                            "host": address,
+                            "port": portid,
+                            "protocol": protocol,
+                            "state": state,
+                        }),
+                    });
+                    if let Some(service) = port.children().find(|n| n.has_tag_name("service")) {
+                        let name = service.attribute("name").unwrap_or("unknown");
+                        let mut metadata = json!({
+                            "tool": "nmap",
+                            "host": address,
+                            "protocol": protocol,
+                            "name": name,
+                        });
+                        for (attr, key) in [
+                            ("product", "product"),
+                            ("version", "version"),
+                            ("extrainfo", "extrainfo"),
+                            ("tunnel", "tunnel"),
+                        ] {
+                            if let Some(value) = service.attribute(attr) {
+                                metadata[key] = json!(value);
+                            }
+                        }
+                        discoveries.push(Discovery {
+                            asset_type: AssetType::Service,
+                            value: format!("{port_value}/{name}"),
+                            source: Some(port_value.clone()),
+                            relationship: Some(RelationshipType::Serves),
+                            metadata,
+                        });
+                    }
+                }
+            }
+        }
+        if !any_document {
+            // No hosts scanned (e.g. nothing in scope) — a clean empty result.
+            return Ok(discoveries);
+        }
+        Ok(discoveries)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,7 +977,7 @@ mod tests {
     #[test]
     fn synthetic_provider_is_passive_and_selected_by_capability() {
         let provider = ProviderRegistry::default()
-            .named("synthetic", Capability::SubdomainDiscovery, TargetType::Domain)
+            .named("synthetic", Capability::SubdomainDiscovery)
             .unwrap();
         assert_eq!(provider.metadata().risk_class, RiskClass::Passive);
         assert_eq!(provider.metadata().id, "synthetic");
@@ -910,5 +1185,134 @@ mod tests {
             .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
             .unwrap_err();
         assert_eq!(error.code, "Cancelled");
+    }
+
+    // --- Nmap provider ---
+
+    fn nmap_exec(xml: &str) -> Execution {
+        Execution {
+            target: "192.0.2.10".into(),
+            capability: Capability::PortDiscovery,
+            command: vec!["nmap".into()],
+            stdout: xml.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at: crate::now(),
+            ended_at: crate::now(),
+        }
+    }
+
+    #[test]
+    fn nmap_metadata_is_active_ports_services() {
+        let metadata = NmapProvider.metadata();
+        assert_eq!(metadata.id, "nmap");
+        assert_eq!(metadata.risk_class, RiskClass::Active);
+        assert!(!metadata.offline);
+        assert_eq!(
+            metadata.capabilities,
+            vec![Capability::PortDiscovery, Capability::ServiceFingerprinting]
+        );
+        assert_eq!(metadata.supported_target_types, vec![TargetType::IPAddress]);
+        assert_eq!(NmapProvider.timeout(), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn nmap_arguments_are_unprivileged_and_family_aware() {
+        let v4 = NmapProvider::arguments(false, &["192.0.2.10".into()]);
+        assert!(v4.contains(&"-sT".to_string())); // connect scan, no root
+        assert!(v4.contains(&"-sV".to_string()));
+        assert!(v4.windows(2).any(|w| w == ["-oX", "-"]));
+        assert!(!v4.contains(&"-6".to_string()));
+        assert!(!v4.iter().any(|a| a == "-A" || a == "-O" || a == "--script" || a == "-sS"));
+        assert_eq!(v4.last().unwrap(), "192.0.2.10");
+        let v6 = NmapProvider::arguments(true, &["2001:db8::1".into()]);
+        assert!(v6.contains(&"-6".to_string()));
+        assert_eq!(v6.last().unwrap(), "2001:db8::1");
+    }
+
+    #[test]
+    fn nmap_parses_ports_and_services_with_relationships() {
+        let xml = r#"<?xml version="1.0"?><nmaprun><host><status state="up"/>
+            <address addr="192.0.2.10" addrtype="ipv4"/><ports>
+            <port protocol="tcp" portid="22"><state state="open"/><service name="ssh" product="OpenSSH" version="9.6"/></port>
+            <port protocol="tcp" portid="443"><state state="open"/><service name="https" product="nginx" tunnel="ssl"/></port>
+            </ports></host></nmaprun>"#;
+        let discoveries = NmapProvider.parse(&nmap_exec(xml)).unwrap();
+        assert_eq!(discoveries.len(), 4); // 2 ports + 2 services
+        let port = &discoveries[0];
+        assert_eq!(port.asset_type, AssetType::Port);
+        assert_eq!(port.value, "192.0.2.10/tcp/22");
+        assert_eq!(port.relationship, Some(RelationshipType::Exposes));
+        assert_eq!(port.source.as_deref(), Some("192.0.2.10"));
+        let service = &discoveries[1];
+        assert_eq!(service.asset_type, AssetType::Service);
+        assert_eq!(service.value, "192.0.2.10/tcp/22/ssh");
+        assert_eq!(service.relationship, Some(RelationshipType::Serves));
+        assert_eq!(service.source.as_deref(), Some("192.0.2.10/tcp/22"));
+        assert_eq!(service.metadata["product"], json!("OpenSSH"));
+    }
+
+    #[test]
+    fn nmap_distinguishes_tcp_udp_and_unknown_service() {
+        let xml = r#"<nmaprun><host><status state="up"/><address addr="192.0.2.10" addrtype="ipv4"/><ports>
+            <port protocol="tcp" portid="53"><state state="open"/><service name="domain"/></port>
+            <port protocol="udp" portid="53"><state state="open"/></port>
+            </ports></host></nmaprun>"#;
+        let discoveries = NmapProvider.parse(&nmap_exec(xml)).unwrap();
+        let ports: Vec<_> = discoveries
+            .iter()
+            .filter(|d| d.asset_type == AssetType::Port)
+            .map(|d| d.value.as_str())
+            .collect();
+        assert!(ports.contains(&"192.0.2.10/tcp/53"));
+        assert!(ports.contains(&"192.0.2.10/udp/53")); // not collapsed with tcp
+        // The tcp/53 service has a name; udp/53 had no <service> element.
+        assert!(discoveries.iter().any(|d| d.value == "192.0.2.10/tcp/53/domain"));
+    }
+
+    #[test]
+    fn nmap_ipv6_address_is_used_in_identity() {
+        let xml = r#"<nmaprun><host><status state="up"/><address addr="2001:db8::10" addrtype="ipv6"/><ports>
+            <port protocol="tcp" portid="443"><state state="open"/><service name="https"/></port>
+            </ports></host></nmaprun>"#;
+        let discoveries = NmapProvider.parse(&nmap_exec(xml)).unwrap();
+        assert_eq!(discoveries[0].value, "2001:db8::10/tcp/443");
+    }
+
+    #[test]
+    fn nmap_skips_closed_ports_and_down_hosts() {
+        let xml = r#"<nmaprun>
+            <host><status state="down"/><address addr="192.0.2.9" addrtype="ipv4"/></host>
+            <host><status state="up"/><address addr="192.0.2.10" addrtype="ipv4"/><ports>
+            <port protocol="tcp" portid="80"><state state="closed"/></port>
+            <port protocol="tcp" portid="25"><state state="filtered"/></port>
+            </ports></host></nmaprun>"#;
+        let discoveries = NmapProvider.parse(&nmap_exec(xml)).unwrap();
+        assert!(discoveries.is_empty());
+    }
+
+    #[test]
+    fn nmap_malformed_xml_is_an_error() {
+        assert!(NmapProvider.parse(&nmap_exec("<nmaprun><host>oops")).is_err());
+    }
+
+    #[test]
+    fn nmap_missing_executable_reports_missing() {
+        let mut tools = ToolConfig::default();
+        tools.overrides.insert("nmap".into(), "/nonexistent/nmap".into());
+        assert_eq!(NmapProvider.installation(&tools), Installation::Missing);
+    }
+
+    #[test]
+    fn nmap_execute_without_in_scope_ips_is_a_clean_empty_run() {
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let execution = NmapProvider
+            .execute("192.0.2.10", Capability::PortDiscovery, &[], &context(&tools, &cancelled))
+            .unwrap();
+        assert_eq!(execution.exit_status, Some(0));
+        assert!(NmapProvider.parse(&execution).unwrap().is_empty());
     }
 }

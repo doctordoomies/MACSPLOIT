@@ -22,6 +22,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Outer safety ceiling for a whole Recon Chain. Individual providers bound their
+/// own execution via `Provider::timeout`; this only prevents a runaway chain and
+/// must be large enough for the slowest active provider (Nmap).
+const CHAIN_BUDGET: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainRun {
     pub id: Id,
@@ -198,6 +203,11 @@ impl Store {
                             "DNS Resolution",
                             Some(Capability::DnsResolution),
                             Some("native_dns"),
+                        ),
+                        (
+                            "Port + Service Discovery",
+                            Some(Capability::PortDiscovery),
+                            Some("nmap"),
                         ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
@@ -736,10 +746,13 @@ impl Engine {
         if cancelled.load(Ordering::SeqCst) {
             return Err(CoreError::new("Cancelled", "Recon Chain cancelled."));
         }
-        if started.elapsed() > Duration::from_secs(30) {
+        // Outer safety net for a whole chain. Individual providers bound their own
+        // execution (see Provider::timeout); this ceiling accommodates the slowest
+        // active provider (Nmap) while still preventing an unbounded chain.
+        if started.elapsed() > CHAIN_BUDGET {
             return Err(CoreError::new(
                 "BudgetExceeded",
-                "Recon Chain exceeded 30 seconds.",
+                "Recon Chain exceeded its time budget.",
             ));
         }
         Ok(())
@@ -758,13 +771,16 @@ impl Engine {
         // Pin the exact provider when the stage names one; otherwise fall back to
         // capability-based selection (preserves earlier single-provider behavior).
         let provider = match &stage.provider_id {
-            Some(id) => self.registry.named(id, capability, target.target_type)?,
+            Some(id) => self.registry.named(id, capability)?,
             None => self.registry.select(capability, target.target_type)?,
         };
         let metadata = provider.metadata();
         let conn = self.store.connect(workspace)?;
         let scope = database::workspace(&conn, workspace)?.scope;
-        crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, false)?;
+        // Launching a real Recon Chain is the analyst's explicit approval for its
+        // active stages; per-asset scope is still enforced by the in-scope filter
+        // below, so an out-of-scope resolved IP is never handed to an active tool.
+        crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
         let mut inputs:Vec<Asset>=rows(&conn,&format!("{ASSET_SELECT} WHERE workspace_id=?1 AND (id=?2 OR id IN (SELECT asset_id FROM observations o JOIN provider_runs p ON p.id=o.provider_run_id WHERE p.chain_id=?3))"),
             params![workspace.to_string(),target.asset_id.map(|id|id.to_string()),chain.id.to_string()])?;
         inputs.retain(|a| crate::scope::contains(&scope, &a.canonical_identity));
@@ -821,10 +837,15 @@ impl Engine {
             EventType::ProviderStarted,
             json!({"provider_run_id":run,"provider":metadata.name,"capability":capability}),
         )?;
+        // Record an audit trail entry when an ACTIVE provider begins scanning.
+        if metadata.risk_class == crate::providers::RiskClass::Active {
+            audit(&tx, workspace, "ActiveProviderStarted", run)?;
+        }
         tx.commit()?;
 
-        // The provider deadline never outlives the chain budget.
-        let deadline = started + Duration::from_secs(30);
+        // Each provider bounds its own execution; the chain budget is an outer
+        // safety net. This lets Nmap take longer than a fast passive provider.
+        let deadline = Instant::now() + provider.timeout();
         let ctx = crate::providers::ProviderContext {
             cancelled,
             deadline,
