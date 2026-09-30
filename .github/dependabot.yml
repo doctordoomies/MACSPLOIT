@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Rust dependencies (Cargo workspace).
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions used by CI (keeps pinned actions current).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

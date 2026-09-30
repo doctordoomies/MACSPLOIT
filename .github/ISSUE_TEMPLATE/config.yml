@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability in MACSPLOIT
+    url: https://github.com/doctordoomies/MACSPLOIT/security/advisories/new
+    about: >-
+      Do NOT open a public issue for a vulnerability in MACSPLOIT itself. Use
+      GitHub Private Vulnerability Reporting instead (see SECURITY.md).
+  - name: Question or usage help
+    url: https://github.com/doctordoomies/MACSPLOIT/issues
+    about: Ask usage questions here (or in Discussions if enabled).

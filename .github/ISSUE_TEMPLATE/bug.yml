@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a defect in MACSPLOIT
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! **Do not paste credentials, tokens, client/target
+        data, private IPs, or captured assessment evidence.** Scrub logs and
+        screenshots first. For a security vulnerability in MACSPLOIT, use Private
+        Vulnerability Reporting (see SECURITY.md), not a public issue.
+  - type: input
+    id: version
+    attributes:
+      label: MACSPLOIT version / commit
+      placeholder: e.g. v0.1.0 or commit 140a8d6
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. macOS 14.5
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options: ["Apple Silicon (arm64)", "Intel (x86_64)"]
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / external tool version (if relevant)
+      placeholder: e.g. nmap 7.95, subfinder 2.6.6, httpx 1.6.0
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output (secrets and target data removed)
+      render: text
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Confirmation
+      options:
+        - label: I removed credentials, tokens, and real target/client data.
+          required: true
+        - label: This is not an undisclosed security vulnerability in MACSPLOIT.
+          required: true

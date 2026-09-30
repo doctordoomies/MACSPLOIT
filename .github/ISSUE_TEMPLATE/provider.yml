@@ -1,0 +1,52 @@
+name: Provider proposal
+description: Propose a new MACSPLOIT provider (tool integration or native capability)
+labels: ["provider"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        See docs/provider-development.md. Providers must run through the process
+        supervisor (no shell), treat output as untrusted, respect scope, and ship
+        offline tests.
+  - type: input
+    id: tool
+    attributes:
+      label: Tool / capability
+      placeholder: e.g. Katana (web crawling), native TLS analysis
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Proposed risk class
+      options: ["PASSIVE", "ACTIVE_LOW_IMPACT", "ACTIVE", "VALIDATION/LAB_ONLY"]
+    validations:
+      required: true
+  - type: input
+    id: capability
+    attributes:
+      label: Capability
+      placeholder: e.g. HTTP_CRAWL, TLS_ANALYSIS
+    validations:
+      required: true
+  - type: input
+    id: targets
+    attributes:
+      label: Supported target/input asset types
+      placeholder: e.g. Website, URL
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Machine-readable output & parsing plan
+      description: How is output structured (JSON/XML/…)? What assets/relationships result?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope behavior
+      description: How does it stay within workspace scope (especially if active)?
+    validations:
+      required: true

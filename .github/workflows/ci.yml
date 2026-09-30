@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+
+# Least privilege: CI only needs to read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (macOS)
+    runs-on: macos-14 # Apple Silicon
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      # Pin to a tag; Dependabot (github-actions) keeps it current. Consider
+      # pinning to an immutable commit SHA for stricter supply-chain hardening.
+      - name: Checkout (full history for the repository audit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          swift --version
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Rust clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Full test suite (offline)
+        # Runs Rust tests, builds the real core helper, runs Swift tests against it
+        # with offline fake tools, runs the Python repository-policy tests, and the
+        # full-history repository audit. No test performs real network scanning.
+        run: ./scripts/test.sh
+
+      - name: Build macOS app (ad-hoc signed)
+        run: ./scripts/build-macos.sh
