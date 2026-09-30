@@ -35,8 +35,12 @@ fn fake_subfinder() -> PathBuf {
 fn tools_with_subfinder(path: PathBuf) -> ToolConfig {
     let mut tools = ToolConfig::default();
     tools.overrides.insert("subfinder".into(), path);
-    tools.overrides.insert("nmap".into(), fixture("fake-nmap.sh"));
-    tools.overrides.insert("httpx".into(), fixture("fake-httpx.sh"));
+    tools
+        .overrides
+        .insert("nmap".into(), fixture("fake-nmap.sh"));
+    tools
+        .overrides
+        .insert("httpx".into(), fixture("fake-httpx.sh"));
     tools
 }
 
@@ -53,10 +57,18 @@ fn fake_resolver() -> Arc<dyn DnsResolver> {
     )
 }
 
-fn engine_with(tools: ToolConfig, resolver: Arc<dyn DnsResolver>) -> (tempfile::TempDir, Engine, Id, Id) {
+fn engine_with(
+    tools: ToolConfig,
+    resolver: Arc<dyn DnsResolver>,
+) -> (tempfile::TempDir, Engine, Id, Id) {
     let temp = tempfile::tempdir().unwrap();
-    let engine =
-        Engine::open_with(Store::open(temp.path()).unwrap(), Duration::ZERO, tools, resolver).unwrap();
+    let engine = Engine::open_with(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        tools,
+        resolver,
+    )
+    .unwrap();
     let workspace = engine
         .store
         .create_workspace(
@@ -68,7 +80,10 @@ fn engine_with(tools: ToolConfig, resolver: Arc<dyn DnsResolver>) -> (tempfile::
             ],
         )
         .unwrap();
-    let target = engine.store.add_target(workspace.id, "example.test").unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "example.test")
+        .unwrap();
     (temp, engine, workspace.id, target.id)
 }
 
@@ -94,7 +109,10 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     assert_eq!(snapshot.chains[0].id, chain.id);
     assert_eq!(snapshot.chains[0].name, "Domain Recon");
     assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
-    assert!(snapshot.stages.iter().all(|s| s.status == TaskStatus::Completed));
+    assert!(snapshot
+        .stages
+        .iter()
+        .all(|s| s.status == TaskStatus::Completed));
     assert!(snapshot
         .stages
         .iter()
@@ -161,7 +179,10 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
         .iter()
         .find(|a| a.canonical_identity == "192.0.2.10/tcp/22/ssh")
         .expect("ssh service");
-    assert_eq!(ssh_service.metadata["product"], serde_json::json!("OpenSSH"));
+    assert_eq!(
+        ssh_service.metadata["product"],
+        serde_json::json!("OpenSSH")
+    );
 
     // Relationships: 3 has_subdomain + 3 resolves_to + 6 exposes + 6 serves.
     let count = |kind: RelationshipType| {
@@ -225,10 +246,16 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
         .iter()
         .find(|e| e.provider == "Nmap")
         .expect("nmap evidence");
-    let raw = engine.store.read_evidence(workspace, nmap_evidence.id).unwrap();
+    let raw = engine
+        .store
+        .read_evidence(workspace, nmap_evidence.id)
+        .unwrap();
     let envelope: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(envelope["provider"], "nmap");
-    assert!(envelope["stdout"].as_str().unwrap().contains("portid=\"22\""));
+    assert!(envelope["stdout"]
+        .as_str()
+        .unwrap()
+        .contains("portid=\"22\""));
 
     // Audit trail records the active scan.
     // (verified indirectly: nmap run is ACTIVE and completed above)
@@ -261,16 +288,28 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     assert_eq!(after.provider_runs.len(), 4);
     assert_eq!(after.evidence.len(), 4);
     assert_eq!(
-        after.assets.iter().filter(|a| a.asset_type == AssetType::Website).count(),
+        after
+            .assets
+            .iter()
+            .filter(|a| a.asset_type == AssetType::Website)
+            .count(),
         3
     );
     // Port and Service assets survive the reopen.
     assert_eq!(
-        after.assets.iter().filter(|a| a.asset_type == AssetType::Port).count(),
+        after
+            .assets
+            .iter()
+            .filter(|a| a.asset_type == AssetType::Port)
+            .count(),
         6
     );
     assert_eq!(
-        after.assets.iter().filter(|a| a.asset_type == AssetType::Service).count(),
+        after
+            .assets
+            .iter()
+            .filter(|a| a.asset_type == AssetType::Service)
+            .count(),
         6
     );
     assert_eq!(after.chains[0].status, ChainStatus::Completed);

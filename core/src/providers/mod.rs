@@ -163,7 +163,10 @@ impl ProviderRegistry {
             .find(|provider| provider.metadata().id == id)
             .cloned()
             .ok_or_else(|| {
-                CoreError::new("ProviderFailure", "The requested provider is not registered.")
+                CoreError::new(
+                    "ProviderFailure",
+                    "The requested provider is not registered.",
+                )
             })?;
         if !provider.metadata().capabilities.contains(&capability) {
             return Err(CoreError::new(
@@ -397,12 +400,7 @@ impl SubfinderProvider {
         // -silent: only results on stdout. -oJ: JSON lines. The target has
         // already been validated/normalized by `targets::classify`, so it cannot
         // contain shell metacharacters or a leading dash.
-        vec![
-            "-d".into(),
-            target.into(),
-            "-silent".into(),
-            "-oJ".into(),
-        ]
+        vec!["-d".into(), target.into(), "-silent".into(), "-oJ".into()]
     }
 }
 
@@ -647,9 +645,8 @@ impl Provider for NativeDnsProvider {
     }
 
     fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
-        let report: DnsReport = serde_json::from_slice(&execution.stdout).map_err(|_| {
-            CoreError::new("ProviderFailure", "Native DNS output is malformed.")
-        })?;
+        let report: DnsReport = serde_json::from_slice(&execution.stdout)
+            .map_err(|_| CoreError::new("ProviderFailure", "Native DNS output is malformed."))?;
         let mut discoveries = Vec::new();
         for record in report.records {
             // Normalize the source host once; addresses are already de-duplicated
@@ -774,7 +771,10 @@ impl Provider for NmapProvider {
         // an active tool). Partition by family: nmap cannot mix IPv4 and IPv6.
         let mut v4 = Vec::new();
         let mut v6 = Vec::new();
-        for asset in inputs.iter().filter(|a| a.asset_type == AssetType::IPAddress) {
+        for asset in inputs
+            .iter()
+            .filter(|a| a.asset_type == AssetType::IPAddress)
+        {
             match asset.canonical_identity.parse::<std::net::IpAddr>() {
                 Ok(std::net::IpAddr::V4(_)) => v4.push(asset.canonical_identity.clone()),
                 Ok(std::net::IpAddr::V6(_)) => v6.push(asset.canonical_identity.clone()),
@@ -865,9 +865,8 @@ impl Provider for NmapProvider {
                 continue;
             }
             any_document = true;
-            let document = roxmltree::Document::parse(chunk).map_err(|_| {
-                CoreError::new("ProviderFailure", "Nmap XML output is malformed.")
-            })?;
+            let document = roxmltree::Document::parse(chunk)
+                .map_err(|_| CoreError::new("ProviderFailure", "Nmap XML output is malformed."))?;
             for host in document.descendants().filter(|n| n.has_tag_name("host")) {
                 // The reportable address is the ipv4/ipv6 address element.
                 let Some(address) = host
@@ -995,7 +994,13 @@ impl HttpxProvider {
                 continue;
             }
             let (host, port, name) = (parts[0], parts[2], parts[3]);
-            let scheme = if name.starts_with("https") { "https" } else if name.starts_with("http") { "http" } else { continue };
+            let scheme = if name.starts_with("https") {
+                "https"
+            } else if name.starts_with("http") {
+                "http"
+            } else {
+                continue;
+            };
             let url = format!("{scheme}://{host}:{port}");
             if !urls.contains(&url) {
                 urls.push(url);
@@ -1041,7 +1046,9 @@ impl Provider for HttpxProvider {
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
                 Installation::Installed { version }
             }
-            Err(error) => Installation::ExecutionError { message: error.message },
+            Err(error) => Installation::ExecutionError {
+                message: error.message,
+            },
         }
     }
 
@@ -1148,11 +1155,21 @@ impl Provider for HttpxProvider {
                 .as_deref()
                 .map(|h| h.rsplit_once(':').map(|(h, _)| h).unwrap_or(h).to_owned());
             let mut metadata = json!({ "tool": "httpx" });
-            if let Some(code) = record.status_code { metadata["status_code"] = json!(code); }
-            if let Some(t) = &record.title { metadata["title"] = json!(clip(t, 512)); }
-            if let Some(s) = &record.webserver { metadata["server"] = json!(clip(s, 256)); }
-            if let Some(c) = record.content_length { metadata["content_length"] = json!(c); }
-            if let Some(l) = &record.location { metadata["location"] = json!(clip(l, 1024)); }
+            if let Some(code) = record.status_code {
+                metadata["status_code"] = json!(code);
+            }
+            if let Some(t) = &record.title {
+                metadata["title"] = json!(clip(t, 512));
+            }
+            if let Some(s) = &record.webserver {
+                metadata["server"] = json!(clip(s, 256));
+            }
+            if let Some(c) = record.content_length {
+                metadata["content_length"] = json!(c);
+            }
+            if let Some(l) = &record.location {
+                metadata["location"] = json!(clip(l, 1024));
+            }
             discoveries.push(Discovery {
                 asset_type: AssetType::Website,
                 value: url.clone(),
@@ -1181,11 +1198,13 @@ impl Provider for HttpxProvider {
 
 /// Truncate untrusted strings to a bounded length (char-safe).
 fn clip(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        value.to_owned()
-    } else {
-        value.chars().take(max).collect()
-    }
+    // Drop control characters (defense against ANSI/terminal-escape injection from
+    // untrusted provider output) and bound the length (char-safe).
+    value
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(max)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1272,12 +1291,15 @@ mod tests {
     #[test]
     fn subfinder_reports_missing_when_absent() {
         let tools = ToolConfig::default(); // no override, unlikely to exist under a fake name
-        // Force a definitely-missing tool by using an override to a nonexistent path.
+                                           // Force a definitely-missing tool by using an override to a nonexistent path.
         let mut missing = ToolConfig::default();
         missing
             .overrides
             .insert("subfinder".into(), "/nonexistent/subfinder".into());
-        assert_eq!(SubfinderProvider.installation(&missing), Installation::Missing);
+        assert_eq!(
+            SubfinderProvider.installation(&missing),
+            Installation::Missing
+        );
         let _ = tools;
     }
 
@@ -1291,12 +1313,12 @@ mod tests {
     fn subfinder_parses_jsonl_dedupes_and_normalizes() {
         let stdout = concat!(
             "{\"host\":\"api.example.test\"}\n",
-            "{\"host\":\"API.EXAMPLE.TEST.\"}\n",   // dup after normalization
+            "{\"host\":\"API.EXAMPLE.TEST.\"}\n", // dup after normalization
             "{\"host\":\"dev.example.test\",\"source\":\"crtsh\"}\n",
-            "dev.example.test\n",                    // dup bare line
-            "{\"host\":\"example.test\"}\n",         // apex, skipped
-            "not-json-and-not-a-host !!\n",          // malformed, skipped
-            "{\"host\":\"third-party.test\"}\n",     // unrelated, preserved w/o rel
+            "dev.example.test\n",                // dup bare line
+            "{\"host\":\"example.test\"}\n",     // apex, skipped
+            "not-json-and-not-a-host !!\n",      // malformed, skipped
+            "{\"host\":\"third-party.test\"}\n", // unrelated, preserved w/o rel
         );
         let discoveries = SubfinderProvider
             .parse(&exec_with_stdout("example.test", stdout.as_bytes()))
@@ -1307,7 +1329,10 @@ mod tests {
             vec!["api.example.test", "dev.example.test", "third-party.test"]
         );
         // Children get a HasSubdomain relationship; unrelated hosts do not.
-        assert_eq!(discoveries[0].relationship, Some(RelationshipType::HasSubdomain));
+        assert_eq!(
+            discoveries[0].relationship,
+            Some(RelationshipType::HasSubdomain)
+        );
         assert_eq!(discoveries[0].source.as_deref(), Some("example.test"));
         assert_eq!(discoveries[2].relationship, None);
         assert_eq!(discoveries[2].source, None);
@@ -1369,7 +1394,12 @@ mod tests {
             dns_asset(AssetType::Subdomain, "dev.example.test"),
         ];
         let execution = provider
-            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .execute(
+                "example.test",
+                Capability::DnsResolution,
+                &inputs,
+                &context(&tools, &cancelled),
+            )
             .unwrap();
         let discoveries = provider.parse(&execution).unwrap();
         // api -> 192.0.2.10 (deduped) + 2001:db8::10 ; dev -> 192.0.2.11  => 3
@@ -1379,7 +1409,10 @@ mod tests {
             .all(|d| d.asset_type == AssetType::IPAddress
                 && d.relationship == Some(RelationshipType::ResolvesTo)));
         assert_eq!(
-            discoveries.iter().filter(|d| d.source.as_deref() == Some("api.example.test")).count(),
+            discoveries
+                .iter()
+                .filter(|d| d.source.as_deref() == Some("api.example.test"))
+                .count(),
             2
         );
     }
@@ -1387,13 +1420,19 @@ mod tests {
     #[test]
     fn native_dns_no_records_yields_no_discoveries() {
         use crate::dns::{DnsOutcome, StaticDnsResolver};
-        let resolver = StaticDnsResolver::new().with_outcome("api.example.test", DnsOutcome::NoRecords);
+        let resolver =
+            StaticDnsResolver::new().with_outcome("api.example.test", DnsOutcome::NoRecords);
         let provider = NativeDnsProvider::new(Arc::new(resolver));
         let tools = ToolConfig::default();
         let cancelled = AtomicBool::new(false);
         let inputs = vec![dns_asset(AssetType::Subdomain, "api.example.test")];
         let execution = provider
-            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .execute(
+                "example.test",
+                Capability::DnsResolution,
+                &inputs,
+                &context(&tools, &cancelled),
+            )
             .unwrap();
         assert!(provider.parse(&execution).unwrap().is_empty());
     }
@@ -1401,12 +1440,18 @@ mod tests {
     #[test]
     fn native_dns_falls_back_to_target_when_no_host_inputs() {
         use crate::dns::StaticDnsResolver;
-        let resolver = StaticDnsResolver::new().with("example.test", &["192.0.2.1".parse().unwrap()], &[]);
+        let resolver =
+            StaticDnsResolver::new().with("example.test", &["192.0.2.1".parse().unwrap()], &[]);
         let provider = NativeDnsProvider::new(Arc::new(resolver));
         let tools = ToolConfig::default();
         let cancelled = AtomicBool::new(false);
         let execution = provider
-            .execute("example.test", Capability::DnsResolution, &[], &context(&tools, &cancelled))
+            .execute(
+                "example.test",
+                Capability::DnsResolution,
+                &[],
+                &context(&tools, &cancelled),
+            )
             .unwrap();
         let discoveries = provider.parse(&execution).unwrap();
         assert_eq!(discoveries.len(), 1);
@@ -1417,13 +1462,22 @@ mod tests {
     #[test]
     fn native_dns_cancellation_is_reported() {
         use crate::dns::StaticDnsResolver;
-        let resolver = StaticDnsResolver::new().with("api.example.test", &["192.0.2.10".parse().unwrap()], &[]);
+        let resolver = StaticDnsResolver::new().with(
+            "api.example.test",
+            &["192.0.2.10".parse().unwrap()],
+            &[],
+        );
         let provider = NativeDnsProvider::new(Arc::new(resolver));
         let tools = ToolConfig::default();
         let cancelled = AtomicBool::new(true);
         let inputs = vec![dns_asset(AssetType::Subdomain, "api.example.test")];
         let error = provider
-            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .execute(
+                "example.test",
+                Capability::DnsResolution,
+                &inputs,
+                &context(&tools, &cancelled),
+            )
             .unwrap_err();
         assert_eq!(error.code, "Cancelled");
     }
@@ -1466,7 +1520,9 @@ mod tests {
         assert!(v4.contains(&"-sV".to_string()));
         assert!(v4.windows(2).any(|w| w == ["-oX", "-"]));
         assert!(!v4.contains(&"-6".to_string()));
-        assert!(!v4.iter().any(|a| a == "-A" || a == "-O" || a == "--script" || a == "-sS"));
+        assert!(!v4
+            .iter()
+            .any(|a| a == "-A" || a == "-O" || a == "--script" || a == "-sS"));
         assert_eq!(v4.last().unwrap(), "192.0.2.10");
         let v6 = NmapProvider::arguments(true, &["2001:db8::1".into()]);
         assert!(v6.contains(&"-6".to_string()));
@@ -1509,8 +1565,10 @@ mod tests {
             .collect();
         assert!(ports.contains(&"192.0.2.10/tcp/53"));
         assert!(ports.contains(&"192.0.2.10/udp/53")); // not collapsed with tcp
-        // The tcp/53 service has a name; udp/53 had no <service> element.
-        assert!(discoveries.iter().any(|d| d.value == "192.0.2.10/tcp/53/domain"));
+                                                       // The tcp/53 service has a name; udp/53 had no <service> element.
+        assert!(discoveries
+            .iter()
+            .any(|d| d.value == "192.0.2.10/tcp/53/domain"));
     }
 
     #[test]
@@ -1536,13 +1594,17 @@ mod tests {
 
     #[test]
     fn nmap_malformed_xml_is_an_error() {
-        assert!(NmapProvider.parse(&nmap_exec("<nmaprun><host>oops")).is_err());
+        assert!(NmapProvider
+            .parse(&nmap_exec("<nmaprun><host>oops"))
+            .is_err());
     }
 
     #[test]
     fn nmap_missing_executable_reports_missing() {
         let mut tools = ToolConfig::default();
-        tools.overrides.insert("nmap".into(), "/nonexistent/nmap".into());
+        tools
+            .overrides
+            .insert("nmap".into(), "/nonexistent/nmap".into());
         assert_eq!(NmapProvider.installation(&tools), Installation::Missing);
     }
 
@@ -1551,7 +1613,12 @@ mod tests {
         let tools = ToolConfig::default();
         let cancelled = AtomicBool::new(false);
         let execution = NmapProvider
-            .execute("192.0.2.10", Capability::PortDiscovery, &[], &context(&tools, &cancelled))
+            .execute(
+                "192.0.2.10",
+                Capability::PortDiscovery,
+                &[],
+                &context(&tools, &cancelled),
+            )
             .unwrap();
         assert_eq!(execution.exit_status, Some(0));
         assert!(NmapProvider.parse(&execution).unwrap().is_empty());
@@ -1589,7 +1656,7 @@ mod tests {
             dns_asset(AssetType::Service, "192.0.2.10/tcp/443/https"),
             dns_asset(AssetType::Service, "192.0.2.10/tcp/80/http"),
             dns_asset(AssetType::Service, "192.0.2.10/tcp/22/ssh"), // not web
-            dns_asset(AssetType::IPAddress, "192.0.2.10"),           // not a service
+            dns_asset(AssetType::IPAddress, "192.0.2.10"),          // not a service
         ];
         let urls = HttpxProvider::urls_from_services(&inputs);
         assert_eq!(urls, vec!["https://192.0.2.10:443", "http://192.0.2.10:80"]);
@@ -1598,8 +1665,10 @@ mod tests {
     #[test]
     fn httpx_parses_websites_and_technology() {
         let jsonl = concat!(
-            r#"{"url":"https://192.0.2.10:443","status_code":200,"title":"Demo","webserver":"nginx","host":"192.0.2.10","tech":["nginx","React"]}"#, "\n",
-            r#"{"url":"https://192.0.2.10:443","status_code":200,"host":"192.0.2.10"}"#, "\n", // duplicate URL
+            r#"{"url":"https://192.0.2.10:443","status_code":200,"title":"Demo","webserver":"nginx","host":"192.0.2.10","tech":["nginx","React"]}"#,
+            "\n",
+            r#"{"url":"https://192.0.2.10:443","status_code":200,"host":"192.0.2.10"}"#,
+            "\n", // duplicate URL
             "not json\n",
         );
         let discoveries = HttpxProvider.parse(&httpx_exec(jsonl)).unwrap();
@@ -1629,9 +1698,45 @@ mod tests {
     }
 
     #[test]
+    fn httpx_strips_control_sequences_from_untrusted_metadata() {
+        let jsonl = "{\"url\":\"https://192.0.2.10:443\",\"title\":\"A\\u001b[31mBAD\\u0007\",\"host\":\"192.0.2.10\"}\n";
+        let discoveries = HttpxProvider.parse(&httpx_exec(jsonl)).unwrap();
+        let website = discoveries
+            .iter()
+            .find(|d| d.asset_type == AssetType::Website)
+            .unwrap();
+        let title = website.metadata["title"].as_str().unwrap();
+        assert!(
+            !title.chars().any(|c| c.is_control()),
+            "control chars leaked: {title:?}"
+        );
+        assert!(title.contains("BAD"));
+    }
+
+    #[test]
+    fn nmap_xml_parser_does_not_expand_entities() {
+        // roxmltree is non-validating and does not expand external/DTD entities.
+        // A billion-laughs-style document must not blow up or expand into a service.
+        let xml = concat!(
+            "<?xml version=\"1.0\"?>",
+            "<!DOCTYPE nmaprun [ <!ENTITY x \"aaaaaaaaaa\"> ]>",
+            "<nmaprun><host><status state=\"up\"/><address addr=\"192.0.2.10\" addrtype=\"ipv4\"/>",
+            "<ports><port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/>",
+            "<service name=\"&x;\"/></port></ports></host></nmaprun>",
+        );
+        // Either the parser rejects the DTD/entity, or it does not expand it; either
+        // way there is no entity expansion and no panic.
+        if let Ok(discoveries) = NmapProvider.parse(&nmap_exec(xml)) {
+            assert!(discoveries.iter().all(|d| !d.value.contains("aaaaaaaaaa")));
+        }
+    }
+
+    #[test]
     fn httpx_missing_executable_reports_missing() {
         let mut tools = ToolConfig::default();
-        tools.overrides.insert("httpx".into(), "/nonexistent/httpx".into());
+        tools
+            .overrides
+            .insert("httpx".into(), "/nonexistent/httpx".into());
         assert_eq!(HttpxProvider.installation(&tools), Installation::Missing);
     }
 
@@ -1640,7 +1745,12 @@ mod tests {
         let tools = ToolConfig::default();
         let cancelled = AtomicBool::new(false);
         let execution = HttpxProvider
-            .execute("example.test", Capability::HttpProbing, &[], &context(&tools, &cancelled))
+            .execute(
+                "example.test",
+                Capability::HttpProbing,
+                &[],
+                &context(&tools, &cancelled),
+            )
             .unwrap();
         assert_eq!(execution.exit_status, Some(0));
         assert!(HttpxProvider.parse(&execution).unwrap().is_empty());

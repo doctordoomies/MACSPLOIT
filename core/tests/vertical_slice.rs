@@ -44,7 +44,9 @@ fn wait(engine: &Engine, workspace: Id) -> Snapshot {
 fn complete_vertical_slice_persists_graph_events_evidence_and_restart() {
     let (temp, engine, workspace, target) = setup();
     let cursor = engine.store.snapshot(workspace).unwrap().last_sequence;
-    let chain = engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    let chain = engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let snapshot = wait(&engine, workspace);
     assert_eq!(snapshot.chains[0].id, chain.id);
     assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
@@ -133,7 +135,9 @@ fn complete_vertical_slice_persists_graph_events_evidence_and_restart() {
 #[test]
 fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
     let (_temp, engine, workspace, target) = setup();
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let first = wait(&engine, workspace);
     let api = first
         .assets
@@ -148,7 +152,9 @@ fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
             .count(),
         3
     );
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let second = wait(&engine, workspace);
     assert_eq!(second.assets.len(), 11);
     assert_eq!(second.relationships.len(), 10);
@@ -169,7 +175,10 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
     let denied = engine.store.create_workspace("No Scope", &[]).unwrap();
     let target = engine.store.add_target(denied.id, "example.test").unwrap();
     assert_eq!(
-        engine.start(denied.id, target.id, ChainKind::Synthetic).unwrap_err().code,
+        engine
+            .start(denied.id, target.id, ChainKind::Synthetic)
+            .unwrap_err()
+            .code,
         "ScopeViolation"
     );
     let limited = engine
@@ -177,7 +186,9 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
         .create_workspace("Root only", &["example.test".into()])
         .unwrap();
     let target = engine.store.add_target(limited.id, "example.test").unwrap();
-    engine.start(limited.id, target.id, ChainKind::Synthetic).unwrap();
+    engine
+        .start(limited.id, target.id, ChainKind::Synthetic)
+        .unwrap();
     let snapshot = wait(&engine, limited.id);
     assert_eq!(snapshot.assets.len(), 3); // passive out-of-scope subdomains remain visible
     assert!(snapshot
@@ -194,7 +205,9 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
 #[test]
 fn evidence_tampering_and_path_traversal_are_rejected() {
     let (_temp, engine, workspace, target) = setup();
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let snapshot = wait(&engine, workspace);
     let evidence = &snapshot.evidence[0];
     std::fs::write(
@@ -232,7 +245,9 @@ fn evidence_tampering_and_path_traversal_are_rejected() {
 #[test]
 fn discovery_transaction_rolls_back_asset_provenance_and_events() {
     let (_temp, engine, workspace, target) = setup();
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let before = wait(&engine, workspace);
     let discoveries = vec![
         Discovery {
@@ -283,9 +298,14 @@ fn cancellation_is_durable_and_global_concurrency_is_bounded() {
         .store
         .add_target(workspace.id, "example.test")
         .unwrap();
-    let run = engine.start(workspace.id, target.id, ChainKind::Synthetic).unwrap();
+    let run = engine
+        .start(workspace.id, target.id, ChainKind::Synthetic)
+        .unwrap();
     assert_eq!(
-        engine.start(workspace.id, target.id, ChainKind::Synthetic).unwrap_err().code,
+        engine
+            .start(workspace.id, target.id, ChainKind::Synthetic)
+            .unwrap_err()
+            .code,
         "CoreBusy"
     );
     engine.cancel(workspace.id, run.id).unwrap();
@@ -317,10 +337,15 @@ fn workspace_isolation_and_exclusive_helper_ownership() {
         .create_workspace("Other", &["example.test".into()])
         .unwrap();
     assert_eq!(
-        engine.start(other.id, target, ChainKind::Synthetic).unwrap_err().code,
+        engine
+            .start(other.id, target, ChainKind::Synthetic)
+            .unwrap_err()
+            .code,
         "InvalidTarget"
     );
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let snapshot = wait(&engine, workspace);
     assert!(engine
         .store
@@ -342,7 +367,9 @@ fn workspace_isolation_and_exclusive_helper_ownership() {
 #[test]
 fn interrupted_run_is_recovered_without_rescanning() {
     let (temp, engine, workspace, target) = setup();
-    engine.start(workspace, target, ChainKind::Synthetic).unwrap();
+    engine
+        .start(workspace, target, ChainKind::Synthetic)
+        .unwrap();
     let snapshot = wait(&engine, workspace);
     let conn = engine.store.connect(workspace).unwrap();
     conn.execute("UPDATE chain_runs SET status='RUNNING'", [])

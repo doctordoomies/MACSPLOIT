@@ -60,9 +60,7 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     if version < 2 {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("../../migrations/002_domain_recon.sql"))
-            .map_err(|_| {
-                CoreError::new("MigrationFailure", "Domain-recon migration failed.")
-            })?;
+            .map_err(|_| CoreError::new("MigrationFailure", "Domain-recon migration failed."))?;
         tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
     }

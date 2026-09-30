@@ -121,8 +121,20 @@ mod tests {
         assert!(authorize(&entries(), "example.test", RiskClass::LabOnly, true).is_err());
         // Low-impact work (DNS) is allowed on an in-scope target without approval,
         // but still denied out of scope.
-        assert!(authorize(&entries(), "example.test", RiskClass::ActiveLowImpact, false).is_ok());
-        assert!(authorize(&entries(), "outside.test", RiskClass::ActiveLowImpact, false).is_err());
+        assert!(authorize(
+            &entries(),
+            "example.test",
+            RiskClass::ActiveLowImpact,
+            false
+        )
+        .is_ok());
+        assert!(authorize(
+            &entries(),
+            "outside.test",
+            RiskClass::ActiveLowImpact,
+            false
+        )
+        .is_err());
     }
     #[test]
     fn scope_entries_are_validated_and_ipv6_supported() {

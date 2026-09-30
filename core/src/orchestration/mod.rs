@@ -55,20 +55,18 @@ pub struct Stage {
 }
 
 /// A named Recon Chain preset the caller can start.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChainKind {
     /// Fully offline invented discoveries (Phase 0). Requires example.test.
+    #[default]
     Synthetic,
     /// First real chain (Phase 1A): passive subdomain discovery via Subfinder.
     DomainRecon,
 }
 
-impl Default for ChainKind {
-    fn default() -> Self {
-        Self::Synthetic
-    }
-}
+/// One preset stage: (display name, optional capability, optional pinned provider).
+type StagePlan = (&'static str, Option<Capability>, Option<&'static str>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRun {
     pub id: Id,
@@ -149,8 +147,7 @@ impl Store {
             })?;
         // Each preset supplies a display name and its ordered stages. A stage
         // triple is (name, optional capability, optional pinned provider id).
-        let (chain_name, stages): (&str, Vec<(&str, Option<Capability>, Option<&str>)>) = match kind
-        {
+        let (chain_name, stages): (&str, Vec<StagePlan>) = match kind {
             ChainKind::Synthetic => {
                 if target.target_type != TargetType::Domain
                     || target.normalized_value != "example.test"
@@ -209,11 +206,7 @@ impl Store {
                             Some(Capability::PortDiscovery),
                             Some("nmap"),
                         ),
-                        (
-                            "HTTP Probing",
-                            Some(Capability::HttpProbing),
-                            Some("httpx"),
-                        ),
+                        ("HTTP Probing", Some(Capability::HttpProbing), Some("httpx")),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],

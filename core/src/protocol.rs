@@ -23,18 +23,35 @@ pub struct Request {
 pub enum Command {
     Hello {},
     ListWorkspaces {},
-    CreateWorkspace { name: String, scope: Vec<String> },
-    AddTarget { workspace_id: Id, value: String },
-    Snapshot { workspace_id: Id },
-    EventsAfter { workspace_id: Id, after: i64 },
+    CreateWorkspace {
+        name: String,
+        scope: Vec<String>,
+    },
+    AddTarget {
+        workspace_id: Id,
+        value: String,
+    },
+    Snapshot {
+        workspace_id: Id,
+    },
+    EventsAfter {
+        workspace_id: Id,
+        after: i64,
+    },
     StartChain {
         workspace_id: Id,
         target_id: Id,
         #[serde(default)]
         chain: crate::orchestration::ChainKind,
     },
-    CancelChain { workspace_id: Id, chain_id: Id },
-    ReadEvidence { workspace_id: Id, evidence_id: Id },
+    CancelChain {
+        workspace_id: Id,
+        chain_id: Id,
+    },
+    ReadEvidence {
+        workspace_id: Id,
+        evidence_id: Id,
+    },
     ListProviders {},
 }
 

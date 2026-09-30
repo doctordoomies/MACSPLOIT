@@ -115,10 +115,16 @@ fn usable_executable(path: &Path) -> Option<PathBuf> {
 pub enum Installation {
     /// A native, always-available provider that runs no external tool.
     BuiltIn,
-    Installed { version: String },
+    Installed {
+        version: String,
+    },
     Missing,
-    UnsupportedVersion { version: String },
-    ExecutionError { message: String },
+    UnsupportedVersion {
+        version: String,
+    },
+    ExecutionError {
+        message: String,
+    },
 }
 
 /// Extract a `MAJOR.MINOR.PATCH` (optionally longer) version token from tool
@@ -232,8 +238,12 @@ pub fn run(
         }
     };
 
-    let stdout = stdout_handle.and_then(|h| h.join().ok()).unwrap_or_default();
-    let stderr = stderr_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stdout = stdout_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
     Ok(ProcessOutcome {
         stdout,
         stderr,
@@ -252,9 +262,15 @@ mod tests {
 
     #[test]
     fn scan_version_finds_semver_token() {
-        assert_eq!(scan_version("subfinder version v2.6.6").as_deref(), Some("2.6.6"));
+        assert_eq!(
+            scan_version("subfinder version v2.6.6").as_deref(),
+            Some("2.6.6")
+        );
         assert_eq!(scan_version("v1.10.0-dev").as_deref(), Some("1.10.0"));
-        assert_eq!(scan_version("Nmap version 7.95 ( https://nmap.org )").as_deref(), Some("7.95"));
+        assert_eq!(
+            scan_version("Nmap version 7.95 ( https://nmap.org )").as_deref(),
+            Some("7.95")
+        );
         assert_eq!(scan_version("no version here"), None);
         assert_eq!(scan_version("build 2026"), None);
     }
@@ -268,14 +284,21 @@ mod tests {
         let mut config = ToolConfig::default();
         config.overrides.insert("faketool".into(), script.clone());
         assert_eq!(config.locate("faketool"), Some(script));
-        assert_eq!(ToolConfig::default().locate("definitely-not-a-real-tool-xyz"), None);
+        assert_eq!(
+            ToolConfig::default().locate("definitely-not-a-real-tool-xyz"),
+            None
+        );
     }
 
     #[test]
     fn run_captures_output_and_exit_code() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("emit");
-        std::fs::write(&script, "#!/bin/sh\nprintf 'hello'\nprintf 'oops' 1>&2\nexit 3\n").unwrap();
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf 'hello'\nprintf 'oops' 1>&2\nexit 3\n",
+        )
+        .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let cancelled = AtomicBool::new(false);
         let outcome = run(

@@ -71,8 +71,12 @@ impl Default for ResolveLimits {
 /// Synchronous resolver boundary. Implementations must honor `deadline` and
 /// `cancelled`, bound concurrency, and never panic on resolution failure.
 pub trait DnsResolver: Send + Sync {
-    fn resolve(&self, hosts: &[String], deadline: Instant, cancelled: &AtomicBool)
-        -> Vec<HostResolution>;
+    fn resolve(
+        &self,
+        hosts: &[String],
+        deadline: Instant,
+        cancelled: &AtomicBool,
+    ) -> Vec<HostResolution>;
     /// True for the built-in native resolver; false for external tools.
     fn built_in(&self) -> bool {
         true
@@ -155,7 +159,11 @@ impl StaticDnsResolver {
             };
             let mut a = Vec::new();
             let mut aaaa = Vec::new();
-            for address in addresses.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            for address in addresses
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 if let Ok(ip) = address.parse::<Ipv4Addr>() {
                     a.push(ip);
                 } else if let Ok(ip) = address.parse::<Ipv6Addr>() {
@@ -197,17 +205,9 @@ impl DnsResolver for StaticDnsResolver {
 // resolver above.
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct SystemDnsResolver {
     pub limits: ResolveLimits,
-}
-
-impl Default for SystemDnsResolver {
-    fn default() -> Self {
-        Self {
-            limits: ResolveLimits::default(),
-        }
-    }
 }
 
 impl DnsResolver for SystemDnsResolver {
@@ -250,7 +250,10 @@ impl DnsResolver for SystemDnsResolver {
             let mut tasks = Vec::with_capacity(hosts.len());
             for host in hosts {
                 if cancelled.load(Ordering::SeqCst) {
-                    tasks.push(ready_task(HostResolution::empty(host, DnsOutcome::Cancelled)));
+                    tasks.push(ready_task(HostResolution::empty(
+                        host,
+                        DnsOutcome::Cancelled,
+                    )));
                     continue;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -269,9 +272,9 @@ impl DnsResolver for SystemDnsResolver {
             }
             let mut results = Vec::with_capacity(tasks.len());
             for task in tasks {
-                match task.await {
-                    Ok(resolution) => results.push(resolution),
-                    Err(_) => {} // a panicked/aborted task is simply dropped
+                // A panicked/aborted task is simply dropped.
+                if let Ok(resolution) = task.await {
+                    results.push(resolution);
                 }
             }
             results
@@ -297,7 +300,7 @@ async fn resolve_one(
     match timeout(per_query, resolver.ipv4_lookup(host)).await {
         Ok(Ok(lookup)) => {
             for record in lookup.iter() {
-                let ip = Ipv4Addr::from(record.0);
+                let ip = record.0;
                 if !a.contains(&ip) {
                     a.push(ip);
                 }
@@ -309,7 +312,7 @@ async fn resolve_one(
     match timeout(per_query, resolver.ipv6_lookup(host)).await {
         Ok(Ok(lookup)) => {
             for record in lookup.iter() {
-                let ip = Ipv6Addr::from(record.0);
+                let ip = record.0;
                 if !aaaa.contains(&ip) {
                     aaaa.push(ip);
                 }
@@ -368,33 +371,40 @@ mod tests {
     fn static_resolver_returns_programmed_records() {
         let resolver = StaticDnsResolver::new()
             .with("api.example.test", &["192.0.2.10".parse().unwrap()], &[])
-            .with(
-                "v6.example.test",
-                &[],
-                &["2001:db8::10".parse().unwrap()],
-            );
+            .with("v6.example.test", &[], &["2001:db8::10".parse().unwrap()]);
         let cancelled = AtomicBool::new(false);
         let results = resolver.resolve(
             &hosts(&["api.example.test", "v6.example.test"]),
             Instant::now() + Duration::from_secs(5),
             &cancelled,
         );
-        assert_eq!(results[0].a, vec!["192.0.2.10".parse::<Ipv4Addr>().unwrap()]);
+        assert_eq!(
+            results[0].a,
+            vec!["192.0.2.10".parse::<Ipv4Addr>().unwrap()]
+        );
         assert_eq!(results[0].outcome, DnsOutcome::Resolved);
-        assert_eq!(results[1].aaaa, vec!["2001:db8::10".parse::<Ipv6Addr>().unwrap()]);
+        assert_eq!(
+            results[1].aaaa,
+            vec!["2001:db8::10".parse::<Ipv6Addr>().unwrap()]
+        );
     }
 
     #[test]
     fn static_resolver_unknown_host_is_nxdomain() {
         let resolver = StaticDnsResolver::new();
         let cancelled = AtomicBool::new(false);
-        let results = resolver.resolve(&hosts(&["missing.example.test"]), Instant::now(), &cancelled);
+        let results = resolver.resolve(
+            &hosts(&["missing.example.test"]),
+            Instant::now(),
+            &cancelled,
+        );
         assert_eq!(results[0].outcome, DnsOutcome::NxDomain);
     }
 
     #[test]
     fn static_resolver_honors_cancellation() {
-        let resolver = StaticDnsResolver::new().with("x.example.test", &["192.0.2.1".parse().unwrap()], &[]);
+        let resolver =
+            StaticDnsResolver::new().with("x.example.test", &["192.0.2.1".parse().unwrap()], &[]);
         let cancelled = AtomicBool::new(true);
         let results = resolver.resolve(&hosts(&["x.example.test"]), Instant::now(), &cancelled);
         assert_eq!(results[0].outcome, DnsOutcome::Cancelled);
@@ -402,10 +412,21 @@ mod tests {
 
     #[test]
     fn parse_env_spec_reads_ipv4_and_ipv6() {
-        let resolver = StaticDnsResolver::parse("api.example.test=192.0.2.10;v6.example.test=2001:db8::10");
+        let resolver =
+            StaticDnsResolver::parse("api.example.test=192.0.2.10;v6.example.test=2001:db8::10");
         let cancelled = AtomicBool::new(false);
-        let results = resolver.resolve(&hosts(&["api.example.test", "v6.example.test"]), Instant::now(), &cancelled);
-        assert_eq!(results[0].a, vec!["192.0.2.10".parse::<Ipv4Addr>().unwrap()]);
-        assert_eq!(results[1].aaaa, vec!["2001:db8::10".parse::<Ipv6Addr>().unwrap()]);
+        let results = resolver.resolve(
+            &hosts(&["api.example.test", "v6.example.test"]),
+            Instant::now(),
+            &cancelled,
+        );
+        assert_eq!(
+            results[0].a,
+            vec!["192.0.2.10".parse::<Ipv4Addr>().unwrap()]
+        );
+        assert_eq!(
+            results[1].aaaa,
+            vec!["2001:db8::10".parse::<Ipv6Addr>().unwrap()]
+        );
     }
 }
