@@ -1,12 +1,13 @@
 # Providers
 
-Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, and
-one real external provider (Subfinder).
+Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, one
+real external provider (Subfinder), and one built-in native provider (DNS).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
 types, risk, and an `offline` flag. `installation` reports whether a real tool is
-present (offline providers are always installed). `execute` returns a structured
+present (INSTALLED/MISSING/UNSUPPORTED_VERSION/EXECUTION_ERROR) or that a provider
+is native (BUILT_IN). `execute` returns a structured
 `Execution` (command, stdout, stderr, exit status, pid, timings) captured by the
 centralized process supervisor; `parse` consumes that `Execution`. A registry
 selects by capability and supported target type, or by a stage-pinned provider id
@@ -83,12 +84,52 @@ turns a Domain into Subdomains. See [recon-chain](recon-chain.md).
 it. Automated tests never invoke the real tool — they use an offline fake executable
 (`fixtures/fake-subfinder.sh`) injected through `MACSPLOIT_SUBFINDER`.
 
+## NativeDnsProvider
+
+Status: **IMPLEMENTED** (Phase 1B). `native_dns`, risk **ACTIVE_LOW_IMPACT**,
+capability DNS_RESOLUTION, supported target types Domain and Hostname,
+installation **BUILT_IN** (no external tool). It resolves the Subdomain/Hostname/
+Domain assets discovered earlier in the chain into IPAddress assets.
+
+- **Native first.** DNS is implemented in Rust with `hickory-resolver` rather than
+  an external CLI, so ordinary resolution works out of the box: no install step,
+  simpler offline tests, lower overhead, normalized results, and a base capability
+  even if a `DnsxProvider` is added later. See [architecture](architecture.md).
+- **Resolver boundary.** Resolution sits behind an injectable `DnsResolver` trait.
+  Production uses the **system resolver configuration** (never a hardcoded public
+  resolver such as 8.8.8.8; if the system config cannot be read it fails closed).
+  All automated tests use an offline `StaticDnsResolver` — no network.
+- **Records.** A (IPv4) and AAAA (IPv6). MX/NS/TXT/CNAME/etc. are out of scope for
+  Phase 1B. CNAMEs are not modeled as assets yet (deferred; may be preserved in
+  evidence later).
+- **Outcomes.** Classified per host: RESOLVED, NO_RECORDS, NXDOMAIN, TIMEOUT,
+  TEMPORARY_FAILURE, INVALID_NAME, RESOLVER_FAILURE, CANCELLED. A missing record
+  type is not an app failure — partial success (A succeeds, AAAA fails) keeps the
+  A result. The batch completes even if some hosts fail.
+- **Execution model.** One provider run resolves the whole batch of hostnames
+  (not one run per host), with bounded per-query timeouts and bounded concurrency
+  (default 16), a deadline within the chain budget, and cooperative cancellation.
+  It records the same provider run / evidence / events / provenance as any provider;
+  the provider version is recorded as the core version.
+- **Assets & relationships.** Each address becomes (or reuses) an IPAddress asset;
+  a `resolves_to` relationship links host → IP. Many-to-many is supported (a host
+  with several IPs; several hosts sharing an IP). Duplicate addresses de-duplicate
+  to one asset while observations preserve provenance and observation time.
+- **Scope.** ACTIVE_LOW_IMPACT resolves in-scope assets without a separate approval
+  gate; out-of-scope hosts are not resolved and out-of-scope IPs are marked
+  `in_scope=false` and excluded from downstream dispatch.
+- **Freshness.** Phase 1B has no DNS freshness/caching model: a resolved asset is
+  a point-in-time observation, not a guarantee of current correctness. Documented
+  as a limitation; a freshness/caching layer is future work.
+
+Future providers (`DnsxProvider`, `MassDnsProvider`) could supply the same
+DNS_RESOLUTION capability under this boundary; none are implemented now.
+
 ## Next adapter boundary
 
-**PLANNED — DNS Resolution** is the next capability/provider step (resolving
-discovered subdomains), followed by **Nmap** (ports/services) and then **HTTPX**
-(HTTP probing), each introduced independently and only after its timeout,
-cancellation, output-bound, and scope tests pass.
+**PLANNED — Nmap** (ports/services on resolved IP addresses) is the next step
+(Phase 1C), followed by **HTTPX** (HTTP probing), each introduced independently and
+only after its timeout, cancellation, output-bound, and scope tests pass.
 
 **FUTURE:** approved installation/update tooling (Tool Manager), dependency and
 license metadata, version compatibility policy, and a public provider SDK. No

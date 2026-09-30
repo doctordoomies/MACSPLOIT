@@ -1,8 +1,8 @@
 # Security model
 
 Status: **IMPLEMENTED** repository protections, offline foundation controls, and
-passive external-tool execution controls (Phase 1A); higher-risk execution and
-distribution protections remain planned.
+passive external-tool and low-impact native DNS execution controls (Phase 1A/1B);
+higher-risk execution and distribution protections remain planned.
 
 ## Repository
 
@@ -15,10 +15,14 @@ cannot prove that arbitrary content contains no secret.
 
 ## Implemented boundaries
 
-- Two providers are registered: the offline synthetic provider and Subfinder (a
-  passive external tool). The application has no port scanner, HTTP prober,
-  telemetry, tool installer, or privilege request. Subfinder is run only when the
-  analyst launches Domain Recon and only if the tool is already installed.
+- Three providers are registered: the offline synthetic provider, Subfinder (a
+  passive external tool), and native DNS (built-in, ACTIVE_LOW_IMPACT). The
+  application has no port scanner, HTTP prober, telemetry, tool installer, or
+  privilege request. Subfinder runs only when the analyst launches Domain Recon and
+  only if it is already installed. Native DNS performs ordinary A/AAAA resolution
+  using the host's own system resolver configuration (never a hardcoded public
+  resolver) and only for in-scope assets; there are no third-party DNS/passive-DNS
+  API integrations (no SecurityTrails, Shodan, VirusTotal, etc.).
 - Both the bundled helper and every external provider are launched by executable
   path and argument array — never through a shell. The child environment is minimal;
   targets are validated/normalized before use and can never become shell syntax.
@@ -37,8 +41,9 @@ cannot prove that arbitrary content contains no secret.
   workspace/evidence boundaries and integrity mismatches are rejected. This is
   not a hardened defense against a malicious process already running as the user.
 - Scope checks use exact domains, wildcard label boundaries, and IP/CIDR parsing.
-  Out-of-scope discoveries are not dispatched downstream. Active risk classes
-  require explicit authorization; validation/lab execution is disabled.
+  Out-of-scope discoveries are not dispatched downstream. Passive and low-impact
+  (DNS) work runs on any in-scope target; full Active work requires explicit
+  authorization; validation/lab execution is disabled.
 - One core owns a storage root at a time. Protocol frames, evidence, assets,
   targets, run count, and concurrency are bounded. Startup recovers interrupted
   work as FAILED without rescheduling.

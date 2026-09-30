@@ -1,6 +1,7 @@
 # Architecture
 
-Status: **IMPLEMENTED** Phase 0 foundation; full native UI acceptance pending.
+Status: **IMPLEMENTED** Phase 0 foundation plus Phase 1A (Subfinder) and Phase 1B
+(native DNS resolution); full on-screen UI acceptance pending.
 
 ## Ownership
 
@@ -66,9 +67,28 @@ FAILED with `Interrupted` and emits recovery events; it never resumes scanning.
 Completed results survive process and application restarts at the storage layer.
 Full on-screen restart verification remains pending, as recorded in the test report.
 
-**PLANNED:** external process supervision with bounded stdout/stderr, exit code,
-process-group cancellation, per-host/request limits, and explicit tool lifecycle.
-The current provider runs internally and has no child scanner processes.
+## Providers and DNS decision
+
+Providers implement one Rust trait (metadata/installation/execute/parse) and are
+selected by capability, or pinned per chain stage when a capability has more than
+one provider. Three are registered: the offline synthetic provider, Subfinder (an
+external tool run through the process supervisor), and native DNS.
+
+**Native DNS (Phase 1B).** DNS resolution is implemented in Rust with
+`hickory-resolver` (pulling `tokio` for a current-thread runtime) rather than an
+external CLI such as `dnsx`. Rationale: ordinary resolution should work with no
+install step; native code gives simpler offline tests, lower overhead, normalized
+A/AAAA results, clear per-host outcome classification, and a base capability even
+if an external DNS provider is added later. Resolution sits behind an injectable
+`DnsResolver` trait (system-config-based production resolver; static offline
+resolver for tests), so the orchestrator stays synchronous and the async runtime is
+contained inside the provider. The system resolver configuration is used by default;
+no public resolver is hardcoded.
+
+**Process supervision (Phase 1A).** External tools run under a centralized
+supervisor with bounded stdout/stderr, exit code capture, a deadline, and
+process-group cancellation. Per-host/request limits and a dedicated per-provider
+timeout remain **PLANNED**.
 
 **FUTURE:** a per-user service that survives full UI quit, with peer authorization
 and lifecycle/version negotiation. The internal protocol and durable entities can

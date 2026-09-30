@@ -28,10 +28,17 @@ external ProjectDiscovery `subfinder` tool through a centralized, shell-free pro
 supervisor to turn an in-scope domain into subdomains, with executable discovery,
 installation/version detection, structured JSONL parsing, raw evidence, provenance,
 scope enforcement, and durable events — plugged into the same provider architecture
-as the synthetic provider, which is retained. A `Domain Recon` chain and its UI are
-wired up. MACSPLOIT never installs Subfinder; automated tests run entirely offline
-against a fake executable. **PLANNED next:** DNS resolution, then Nmap, then HTTPX.
-See [providers](docs/providers.md) and [recon-chain](docs/recon-chain.md).
+as the synthetic provider, which is retained. MACSPLOIT never installs Subfinder.
+
+**IMPLEMENTED — Phase 1B native DNS resolution:** a built-in `NativeDnsProvider`
+(no external tool, `hickory-resolver`, system resolver config) resolves discovered
+subdomains into IPv4/IPv6 `IPAddress` assets with `resolves_to` relationships,
+bounded timeouts and concurrency, cancellation, partial-success handling, evidence,
+and scope enforcement (ACTIVE_LOW_IMPACT). The `Domain Recon` chain now runs
+Subfinder → DNS Resolution, and the UI surfaces both providers and resolved IPs.
+Automated tests run entirely offline (fake executable + static resolver).
+**PLANNED next:** Nmap (Phase 1C), then HTTPX. See [providers](docs/providers.md)
+and [recon-chain](docs/recon-chain.md).
 
 ## Build and run
 

@@ -62,6 +62,17 @@ the workspace scope. Do not run it against `example.com` or any host you do not 
 or have written permission to test. If you have no authorized target, skip live
 execution — the offline suite already proves the integration.
 
+### Testing native DNS resolution offline
+
+DNS is native (no external tool). Automated tests inject a static, offline resolver:
+Rust `domain_recon`/provider tests construct `StaticDnsResolver` via
+`Engine::open_with`, and `test.sh` sets `MACSPLOIT_DNS_FAKE` (a
+`host=ip[,ip];host2=ip` spec) so the Swift bridge test's core helper resolves
+deterministically. When `MACSPLOIT_DNS_FAKE` is unset, the core uses the host's
+system resolver configuration. For a manual live check, run Domain Recon (with a
+real Subfinder) against an authorized in-scope domain; otherwise the offline
+coverage is sufficient.
+
 `build-macos.sh` assembles `build/MACSPLOIT.app`, bundles the helper, ad-hoc signs
 both, and checks the bundle signature. This is a local development build, not a
 notarized distribution or release. If an agent's execution sandbox blocks nested
