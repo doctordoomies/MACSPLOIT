@@ -211,6 +211,26 @@ class RepositoryPolicyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             audit.verify_private_remote("https://example.test/unapproved.git")
 
+    def test_public_destination_allowed_only_after_owner_opts_in(self):
+        remote = "https://github.com/doctordoomies/MACSPLOIT.git"
+        public = dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                      isPrivate=False, visibility="PUBLIC")
+        # With the launch opt-in, a canonical PUBLIC destination is accepted...
+        with patch.object(audit, "release_allows_public", return_value=True):
+            with patch.object(audit, "run", return_value=json.dumps(public).encode()):
+                audit.verify_private_remote(remote)
+            # ...but a non-canonical destination is still rejected even when public.
+            wrong = dict(nameWithOwner="unexpected/repository",
+                         isPrivate=False, visibility="PUBLIC")
+            with patch.object(audit, "run", return_value=json.dumps(wrong).encode()):
+                with self.assertRaises(RuntimeError):
+                    audit.verify_private_remote(remote)
+        # Default policy (no opt-in) still refuses a public destination.
+        with patch.object(audit, "release_allows_public", return_value=False):
+            with patch.object(audit, "run", return_value=json.dumps(public).encode()):
+                with self.assertRaises(RuntimeError):
+                    audit.verify_private_remote(remote)
+
     def test_push_history_includes_all_reachable_commits(self):
         for number in range(2):
             self.write("README.md", f"Synthetic version {number}\n")

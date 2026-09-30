@@ -143,15 +143,34 @@ def audit_snapshots(revisions):
     print(f"Repository audit passed: {len(checked)} file versions checked.")
 
 
+def release_allows_public():
+    """Whether the owner has intentionally opted into a public destination.
+
+    Defaults to False (require PRIVATE) so the project cannot become public by
+    accident. The owner flips this to true in a deliberate, reviewable commit as
+    part of launch; the destination and secret/sensitive-data checks below still
+    apply either way. See docs/releases/v0.1.0.md.
+    """
+    policy = Path(__file__).resolve().parent / "release-policy.json"
+    try:
+        return bool(json.loads(policy.read_text()).get("allow_public") is True)
+    except (OSError, ValueError):
+        return False
+
+
 def verify_private_remote(remote_url):
+    # Always verify the canonical destination and reject unexpected/former remotes.
     if remote_url not in ALLOWED_REMOTES:
         raise RuntimeError("Push destination is not the approved MACSPLOIT repository")
     metadata = json.loads(run("gh", "repo", "view", EXPECTED_REPOSITORY,
                               "--json", "nameWithOwner,isPrivate,visibility"))
-    if (metadata.get("nameWithOwner") != EXPECTED_REPOSITORY or
-            metadata.get("isPrivate") is not True or
-            metadata.get("visibility") != "PRIVATE"):
-        raise RuntimeError("Destination is not verified PRIVATE; push refused")
+    if metadata.get("nameWithOwner") != EXPECTED_REPOSITORY:
+        raise RuntimeError("Destination is not the canonical repository; push refused")
+    # Require PRIVATE unless the owner has intentionally launched (allow_public).
+    if not release_allows_public():
+        if (metadata.get("isPrivate") is not True or
+                metadata.get("visibility") != "PRIVATE"):
+            raise RuntimeError("Destination is not verified PRIVATE; push refused")
 
 
 def push_revisions(stream):

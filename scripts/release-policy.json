@@ -1,0 +1,4 @@
+{
+  "_comment": "Declares the intended repository visibility policy for the pre-push audit. While preparing for launch this stays false and the audit requires the canonical destination to be PRIVATE. To intentionally launch, the owner sets allow_public to true in a deliberate, reviewable commit AFTER changing the GitHub repository visibility to public (see docs/releases/v0.1.0.md). The audit always verifies the canonical destination and rejects secrets, sensitive data, and unexpected remotes regardless of this setting.",
+  "allow_public": false
+}
