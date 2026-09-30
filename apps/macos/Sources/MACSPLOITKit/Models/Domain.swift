@@ -111,9 +111,13 @@ public struct ProviderInstallation: Codable, Sendable, Equatable {
     public let state: String            // INSTALLED / MISSING / UNSUPPORTED_VERSION / EXECUTION_ERROR
     public let version: String?
     public let message: String?
-    public var isInstalled: Bool { state == "INSTALLED" }
+    /// Available to run: an external tool that is installed, or a built-in provider.
+    public var isAvailable: Bool { state == "INSTALLED" || state == "BUILT_IN" }
+    /// Kept for source compatibility; true when the provider can run.
+    public var isInstalled: Bool { isAvailable }
     public var summary: String {
         switch state {
+        case "BUILT_IN": return "Built in"
         case "INSTALLED": return "Installed \(version.map { "(\($0))" } ?? "")"
         case "MISSING": return "Not installed"
         case "UNSUPPORTED_VERSION": return "Unsupported version \(version ?? "")"

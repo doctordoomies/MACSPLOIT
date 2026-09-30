@@ -67,4 +67,14 @@ actor ReplyTransport: CoreTransport {
         #expect(providers[0].installation.isInstalled == false)
         #expect(providers[0].installation.summary == "Not installed")
     }
+
+    @Test func testBuiltInProviderInstallationDecodes() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"native_dns","name":"Native DNS Resolver","description":"Built-in resolver.","version":"built-in","capabilities":["DNS_RESOLUTION"],"supported_target_types":["Domain","Hostname"],"risk_class":"ACTIVE_LOW_IMPACT","offline":true,"installation":{"state":"BUILT_IN"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].id == "native_dns")
+        #expect(providers[0].riskClass == "ACTIVE_LOW_IMPACT")
+        #expect(providers[0].installation.state == "BUILT_IN")
+        #expect(providers[0].installation.isAvailable)
+        #expect(providers[0].installation.summary == "Built in")
+    }
 }

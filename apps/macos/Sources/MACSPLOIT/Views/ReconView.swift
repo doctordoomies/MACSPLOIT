@@ -112,20 +112,37 @@ struct ReconView: View {
     }
 
     @ViewBuilder private var providerPanel: some View {
-        HStack(spacing: 12) {
-            Image(systemName: subfinderReady ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(subfinderReady ? .green : .orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Provider: Subfinder").font(.body.weight(.medium))
-                Text("Capability: Subdomain Discovery · Risk: Passive").font(.caption).foregroundStyle(.secondary)
-                Text(model.subfinder?.installation.summary ?? "Provider status unavailable")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(subfinderReady ? Color.secondary : Color.orange)
-            }
-            Spacer()
+        VStack(spacing: 10) {
+            providerRow(
+                title: "Subfinder",
+                detail: "Subdomain Discovery · Passive",
+                available: subfinderReady,
+                status: model.subfinder?.installation.summary ?? "Provider status unavailable"
+            )
+            Divider()
+            providerRow(
+                title: "Native DNS Resolver",
+                detail: "DNS Resolution · Active (low impact)",
+                available: model.nativeDns?.installation.isAvailable ?? true,
+                status: model.nativeDns?.installation.summary ?? "Built in"
+            )
         }
         .padding(14)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder private func providerRow(title: String, detail: String, available: Bool, status: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: available ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(available ? .green : .orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Provider: \(title)").font(.body.weight(.medium))
+                Text("Capability: \(detail)").font(.caption).foregroundStyle(.secondary)
+                Text(status).font(.caption.monospaced())
+                    .foregroundStyle(available ? Color.secondary : Color.orange)
+            }
+            Spacer()
+        }
     }
 
     @ViewBuilder private var runHint: some View {

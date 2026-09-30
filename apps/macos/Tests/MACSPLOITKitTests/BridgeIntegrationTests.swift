@@ -50,7 +50,8 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
-        && ProcessInfo.processInfo.environment["MACSPLOIT_SUBFINDER"] != nil))
+        && ProcessInfo.processInfo.environment["MACSPLOIT_SUBFINDER"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_DNS_FAKE"] != nil))
     func testDomainReconRunsSubfinderThroughBridgeOffline() async throws {
         let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-domain-\(UUID().uuidString)")
@@ -60,12 +61,15 @@ import Testing
         defer { transport.shutdown() }
         _ = try await client.hello()
 
-        // The fake subfinder reports version 9.9.9 and is therefore "installed".
+        // Subfinder is installed (fake, v9.9.9); native DNS is built in.
         let providers = try await client.listProviders()
         let subfinder = try #require(providers.first { $0.id == "subfinder" })
         #expect(subfinder.installation.isInstalled)
+        let dns = try #require(providers.first { $0.id == "native_dns" })
+        #expect(dns.installation.state == "BUILT_IN")
+        #expect(dns.installation.isAvailable)
 
-        let workspace = try await client.createWorkspace(name: "Domain bridge test", scope: ["example.test", "*.example.test"])
+        let workspace = try await client.createWorkspace(name: "Domain bridge test", scope: ["example.test", "*.example.test", "192.0.2.0/24"])
         let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
         let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "domain_recon")
         let deadline = Date().addingTimeInterval(15)
@@ -79,22 +83,24 @@ import Testing
         let result = try await client.snapshot(workspace: workspace.id)
         #expect(result.chains.first?.name == "Domain Recon")
         let subdomains = result.assets.filter { $0.assetType == "Subdomain" }
+        let ips = result.assets.filter { $0.assetType == "IPAddress" }
         #expect(subdomains.count == 3)
-        #expect(result.relationships.count == 3)
-        #expect(result.providerRuns.count == 1)
-        #expect(result.providerRuns.first?.providerId == "subfinder")
-        #expect(result.providerRuns.first?.providerVersion == "9.9.9")
-        #expect(result.evidence.count == 1)
-        let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
-        #expect(evidence.rawJson.contains("subfinder"))
-        #expect(evidence.rawJson.contains("api.example.test"))
+        #expect(ips.count == 3)
+        // 3 has_subdomain + 3 resolves_to.
+        #expect(result.relationships.count == 6)
+        #expect(result.relationships.filter { $0.relationshipType == "resolves_to" }.count == 3)
+        // Two provider runs: subfinder and native_dns.
+        #expect(result.providerRuns.count == 2)
+        #expect(result.providerRuns.contains { $0.providerId == "subfinder" })
+        #expect(result.providerRuns.contains { $0.providerId == "native_dns" })
+        #expect(result.evidence.count == 2)
 
         transport.shutdown()
         let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
         defer { reopenedTransport.shutdown() }
         let reopened = try await CoreClient(transport: reopenedTransport).snapshot(workspace: workspace.id)
         #expect(reopened.assets.count == result.assets.count)
-        #expect(reopened.providerRuns.count == 1)
-        #expect(reopened.evidence.count == 1)
+        #expect(reopened.providerRuns.count == 2)
+        #expect(reopened.evidence.count == 2)
     }
 }

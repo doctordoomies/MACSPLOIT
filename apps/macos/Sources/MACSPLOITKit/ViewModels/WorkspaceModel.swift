@@ -118,6 +118,7 @@ public final class WorkspaceModel: ObservableObject {
 
     public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }
     public var subfinder: ProviderStatus? { provider("subfinder") }
+    public var nativeDns: ProviderStatus? { provider("native_dns") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }
