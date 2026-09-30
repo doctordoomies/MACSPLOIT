@@ -84,6 +84,23 @@ pub struct Discovery {
     pub metadata: Value,
 }
 
+impl Asset {
+    /// The value used to decide whether an asset is in workspace scope. Host-child
+    /// assets (Port/Service) whose canonical identity is not itself a routable
+    /// target are scoped by their `host` metadata (the owning IP); everything else
+    /// is scoped by its canonical identity.
+    pub fn scope_key(&self) -> &str {
+        match self.asset_type {
+            AssetType::Port | AssetType::Service => self
+                .metadata
+                .get("host")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.canonical_identity),
+            _ => &self.canonical_identity,
+        }
+    }
+}
+
 pub fn canonical_identity(kind: AssetType, value: &str) -> crate::error::Result<String> {
     use crate::error::CoreError;
     match kind {

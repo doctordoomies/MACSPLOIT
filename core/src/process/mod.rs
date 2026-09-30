@@ -62,6 +62,9 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_NMAP") {
             overrides.insert("nmap".to_owned(), PathBuf::from(path));
         }
+        if let Some(path) = std::env::var_os("MACSPLOIT_HTTPX") {
+            overrides.insert("httpx".to_owned(), PathBuf::from(path));
+        }
         let managed_dir = std::env::var_os("MACSPLOIT_TOOLS_DIR").map(PathBuf::from);
         Self {
             overrides,

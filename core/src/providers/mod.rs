@@ -29,6 +29,7 @@ pub enum Capability {
     DnsResolution,
     PortDiscovery,
     ServiceFingerprinting,
+    HttpProbing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +118,7 @@ impl ProviderRegistry {
                 Arc::new(SubfinderProvider),
                 Arc::new(NativeDnsProvider::new(resolver)),
                 Arc::new(NmapProvider),
+                Arc::new(HttpxProvider),
             ],
         }
     }
@@ -287,8 +289,8 @@ impl Provider for SyntheticDiscoveryProvider {
                     );
                 }
             }
-            // The synthetic provider does not model standalone port discovery.
-            Capability::PortDiscovery => {}
+            // The synthetic provider does not model port discovery or HTTP probing.
+            Capability::PortDiscovery | Capability::HttpProbing => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -947,6 +949,245 @@ impl Provider for NmapProvider {
     }
 }
 
+// ---------------------------------------------------------------------------
+// HTTPX provider (Phase 1D). Probes discovered HTTP/HTTPS services and produces
+// Website and Technology assets. Low-impact active: it makes ordinary,
+// non-intrusive HTTP requests to in-scope hosts (no fuzzing, no exploitation).
+// ---------------------------------------------------------------------------
+
+pub struct HttpxProvider;
+
+const HTTPX_STDOUT_CAP: usize = 512 * 1024;
+const HTTPX_STDERR_CAP: usize = 64 * 1024;
+
+/// One JSONL record emitted by `httpx -json`. Fields are all optional except a
+/// URL; unknown fields are ignored.
+#[derive(Deserialize)]
+struct HttpxRecord {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    input: Option<String>,
+    #[serde(default)]
+    status_code: Option<i64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    webserver: Option<String>,
+    #[serde(default)]
+    content_length: Option<i64>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    tech: Vec<String>,
+}
+
+impl HttpxProvider {
+    /// Build the probe URL list from discovered HTTP/HTTPS Service assets. A
+    /// Service canonical identity is `<ip>/<proto>/<port>/<name>`.
+    fn urls_from_services(inputs: &[Asset]) -> Vec<String> {
+        let mut urls = Vec::new();
+        for asset in inputs.iter().filter(|a| a.asset_type == AssetType::Service) {
+            let parts: Vec<&str> = asset.canonical_identity.split('/').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let (host, port, name) = (parts[0], parts[2], parts[3]);
+            let scheme = if name.starts_with("https") { "https" } else if name.starts_with("http") { "http" } else { continue };
+            let url = format!("{scheme}://{host}:{port}");
+            if !urls.contains(&url) {
+                urls.push(url);
+            }
+        }
+        urls
+    }
+}
+
+impl Provider for HttpxProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "httpx".into(),
+            name: "HTTPX".into(),
+            description:
+                "Low-impact HTTP/HTTPS probing of discovered web services via the external httpx tool."
+                    .into(),
+            version: "external".into(),
+            risk_class: RiskClass::ActiveLowImpact,
+            offline: false,
+            capabilities: vec![Capability::HttpProbing],
+            supported_target_types: vec![TargetType::Domain, TargetType::IPAddress],
+        }
+    }
+
+    fn installation(&self, tools: &ToolConfig) -> Installation {
+        let Some(executable) = tools.locate("httpx") else {
+            return Installation::Missing;
+        };
+        let cancelled = AtomicBool::new(false);
+        match process::run(
+            &executable,
+            &["-version".into()],
+            &cancelled,
+            Instant::now() + Duration::from_secs(5),
+            HTTPX_STDERR_CAP,
+            HTTPX_STDERR_CAP,
+        ) {
+            Ok(outcome) => {
+                let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
+                text.push('\n');
+                text.push_str(&String::from_utf8_lossy(&outcome.stderr));
+                let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
+                Installation::Installed { version }
+            }
+            Err(error) => Installation::ExecutionError { message: error.message },
+        }
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(60)
+    }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let started_at = crate::now();
+        let urls = Self::urls_from_services(inputs);
+        if urls.is_empty() {
+            return Ok(Execution {
+                target: target.into(),
+                capability,
+                command: vec!["httpx".into(), "(no in-scope web services)".into()],
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                exit_status: Some(0),
+                pid: None,
+                timed_out: false,
+                started_at,
+                ended_at: crate::now(),
+            });
+        }
+        let executable = ctx.tools.locate("httpx").ok_or_else(|| {
+            CoreError::new(
+                "ProviderMissing",
+                "httpx is not installed. Install it manually to run HTTP probing.",
+            )
+        })?;
+        // Non-intrusive metadata only; targets passed as an argument list (never a
+        // shell). No fuzzing, no path brute force, no active exploitation flags.
+        let mut args = vec![
+            "-json".into(),
+            "-silent".into(),
+            "-no-color".into(),
+            "-title".into(),
+            "-status-code".into(),
+            "-tech-detect".into(),
+            "-web-server".into(),
+            "-content-length".into(),
+            "-location".into(),
+            "-u".into(),
+            urls.join(","),
+        ];
+        let outcome = process::run(
+            &executable,
+            &args,
+            ctx.cancelled,
+            ctx.deadline,
+            HTTPX_STDOUT_CAP,
+            HTTPX_STDERR_CAP,
+        )?;
+        if outcome.cancelled {
+            return Err(CoreError::new("Cancelled", "HTTP probing cancelled."));
+        }
+        let mut command = vec![executable.to_string_lossy().into_owned()];
+        command.append(&mut args);
+        Ok(Execution {
+            target: target.into(),
+            capability,
+            command,
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+            exit_status: outcome.exit_status,
+            pid: outcome.pid,
+            timed_out: outcome.timed_out,
+            started_at,
+            ended_at: crate::now(),
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        let text = String::from_utf8_lossy(&execution.stdout);
+        let mut discoveries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for line in text.lines().take(5000) {
+            let line = line.trim();
+            if line.is_empty() || line.len() > 8192 {
+                continue;
+            }
+            let Ok(record) = serde_json::from_str::<HttpxRecord>(line) else {
+                continue; // skip malformed line, keep the rest
+            };
+            let Some(raw_url) = record.url.or_else(|| record.input.clone()) else {
+                continue;
+            };
+            let Ok(url) = crate::targets::web_url(&raw_url) else {
+                continue;
+            };
+            if !seen.insert(url.clone()) {
+                continue;
+            }
+            // The website is linked to its owning host IP (a definitely-known
+            // asset). host may be "ip:port"; keep just the host for the source.
+            let host = record
+                .host
+                .as_deref()
+                .map(|h| h.rsplit_once(':').map(|(h, _)| h).unwrap_or(h).to_owned());
+            let mut metadata = json!({ "tool": "httpx" });
+            if let Some(code) = record.status_code { metadata["status_code"] = json!(code); }
+            if let Some(t) = &record.title { metadata["title"] = json!(clip(t, 512)); }
+            if let Some(s) = &record.webserver { metadata["server"] = json!(clip(s, 256)); }
+            if let Some(c) = record.content_length { metadata["content_length"] = json!(c); }
+            if let Some(l) = &record.location { metadata["location"] = json!(clip(l, 1024)); }
+            discoveries.push(Discovery {
+                asset_type: AssetType::Website,
+                value: url.clone(),
+                source: host,
+                relationship: Some(RelationshipType::HasEndpoint),
+                metadata,
+            });
+            // Technology assets are reusable identities shared across websites.
+            for tech in record.tech.iter().take(50) {
+                let name = clip(tech.trim(), 128);
+                if name.is_empty() {
+                    continue;
+                }
+                discoveries.push(Discovery {
+                    asset_type: AssetType::Technology,
+                    value: name,
+                    source: Some(url.clone()),
+                    relationship: Some(RelationshipType::UsesTechnology),
+                    metadata: json!({ "tool": "httpx" }),
+                });
+            }
+        }
+        Ok(discoveries)
+    }
+}
+
+/// Truncate untrusted strings to a bounded length (char-safe).
+fn clip(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        value.to_owned()
+    } else {
+        value.chars().take(max).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1314,5 +1555,94 @@ mod tests {
             .unwrap();
         assert_eq!(execution.exit_status, Some(0));
         assert!(NmapProvider.parse(&execution).unwrap().is_empty());
+    }
+
+    // --- HTTPX provider ---
+
+    fn httpx_exec(jsonl: &str) -> Execution {
+        Execution {
+            target: "example.test".into(),
+            capability: Capability::HttpProbing,
+            command: vec!["httpx".into()],
+            stdout: jsonl.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at: crate::now(),
+            ended_at: crate::now(),
+        }
+    }
+
+    #[test]
+    fn httpx_metadata_is_low_impact_http_probing() {
+        let metadata = HttpxProvider.metadata();
+        assert_eq!(metadata.id, "httpx");
+        assert_eq!(metadata.risk_class, RiskClass::ActiveLowImpact);
+        assert_eq!(metadata.capabilities, vec![Capability::HttpProbing]);
+        assert_eq!(HttpxProvider.timeout(), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn httpx_builds_urls_only_from_web_services() {
+        let inputs = vec![
+            dns_asset(AssetType::Service, "192.0.2.10/tcp/443/https"),
+            dns_asset(AssetType::Service, "192.0.2.10/tcp/80/http"),
+            dns_asset(AssetType::Service, "192.0.2.10/tcp/22/ssh"), // not web
+            dns_asset(AssetType::IPAddress, "192.0.2.10"),           // not a service
+        ];
+        let urls = HttpxProvider::urls_from_services(&inputs);
+        assert_eq!(urls, vec!["https://192.0.2.10:443", "http://192.0.2.10:80"]);
+    }
+
+    #[test]
+    fn httpx_parses_websites_and_technology() {
+        let jsonl = concat!(
+            r#"{"url":"https://192.0.2.10:443","status_code":200,"title":"Demo","webserver":"nginx","host":"192.0.2.10","tech":["nginx","React"]}"#, "\n",
+            r#"{"url":"https://192.0.2.10:443","status_code":200,"host":"192.0.2.10"}"#, "\n", // duplicate URL
+            "not json\n",
+        );
+        let discoveries = HttpxProvider.parse(&httpx_exec(jsonl)).unwrap();
+        // 1 website + 2 technologies (dup url skipped, malformed skipped).
+        // web_url normalizes the default 443 port away and adds a trailing slash.
+        let canonical = "https://192.0.2.10/";
+        let website = discoveries
+            .iter()
+            .find(|d| d.asset_type == AssetType::Website)
+            .unwrap();
+        assert_eq!(website.value, canonical);
+        assert_eq!(website.relationship, Some(RelationshipType::HasEndpoint));
+        assert_eq!(website.source.as_deref(), Some("192.0.2.10"));
+        assert_eq!(website.metadata["status_code"], json!(200));
+        assert_eq!(website.metadata["server"], json!("nginx"));
+        let techs: Vec<_> = discoveries
+            .iter()
+            .filter(|d| d.asset_type == AssetType::Technology)
+            .map(|d| d.value.as_str())
+            .collect();
+        assert_eq!(techs, vec!["nginx", "React"]);
+        assert!(discoveries
+            .iter()
+            .filter(|d| d.asset_type == AssetType::Technology)
+            .all(|d| d.relationship == Some(RelationshipType::UsesTechnology)
+                && d.source.as_deref() == Some(canonical)));
+    }
+
+    #[test]
+    fn httpx_missing_executable_reports_missing() {
+        let mut tools = ToolConfig::default();
+        tools.overrides.insert("httpx".into(), "/nonexistent/httpx".into());
+        assert_eq!(HttpxProvider.installation(&tools), Installation::Missing);
+    }
+
+    #[test]
+    fn httpx_execute_without_web_services_is_empty() {
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let execution = HttpxProvider
+            .execute("example.test", Capability::HttpProbing, &[], &context(&tools, &cancelled))
+            .unwrap();
+        assert_eq!(execution.exit_status, Some(0));
+        assert!(HttpxProvider.parse(&execution).unwrap().is_empty());
     }
 }

@@ -209,6 +209,11 @@ impl Store {
                             Some(Capability::PortDiscovery),
                             Some("nmap"),
                         ),
+                        (
+                            "HTTP Probing",
+                            Some(Capability::HttpProbing),
+                            Some("httpx"),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -783,7 +788,7 @@ impl Engine {
         crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
         let mut inputs:Vec<Asset>=rows(&conn,&format!("{ASSET_SELECT} WHERE workspace_id=?1 AND (id=?2 OR id IN (SELECT asset_id FROM observations o JOIN provider_runs p ON p.id=o.provider_run_id WHERE p.chain_id=?3))"),
             params![workspace.to_string(),target.asset_id.map(|id|id.to_string()),chain.id.to_string()])?;
-        inputs.retain(|a| crate::scope::contains(&scope, &a.canonical_identity));
+        inputs.retain(|a| crate::scope::contains(&scope, a.scope_key()));
         drop(conn);
 
         // Detect the tool and its version before recording the run, so the run is
