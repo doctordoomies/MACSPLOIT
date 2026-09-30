@@ -122,21 +122,37 @@ struct ReconView: View {
             Divider()
             providerRow(
                 title: "Native DNS Resolver",
-                detail: "DNS Resolution · Active (low impact)",
+                detail: "DNS Resolution",
                 available: model.nativeDns?.installation.isAvailable ?? true,
-                status: model.nativeDns?.installation.summary ?? "Built in"
+                status: model.nativeDns?.installation.summary ?? "Built in",
+                risk: "ACTIVE · LOW", warn: false
+            )
+            Divider()
+            providerRow(
+                title: "Nmap",
+                detail: "Port + Service Discovery",
+                available: model.nmap?.installation.isAvailable ?? false,
+                status: model.nmap?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE", warn: true
             )
         }
         .padding(14)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    @ViewBuilder private func providerRow(title: String, detail: String, available: Bool, status: String) -> some View {
+    @ViewBuilder private func providerRow(title: String, detail: String, available: Bool, status: String, risk: String = "PASSIVE", warn: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: available ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(available ? .green : .orange)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Provider: \(title)").font(.body.weight(.medium))
+                HStack(spacing: 8) {
+                    Text("Provider: \(title)").font(.body.weight(.medium))
+                    Text(risk)
+                        .font(.system(.caption2, design: .monospaced).weight(.bold))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background((warn ? Color.orange : Color.secondary).opacity(0.18), in: Capsule())
+                        .foregroundStyle(warn ? Color.orange : Color.secondary)
+                }
                 Text("Capability: \(detail)").font(.caption).foregroundStyle(.secondary)
                 Text(status).font(.caption.monospaced())
                     .foregroundStyle(available ? Color.secondary : Color.orange)
@@ -151,6 +167,9 @@ struct ReconView: View {
                 .foregroundStyle(.secondary)
         } else if mode == .domain && !subfinderReady {
             Text("Subfinder is not installed. Install it manually (or via a future Tool Manager) to run Domain Recon.")
+                .font(.callout).foregroundStyle(.orange)
+        } else if mode == .domain && !(model.nmap?.installation.isAvailable ?? false) {
+            Text("Nmap is not installed. Subfinder and DNS stages will run, but the active Port + Service Discovery stage will fail until Nmap is installed.")
                 .font(.callout).foregroundStyle(.orange)
         } else if mode == .domain, let target = selectedTarget, target.targetType != "Domain" {
             Text("Domain Recon requires a domain target.").font(.callout).foregroundStyle(.secondary)
