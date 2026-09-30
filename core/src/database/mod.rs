@@ -40,20 +40,30 @@ pub fn rows<T: DeserializeOwned>(
 pub fn migrate(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
+    const LATEST: i64 = 2;
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 1 {
+    if version > LATEST {
         return Err(CoreError::new(
             "MigrationFailure",
             "This workspace requires a newer MACSPLOIT core.",
         ));
     }
-    if version == 0 {
+    if version < 1 {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("../../migrations/001_initial.sql"))
             .map_err(|_| {
                 CoreError::new("MigrationFailure", "Initial workspace migration failed.")
             })?;
         tx.pragma_update(None, "user_version", 1)?;
+        tx.commit()?;
+    }
+    if version < 2 {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("../../migrations/002_domain_recon.sql"))
+            .map_err(|_| {
+                CoreError::new("MigrationFailure", "Domain-recon migration failed.")
+            })?;
+        tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
     }
     Ok(())
@@ -421,8 +431,15 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            1
+            2
         );
+        // The provider_id column added by migration 002 is present.
+        assert!(conn
+            .execute(
+                "UPDATE chain_stages SET provider_id='synthetic' WHERE 0",
+                []
+            )
+            .is_ok());
         assert!(conn
             .execute(
                 "INSERT INTO scope_entries VALUES('absent','example.test')",

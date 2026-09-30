@@ -27,7 +27,12 @@ pub enum Command {
     AddTarget { workspace_id: Id, value: String },
     Snapshot { workspace_id: Id },
     EventsAfter { workspace_id: Id, after: i64 },
-    StartChain { workspace_id: Id, target_id: Id },
+    StartChain {
+        workspace_id: Id,
+        target_id: Id,
+        #[serde(default)]
+        chain: crate::orchestration::ChainKind,
+    },
     CancelChain { workspace_id: Id, chain_id: Id },
     ReadEvidence { workspace_id: Id, evidence_id: Id },
     ListProviders {},
@@ -109,7 +114,8 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
             Command::StartChain {
                 workspace_id,
                 target_id,
-            } => serde_json::to_value(engine.start(workspace_id, target_id)?)?,
+                chain,
+            } => serde_json::to_value(engine.start(workspace_id, target_id, chain)?)?,
             Command::CancelChain {
                 workspace_id,
                 chain_id,

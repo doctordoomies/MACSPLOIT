@@ -4,6 +4,7 @@ pub mod error;
 pub mod events;
 pub mod evidence;
 pub mod orchestration;
+pub mod process;
 pub mod protocol;
 pub mod providers;
 pub mod scope;

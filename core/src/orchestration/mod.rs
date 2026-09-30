@@ -44,6 +44,25 @@ pub struct Stage {
     pub status: TaskStatus,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
+    /// When set, the exact provider that must run this stage. Disambiguates a
+    /// capability offered by more than one provider.
+    pub provider_id: Option<String>,
+}
+
+/// A named Recon Chain preset the caller can start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChainKind {
+    /// Fully offline invented discoveries (Phase 0). Requires example.test.
+    Synthetic,
+    /// First real chain (Phase 1A): passive subdomain discovery via Subfinder.
+    DomainRecon,
+}
+
+impl Default for ChainKind {
+    fn default() -> Self {
+        Self::Synthetic
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRun {
@@ -86,7 +105,7 @@ pub struct Snapshot {
 }
 
 const CHAIN_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'target_id',target_id,'name',name,'status',status,'created_at',created_at,'updated_at',updated_at,'error_code',error_code) FROM chain_runs";
-const STAGE_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'position',position,'name',name,'capability',capability,'status',status,'started_at',started_at,'ended_at',ended_at) FROM chain_stages";
+const STAGE_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'position',position,'name',name,'capability',capability,'status',status,'started_at',started_at,'ended_at',ended_at,'provider_id',provider_id) FROM chain_stages";
 
 impl Store {
     pub fn snapshot(&self, id: Id) -> Result<Snapshot> {
@@ -114,7 +133,7 @@ impl Store {
         Ok(snapshot)
     }
 
-    fn create_chain(&self, workspace: Id, target: Id) -> Result<ChainRun> {
+    fn create_chain(&self, workspace: Id, target: Id, kind: ChainKind) -> Result<ChainRun> {
         let mut conn = self.connect(workspace)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let target = targets_in(&tx, workspace)?
@@ -123,12 +142,66 @@ impl Store {
             .ok_or_else(|| {
                 CoreError::new("InvalidTarget", "Target does not exist in this workspace.")
             })?;
-        if target.target_type != TargetType::Domain || target.normalized_value != "example.test" {
-            return Err(CoreError::new(
-                "InvalidTarget",
-                "Synthetic Recon requires the domain example.test.",
-            ));
-        }
+        // Each preset supplies a display name and its ordered stages. A stage
+        // triple is (name, optional capability, optional pinned provider id).
+        let (chain_name, stages): (&str, Vec<(&str, Option<Capability>, Option<&str>)>) = match kind
+        {
+            ChainKind::Synthetic => {
+                if target.target_type != TargetType::Domain
+                    || target.normalized_value != "example.test"
+                {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "Synthetic Recon requires the domain example.test.",
+                    ));
+                }
+                (
+                    "Synthetic Recon",
+                    vec![
+                        ("Target Processing", None, None),
+                        (
+                            "Synthetic Subdomain Discovery",
+                            Some(Capability::SubdomainDiscovery),
+                            Some("synthetic"),
+                        ),
+                        (
+                            "Synthetic Resolution",
+                            Some(Capability::DnsResolution),
+                            Some("synthetic"),
+                        ),
+                        (
+                            "Synthetic Service Discovery",
+                            Some(Capability::ServiceFingerprinting),
+                            Some("synthetic"),
+                        ),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::DomainRecon => {
+                if target.target_type != TargetType::Domain {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "Domain Recon requires a domain target.",
+                    ));
+                }
+                (
+                    "Domain Recon",
+                    vec![
+                        ("Target Validation", None, None),
+                        (
+                            "Subfinder Discovery",
+                            Some(Capability::SubdomainDiscovery),
+                            Some("subfinder"),
+                        ),
+                        ("Normalization", None, None),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+        };
+        // Scope authorization is mandatory for every preset, real or synthetic.
         crate::scope::authorize(
             &database::workspace(&tx, workspace)?.scope,
             &target.normalized_value,
@@ -139,14 +212,14 @@ impl Store {
         if count >= 100 {
             return Err(CoreError::new(
                 "BudgetExceeded",
-                "The Phase 0 chain-run limit is 100 per workspace.",
+                "The chain-run limit is 100 per workspace.",
             ));
         }
         let chain = ChainRun {
             id: Id::new_v4(),
             workspace_id: workspace,
             target_id: target.id,
-            name: "Synthetic Recon".into(),
+            name: chain_name.into(),
             status: ChainStatus::Pending,
             created_at: crate::now(),
             updated_at: crate::now(),
@@ -162,30 +235,18 @@ impl Store {
                 chain.created_at
             ],
         )?;
-        let stages = [
-            ("Target Processing", None),
-            (
-                "Synthetic Subdomain Discovery",
-                Some(Capability::SubdomainDiscovery),
-            ),
-            ("Synthetic Resolution", Some(Capability::DnsResolution)),
-            (
-                "Synthetic Service Discovery",
-                Some(Capability::ServiceFingerprinting),
-            ),
-            ("Completion", None),
-        ];
-        for (position, (name, capability)) in stages.into_iter().enumerate() {
+        for (position, (name, capability, provider_id)) in stages.into_iter().enumerate() {
             let stage = Id::new_v4();
             tx.execute(
-                "INSERT INTO chain_stages VALUES(?1,?2,?3,?4,?5,?6,'QUEUED',NULL,NULL)",
+                "INSERT INTO chain_stages VALUES(?1,?2,?3,?4,?5,?6,'QUEUED',NULL,NULL,?7)",
                 params![
                     stage.to_string(),
                     workspace.to_string(),
                     chain.id.to_string(),
                     position,
                     name,
-                    capability.map(|v| encoded(&v))
+                    capability.map(|v| encoded(&v)),
+                    provider_id
                 ],
             )?;
             tx.execute(
@@ -454,13 +515,26 @@ struct ActiveRun {
 pub struct Engine {
     pub store: Store,
     registry: ProviderRegistry,
+    tools: crate::process::ToolConfig,
     active: Arc<Mutex<Option<ActiveRun>>>,
     _lock: Arc<File>,
     stage_delay: Duration,
 }
 
 impl Engine {
+    /// Open an engine, discovering external tools from the environment.
     pub fn open(store: Store, stage_delay: Duration) -> Result<Self> {
+        Self::open_with_tools(store, stage_delay, crate::process::ToolConfig::from_env())
+    }
+
+    /// Open an engine with an explicit tool configuration. Tests use this to
+    /// inject a fake executable deterministically, without touching process-wide
+    /// environment variables.
+    pub fn open_with_tools(
+        store: Store,
+        stage_delay: Duration,
+        tools: crate::process::ToolConfig,
+    ) -> Result<Self> {
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -477,6 +551,7 @@ impl Engine {
         let engine = Self {
             store,
             registry: ProviderRegistry::default(),
+            tools,
             active: Arc::new(Mutex::new(None)),
             _lock: Arc::new(lock),
             stage_delay,
@@ -508,11 +583,11 @@ impl Engine {
         Ok(engine)
     }
 
-    pub fn providers(&self) -> Vec<crate::providers::ProviderMetadata> {
-        self.registry.metadata()
+    pub fn providers(&self) -> Vec<crate::providers::ProviderStatus> {
+        self.registry.status(&self.tools)
     }
 
-    pub fn start(&self, workspace: Id, target: Id) -> Result<ChainRun> {
+    pub fn start(&self, workspace: Id, target: Id, kind: ChainKind) -> Result<ChainRun> {
         let mut active = self
             .active
             .lock()
@@ -523,7 +598,7 @@ impl Engine {
                 "One Recon Chain is already running. Wait or cancel it.",
             ));
         }
-        let chain = self.store.create_chain(workspace, target)?;
+        let chain = self.store.create_chain(workspace, target, kind)?;
         let cancellation = Arc::new(AtomicBool::new(false));
         *active = Some(ActiveRun {
             workspace,
@@ -666,7 +741,12 @@ impl Engine {
         started: Instant,
     ) -> Result<()> {
         let workspace = chain.workspace_id;
-        let provider = self.registry.select(capability, target.target_type)?;
+        // Pin the exact provider when the stage names one; otherwise fall back to
+        // capability-based selection (preserves earlier single-provider behavior).
+        let provider = match &stage.provider_id {
+            Some(id) => self.registry.named(id, capability, target.target_type)?,
+            None => self.registry.select(capability, target.target_type)?,
+        };
         let metadata = provider.metadata();
         let conn = self.store.connect(workspace)?;
         let scope = database::workspace(&conn, workspace)?.scope;
@@ -675,6 +755,32 @@ impl Engine {
             params![workspace.to_string(),target.asset_id.map(|id|id.to_string()),chain.id.to_string()])?;
         inputs.retain(|a| crate::scope::contains(&scope, &a.canonical_identity));
         drop(conn);
+
+        // Detect the tool and its version before recording the run, so the run is
+        // reproducible ("which version produced this?"). A missing or unusable
+        // tool fails the run cleanly with a surfaced code — it never crashes.
+        let version = match provider.installation(&self.tools) {
+            crate::process::Installation::Installed { version } => version,
+            crate::process::Installation::Missing => {
+                return Err(CoreError::new(
+                    "ProviderMissing",
+                    "The provider tool is not installed. Install it to run this chain.",
+                ))
+            }
+            crate::process::Installation::UnsupportedVersion { .. } => {
+                return Err(CoreError::new(
+                    "ProviderUnsupported",
+                    "The installed provider version is not supported.",
+                ))
+            }
+            crate::process::Installation::ExecutionError { message } => {
+                return Err(CoreError::new(
+                    "ProviderFailure",
+                    &format!("The provider tool could not be inspected: {message}"),
+                ))
+            }
+        };
+
         let run = Id::new_v4();
         let mut conn = self.store.connect(workspace)?;
         let tx = conn.transaction()?;
@@ -686,7 +792,7 @@ impl Engine {
                 chain.id.to_string(),
                 stage.id.to_string(),
                 metadata.id,
-                metadata.version,
+                version,
                 target.normalized_value,
                 crate::now()
             ],
@@ -698,15 +804,42 @@ impl Engine {
             json!({"provider_run_id":run,"provider":metadata.name,"capability":capability}),
         )?;
         tx.commit()?;
-        let raw = provider.execute(&target.normalized_value, capability, &inputs)?;
+
+        // The provider deadline never outlives the chain budget.
+        let deadline = started + Duration::from_secs(30);
+        let ctx = crate::providers::ProviderContext {
+            cancelled,
+            deadline,
+            tools: &self.tools,
+        };
+        let execution = provider.execute(&target.normalized_value, capability, &inputs, &ctx)?;
+
+        // Preserve the complete provider output (stdout, stderr, command, exit,
+        // timings, version) as an evidence envelope BEFORE parsing, so neither a
+        // tool failure nor a parser failure can destroy the raw record.
+        let envelope = serde_json::to_vec_pretty(&json!({
+            "provider": metadata.id,
+            "provider_name": metadata.name,
+            "provider_version": version,
+            "offline": metadata.offline,
+            "capability": capability,
+            "target": execution.target,
+            "command": execution.command,
+            "exit_status": execution.exit_status,
+            "timed_out": execution.timed_out,
+            "pid": execution.pid,
+            "started_at": execution.started_at,
+            "ended_at": execution.ended_at,
+            "stdout": String::from_utf8_lossy(&execution.stdout),
+            "stderr": String::from_utf8_lossy(&execution.stderr),
+        }))?;
         let evidence = self.store.write_evidence(
             workspace,
             run,
             &metadata.name,
             &target.normalized_value,
-            &raw,
+            &envelope,
         )?;
-        // Commit original output before parsing so parser failure never destroys it.
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO evidence VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -734,8 +867,34 @@ impl Engine {
             json!({"evidence_id":evidence.id,"provider_run_id":run}),
         )?;
         tx.commit()?;
+
+        // A tool that timed out or exited non-zero is a failed run, but its
+        // evidence is already durable. Mark it and fail the chain gracefully.
+        if !execution.succeeded() {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE provider_runs SET end_time=?1,status='FAILED',exit_status=?2 WHERE id=?3",
+                params![crate::now(), execution.exit_status, run.to_string()],
+            )?;
+            emit(
+                &tx,
+                workspace,
+                EventType::ProviderCompleted,
+                json!({"provider_run_id":run,"provider":metadata.name,"status":"FAILED"}),
+            )?;
+            tx.commit()?;
+            return Err(CoreError::new(
+                if execution.timed_out {
+                    "ProviderTimeout"
+                } else {
+                    "ProviderFailure"
+                },
+                "The provider process did not complete successfully.",
+            ));
+        }
+
         self.check_budget(cancelled, started)?;
-        let discoveries = provider.parse(&raw)?;
+        let discoveries = provider.parse(&execution)?;
         self.store.persist_discoveries(
             workspace,
             run,
