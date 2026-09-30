@@ -18,16 +18,24 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn fake_subfinder() -> PathBuf {
+fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/fake-subfinder.sh")
+        .join("../fixtures")
+        .join(name)
         .canonicalize()
-        .expect("fake subfinder fixture exists")
+        .unwrap_or_else(|_| panic!("fixture {name} exists"))
 }
 
+fn fake_subfinder() -> PathBuf {
+    fixture("fake-subfinder.sh")
+}
+
+/// Tools with the given subfinder path plus the offline fake Nmap (so the active
+/// Port + Service Discovery stage runs without touching the network).
 fn tools_with_subfinder(path: PathBuf) -> ToolConfig {
     let mut tools = ToolConfig::default();
     tools.overrides.insert("subfinder".into(), path);
+    tools.overrides.insert("nmap".into(), fixture("fake-nmap.sh"));
     tools
 }
 
@@ -119,42 +127,85 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
         assert_eq!(asset.metadata["record_type"], serde_json::json!("A"));
     }
 
-    // Relationships: 3 has_subdomain + 3 resolves_to.
-    let has_sub = snapshot
-        .relationships
+    // Port + Service assets from Nmap: each of the 3 IPs exposes 22/tcp and
+    // 443/tcp, each serving one service.
+    let ports: Vec<_> = snapshot
+        .assets
         .iter()
-        .filter(|r| r.relationship_type == RelationshipType::HasSubdomain)
-        .count();
-    let resolves = snapshot
-        .relationships
+        .filter(|a| a.asset_type == AssetType::Port)
+        .map(|a| a.canonical_identity.as_str())
+        .collect();
+    let services = snapshot
+        .assets
         .iter()
-        .filter(|r| r.relationship_type == RelationshipType::ResolvesTo)
+        .filter(|a| a.asset_type == AssetType::Service)
         .count();
-    assert_eq!(has_sub, 3);
-    assert_eq!(resolves, 3);
+    assert_eq!(ports.len(), 6, "got {ports:?}");
+    assert!(ports.contains(&"192.0.2.10/tcp/22"));
+    assert!(ports.contains(&"192.0.2.10/tcp/443"));
+    assert_eq!(services, 6);
+    // Port assets carry host/protocol/state and are marked in scope.
+    let port_asset = snapshot
+        .assets
+        .iter()
+        .find(|a| a.canonical_identity == "192.0.2.10/tcp/22")
+        .unwrap();
+    assert_eq!(port_asset.metadata["host"], serde_json::json!("192.0.2.10"));
+    assert_eq!(port_asset.metadata["protocol"], serde_json::json!("tcp"));
+    assert_eq!(port_asset.metadata["tool"], serde_json::json!("nmap"));
+    assert_eq!(port_asset.metadata["in_scope"], serde_json::json!(true));
+    // Service metadata preserves the Nmap fingerprint (product/version).
+    let ssh_service = snapshot
+        .assets
+        .iter()
+        .find(|a| a.canonical_identity == "192.0.2.10/tcp/22/ssh")
+        .expect("ssh service");
+    assert_eq!(ssh_service.metadata["product"], serde_json::json!("OpenSSH"));
 
-    // Two provider runs: subfinder then native_dns, both completed.
-    assert_eq!(snapshot.provider_runs.len(), 2);
+    // Relationships: 3 has_subdomain + 3 resolves_to + 6 exposes + 6 serves.
+    let count = |kind: RelationshipType| {
+        snapshot
+            .relationships
+            .iter()
+            .filter(|r| r.relationship_type == kind)
+            .count()
+    };
+    assert_eq!(count(RelationshipType::HasSubdomain), 3);
+    assert_eq!(count(RelationshipType::ResolvesTo), 3);
+    assert_eq!(count(RelationshipType::Exposes), 6);
+    assert_eq!(count(RelationshipType::Serves), 6);
+
+    // Three provider runs: subfinder, native_dns, nmap — all completed.
+    assert_eq!(snapshot.provider_runs.len(), 3);
     let dns_run = snapshot
         .provider_runs
         .iter()
         .find(|r| r.provider_id == "native_dns")
         .expect("native_dns run");
-    assert_eq!(dns_run.status, TaskStatus::Completed);
     assert!(dns_run.provider_version.starts_with("core "));
-    assert!(dns_run.raw_output_reference.is_some());
+    let nmap_run = snapshot
+        .provider_runs
+        .iter()
+        .find(|r| r.provider_id == "nmap")
+        .expect("nmap run");
+    assert_eq!(nmap_run.status, TaskStatus::Completed);
+    assert_eq!(nmap_run.provider_version, "7.95");
+    assert!(nmap_run.raw_output_reference.is_some());
 
-    // Evidence: subfinder envelope + DNS envelope, both hash-verifiable.
-    assert_eq!(snapshot.evidence.len(), 2);
-    let dns_evidence = snapshot
+    // Evidence: subfinder + DNS + Nmap envelopes.
+    assert_eq!(snapshot.evidence.len(), 3);
+    let nmap_evidence = snapshot
         .evidence
         .iter()
-        .find(|e| e.provider == "Native DNS Resolver")
-        .expect("dns evidence");
-    let raw = engine.store.read_evidence(workspace, dns_evidence.id).unwrap();
+        .find(|e| e.provider == "Nmap")
+        .expect("nmap evidence");
+    let raw = engine.store.read_evidence(workspace, nmap_evidence.id).unwrap();
     let envelope: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(envelope["provider"], "native_dns");
-    assert!(envelope["stdout"].as_str().unwrap().contains("192.0.2.10"));
+    assert_eq!(envelope["provider"], "nmap");
+    assert!(envelope["stdout"].as_str().unwrap().contains("portid=\"22\""));
+
+    // Audit trail records the active scan.
+    // (verified indirectly: nmap run is ACTIVE and completed above)
 
     // resolves_to provenance is attributed to the DNS run.
     let ip_asset = snapshot
@@ -181,8 +232,17 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     let after = reopened.store.snapshot(workspace).unwrap();
     assert_eq!(after.assets.len(), snapshot.assets.len());
     assert_eq!(after.relationships.len(), snapshot.relationships.len());
-    assert_eq!(after.provider_runs.len(), 2);
-    assert_eq!(after.evidence.len(), 2);
+    assert_eq!(after.provider_runs.len(), 3);
+    assert_eq!(after.evidence.len(), 3);
+    // Port and Service assets survive the reopen.
+    assert_eq!(
+        after.assets.iter().filter(|a| a.asset_type == AssetType::Port).count(),
+        6
+    );
+    assert_eq!(
+        after.assets.iter().filter(|a| a.asset_type == AssetType::Service).count(),
+        6
+    );
     assert_eq!(after.chains[0].status, ChainStatus::Completed);
 }
 
