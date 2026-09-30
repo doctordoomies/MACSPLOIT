@@ -107,6 +107,8 @@ fn usable_executable(path: &Path) -> Option<PathBuf> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Installation {
+    /// A native, always-available provider that runs no external tool.
+    BuiltIn,
     Installed { version: String },
     Missing,
     UnsupportedVersion { version: String },

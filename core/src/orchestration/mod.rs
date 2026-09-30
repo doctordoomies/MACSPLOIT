@@ -194,7 +194,11 @@ impl Store {
                             Some(Capability::SubdomainDiscovery),
                             Some("subfinder"),
                         ),
-                        ("Normalization", None, None),
+                        (
+                            "DNS Resolution",
+                            Some(Capability::DnsResolution),
+                            Some("native_dns"),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -527,13 +531,23 @@ impl Engine {
         Self::open_with_tools(store, stage_delay, crate::process::ToolConfig::from_env())
     }
 
-    /// Open an engine with an explicit tool configuration. Tests use this to
-    /// inject a fake executable deterministically, without touching process-wide
-    /// environment variables.
+    /// Open an engine with an explicit tool configuration, selecting the DNS
+    /// resolver from the environment (`MACSPLOIT_DNS_FAKE` for offline runs).
     pub fn open_with_tools(
         store: Store,
         stage_delay: Duration,
         tools: crate::process::ToolConfig,
+    ) -> Result<Self> {
+        Self::open_with(store, stage_delay, tools, crate::dns::resolver_from_env())
+    }
+
+    /// Open an engine with an explicit tool configuration and DNS resolver. Tests
+    /// use this to inject a fake executable and a static, offline DNS resolver.
+    pub fn open_with(
+        store: Store,
+        stage_delay: Duration,
+        tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
     ) -> Result<Self> {
         let lock = OpenOptions::new()
             .create(true)
@@ -550,7 +564,7 @@ impl Engine {
         })?;
         let engine = Self {
             store,
-            registry: ProviderRegistry::default(),
+            registry: ProviderRegistry::new(resolver),
             tools,
             active: Arc::new(Mutex::new(None)),
             _lock: Arc::new(lock),
@@ -760,6 +774,10 @@ impl Engine {
         // reproducible ("which version produced this?"). A missing or unusable
         // tool fails the run cleanly with a surfaced code — it never crashes.
         let version = match provider.installation(&self.tools) {
+            // Built-in providers report the core version so runs stay reproducible.
+            crate::process::Installation::BuiltIn => {
+                format!("core {}", env!("CARGO_PKG_VERSION"))
+            }
             crate::process::Installation::Installed { version } => version,
             crate::process::Installation::Missing => {
                 return Err(CoreError::new(

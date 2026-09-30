@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod database;
+pub mod dns;
 pub mod error;
 pub mod events;
 pub mod evidence;

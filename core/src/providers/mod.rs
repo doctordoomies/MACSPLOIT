@@ -1,5 +1,6 @@
 use crate::{
     assets::{Asset, AssetType, Discovery, RelationshipType},
+    dns::{DnsOutcome, DnsResolver},
     error::{CoreError, Result},
     process::{self, Installation, ToolConfig},
     targets::TargetType,
@@ -101,14 +102,22 @@ pub struct ProviderRegistry {
     providers: Vec<Arc<dyn Provider>>,
 }
 
-impl Default for ProviderRegistry {
-    fn default() -> Self {
+impl ProviderRegistry {
+    /// Build the registry with an explicit DNS resolver (injected in tests).
+    pub fn new(resolver: Arc<dyn DnsResolver>) -> Self {
         Self {
             providers: vec![
                 Arc::new(SyntheticDiscoveryProvider),
                 Arc::new(SubfinderProvider),
+                Arc::new(NativeDnsProvider::new(resolver)),
             ],
         }
+    }
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new(Arc::new(crate::dns::SystemDnsResolver::default()))
     }
 }
 
@@ -523,6 +532,146 @@ impl Provider for SubfinderProvider {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Native DNS provider (Phase 1B). Resolves hostnames to IP addresses using the
+// injected resolver. It is built-in (no external tool) but participates fully in
+// the provider architecture: provider run, evidence, events, provenance.
+// ---------------------------------------------------------------------------
+
+pub struct NativeDnsProvider {
+    resolver: Arc<dyn DnsResolver>,
+}
+
+impl NativeDnsProvider {
+    pub fn new(resolver: Arc<dyn DnsResolver>) -> Self {
+        Self { resolver }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct DnsReport {
+    provider: String,
+    records: Vec<DnsHostRecord>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DnsHostRecord {
+    host: String,
+    a: Vec<String>,
+    aaaa: Vec<String>,
+    outcome: DnsOutcome,
+}
+
+impl Provider for NativeDnsProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "native_dns".into(),
+            name: "Native DNS Resolver".into(),
+            description: "Built-in A/AAAA resolution using the host's system resolver.".into(),
+            version: "built-in".into(),
+            risk_class: RiskClass::ActiveLowImpact,
+            offline: true, // no external process; still active network I/O when live
+            capabilities: vec![Capability::DnsResolution],
+            // Target classification has no Subdomain variant (subdomains are
+            // assets, not targets); a subdomain target classifies as a Domain or
+            // Hostname. The provider resolves Subdomain/Hostname/Domain assets
+            // from chain inputs regardless of the chain target type.
+            supported_target_types: vec![TargetType::Domain, TargetType::Hostname],
+        }
+    }
+
+    fn installation(&self, _tools: &ToolConfig) -> Installation {
+        Installation::BuiltIn
+    }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let started_at = crate::now();
+        // Resolve the hostname-like assets discovered earlier in this chain. Fall
+        // back to the chain target itself when no such inputs exist (direct use).
+        let mut hosts: Vec<String> = inputs
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a.asset_type,
+                    AssetType::Subdomain | AssetType::Hostname | AssetType::Domain
+                )
+            })
+            .map(|a| a.canonical_identity.clone())
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        if hosts.is_empty() {
+            hosts.push(target.to_owned());
+        }
+        let resolutions = self.resolver.resolve(&hosts, ctx.deadline, ctx.cancelled);
+        if ctx.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(CoreError::new("Cancelled", "DNS resolution cancelled."));
+        }
+        let records = resolutions
+            .into_iter()
+            .map(|r| DnsHostRecord {
+                host: r.host,
+                a: r.a.iter().map(|ip| ip.to_string()).collect(),
+                aaaa: r.aaaa.iter().map(|ip| ip.to_string()).collect(),
+                outcome: r.outcome,
+            })
+            .collect();
+        let stdout = serde_json::to_vec_pretty(&DnsReport {
+            provider: "native_dns".into(),
+            records,
+        })?;
+        Ok(Execution {
+            target: target.into(),
+            capability,
+            command: vec!["native_dns".into()],
+            stdout,
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at,
+            ended_at: crate::now(),
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        let report: DnsReport = serde_json::from_slice(&execution.stdout).map_err(|_| {
+            CoreError::new("ProviderFailure", "Native DNS output is malformed.")
+        })?;
+        let mut discoveries = Vec::new();
+        for record in report.records {
+            // Normalize the source host once; addresses are already de-duplicated
+            // per host by the resolver, and IP asset identities dedupe on upsert.
+            let mut push = |value: &str, family: &str| {
+                discoveries.push(Discovery {
+                    asset_type: AssetType::IPAddress,
+                    value: value.to_owned(),
+                    source: Some(record.host.clone()),
+                    relationship: Some(RelationshipType::ResolvesTo),
+                    metadata: json!({
+                        "tool": "native_dns",
+                        "record_type": family,
+                        "dns_outcome": record.outcome,
+                    }),
+                });
+            };
+            for ip in &record.a {
+                push(ip, "A");
+            }
+            for ip in &record.aaaa {
+                push(ip, "AAAA");
+            }
+        }
+        Ok(discoveries)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,5 +804,111 @@ mod tests {
             .parse(&exec_with_stdout("example.test", b""))
             .unwrap();
         assert!(discoveries.is_empty());
+    }
+
+    // --- Native DNS provider ---
+
+    fn dns_asset(kind: AssetType, identity: &str) -> Asset {
+        Asset {
+            id: crate::assets::Id::new_v4(),
+            workspace_id: crate::assets::Id::new_v4(),
+            asset_type: kind,
+            canonical_identity: identity.into(),
+            display_value: identity.into(),
+            metadata: json!({}),
+            first_seen: crate::now(),
+            last_seen: crate::now(),
+        }
+    }
+
+    #[test]
+    fn native_dns_metadata_is_builtin_low_impact() {
+        use crate::dns::StaticDnsResolver;
+        let provider = NativeDnsProvider::new(Arc::new(StaticDnsResolver::new()));
+        let metadata = provider.metadata();
+        assert_eq!(metadata.id, "native_dns");
+        assert_eq!(metadata.risk_class, RiskClass::ActiveLowImpact);
+        assert_eq!(metadata.capabilities, vec![Capability::DnsResolution]);
+        assert!(matches!(
+            provider.installation(&ToolConfig::default()),
+            Installation::BuiltIn
+        ));
+    }
+
+    #[test]
+    fn native_dns_resolves_dedupes_and_builds_resolves_to() {
+        use crate::dns::StaticDnsResolver;
+        let resolver = StaticDnsResolver::new()
+            .with(
+                "api.example.test",
+                &["192.0.2.10".parse().unwrap(), "192.0.2.10".parse().unwrap()], // duplicate
+                &["2001:db8::10".parse().unwrap()],
+            )
+            .with("dev.example.test", &["192.0.2.11".parse().unwrap()], &[]);
+        let provider = NativeDnsProvider::new(Arc::new(resolver));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let inputs = vec![
+            dns_asset(AssetType::Subdomain, "api.example.test"),
+            dns_asset(AssetType::Subdomain, "dev.example.test"),
+        ];
+        let execution = provider
+            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .unwrap();
+        let discoveries = provider.parse(&execution).unwrap();
+        // api -> 192.0.2.10 (deduped) + 2001:db8::10 ; dev -> 192.0.2.11  => 3
+        assert_eq!(discoveries.len(), 3);
+        assert!(discoveries
+            .iter()
+            .all(|d| d.asset_type == AssetType::IPAddress
+                && d.relationship == Some(RelationshipType::ResolvesTo)));
+        assert_eq!(
+            discoveries.iter().filter(|d| d.source.as_deref() == Some("api.example.test")).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn native_dns_no_records_yields_no_discoveries() {
+        use crate::dns::{DnsOutcome, StaticDnsResolver};
+        let resolver = StaticDnsResolver::new().with_outcome("api.example.test", DnsOutcome::NoRecords);
+        let provider = NativeDnsProvider::new(Arc::new(resolver));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let inputs = vec![dns_asset(AssetType::Subdomain, "api.example.test")];
+        let execution = provider
+            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .unwrap();
+        assert!(provider.parse(&execution).unwrap().is_empty());
+    }
+
+    #[test]
+    fn native_dns_falls_back_to_target_when_no_host_inputs() {
+        use crate::dns::StaticDnsResolver;
+        let resolver = StaticDnsResolver::new().with("example.test", &["192.0.2.1".parse().unwrap()], &[]);
+        let provider = NativeDnsProvider::new(Arc::new(resolver));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let execution = provider
+            .execute("example.test", Capability::DnsResolution, &[], &context(&tools, &cancelled))
+            .unwrap();
+        let discoveries = provider.parse(&execution).unwrap();
+        assert_eq!(discoveries.len(), 1);
+        assert_eq!(discoveries[0].value, "192.0.2.1");
+        assert_eq!(discoveries[0].source.as_deref(), Some("example.test"));
+    }
+
+    #[test]
+    fn native_dns_cancellation_is_reported() {
+        use crate::dns::StaticDnsResolver;
+        let resolver = StaticDnsResolver::new().with("api.example.test", &["192.0.2.10".parse().unwrap()], &[]);
+        let provider = NativeDnsProvider::new(Arc::new(resolver));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(true);
+        let inputs = vec![dns_asset(AssetType::Subdomain, "api.example.test")];
+        let error = provider
+            .execute("example.test", Capability::DnsResolution, &inputs, &context(&tools, &cancelled))
+            .unwrap_err();
+        assert_eq!(error.code, "Cancelled");
     }
 }
