@@ -46,6 +46,22 @@ framework is needed. `test.sh` runs Rust, builds the real helper, then runs Swif
 unit/integration tests, Python policy tests, and the full-history repository audit.
 Swift tests use Swift Testing, not XCTest, to work with this CLT installation.
 
+### Testing the Subfinder provider offline
+
+Automated tests never run the real `subfinder` or touch the network. `test.sh`
+exports `MACSPLOIT_SUBFINDER=$PWD/fixtures/fake-subfinder.sh`, an offline fake that
+emits deterministic JSONL. The Rust `domain_recon` integration test injects the same
+fixture through `ToolConfig`, and the Swift Domain Recon bridge test reads it from
+the environment (forwarded to the helper by `PipeTransport`).
+
+To exercise the real tool manually, install Subfinder yourself (for example
+`brew install subfinder`; MACSPLOIT never installs it) so it is found on `PATH` or in
+`/opt/homebrew/bin`, or point `MACSPLOIT_SUBFINDER` at a specific binary, then run
+Domain Recon against a domain you are explicitly authorized to assess and that is in
+the workspace scope. Do not run it against `example.com` or any host you do not own
+or have written permission to test. If you have no authorized target, skip live
+execution — the offline suite already proves the integration.
+
 `build-macos.sh` assembles `build/MACSPLOIT.app`, bundles the helper, ad-hoc signs
 both, and checks the bundle signature. This is a local development build, not a
 notarized distribution or release. If an agent's execution sandbox blocks nested

@@ -1,10 +1,15 @@
 # Recon Chain execution
 
-Status: **IMPLEMENTED** one durable offline Synthetic Recon chain.
+Status: **IMPLEMENTED** two chain presets — the offline Synthetic Recon chain and
+the real Domain Recon chain (Subfinder).
 
-The chain requests provider capabilities and feeds scoped discoveries into later
-stages. It is not a shell sequence of installed tools. The initial stage plan is
-fixed; a general dependency-graph scheduler remains planned.
+A chain requests provider capabilities and feeds scoped discoveries into later
+stages. It is not a shell sequence of installed tools. A stage may pin an exact
+provider so a capability offered by more than one provider is unambiguous. The
+stage plans are fixed presets; a general dependency-graph scheduler remains planned.
+`start_chain` selects the preset by a `chain` argument (`synthetic` by default, or
+`domain_recon`); the analyst chooses and launches a chain explicitly — adding a
+target never starts one.
 
 ## Implemented workflow
 
@@ -32,6 +37,33 @@ records. Repeat runs keep node/edge IDs and add provenance, run records, and
 evidence. Passive out-of-scope discoveries remain visible with `in_scope=false`
 but are excluded from downstream dispatch. An unscoped root cannot start.
 
+## Domain Recon (Phase 1A)
+
+The first real chain runs Subfinder against an in-scope domain. Its stages are:
+
+1. Target Validation — require a Domain target inside workspace scope.
+2. Subfinder Discovery — request SUBDOMAIN_DISCOVERY, pinned to the `subfinder`
+   provider, executed through the process supervisor.
+3. Normalization — subdomains are normalized and de-duplicated in the core.
+4. Persistence — assets, relationships, observations, and evidence are committed.
+5. Completion — persist final status.
+
+DNS, ports, and HTTP are intentionally absent; Domain Recon only maps a Domain to
+Subdomains:
+
+```text
+example.test
+├── api.example.test
+├── dev.example.test
+└── auth.example.test
+```
+
+Each discovered subdomain is traceable to its target, provider run, provider
+version, timestamp, source asset, evidence, and scope decision (`in_scope`). If
+Subfinder is missing the chain fails with `ProviderMissing`; if it exits non-zero
+or times out the run is marked FAILED with its evidence preserved. Automated tests
+drive this chain entirely offline through a fake executable — no real scanning.
+
 ## State and events
 
 Tasks/stages support QUEUED, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED.
@@ -49,15 +81,20 @@ user audit records are durable.
 
 Implemented limits: one active chain globally, 100 targets and 100 chain runs per
 workspace, 1,000 assets, 1 MiB evidence per run, and a 30-second cooperative chain
-budget. The synthetic provider is immediate and bounded. These limits are not a
-subprocess runtime enforcement mechanism.
+budget. The synthetic provider is immediate and bounded. Real providers run through
+the process supervisor: an argument array (never a shell), bounded stdout/stderr
+(512 KiB / 64 KiB), a wall-clock deadline within the chain budget, and cancellation
+that kills the whole child process group so a killed tool leaves no orphans. A real
+provider's timeout is currently the remaining 30-second chain budget; a dedicated
+per-provider timeout is planned.
 
 On shutdown the core asks work to cancel. On abnormal interruption, reopening
 marks pending/running work FAILED with `Interrupted`; it never automatically
 restarts it. Completed graph, evidence, provenance, events, and history survive
 restart in the automated tests.
 
-**PLANNED:** real adapters, process cancellation/timeouts, per-host and request
-limits, dependency scheduling, explicit retry policy, freshness/caching, and
-HTTP/redirect scope rechecks. **FUTURE:** a separately managed core service that
-continues while the UI application is fully quit. The Phase 0 helper is app-owned.
+**PLANNED:** DNS resolution then Nmap and HTTPX providers, a dedicated per-provider
+timeout, per-host and request limits, dependency scheduling, explicit retry policy,
+freshness/caching, and HTTP/redirect scope rechecks. **FUTURE:** a separately
+managed core service that continues while the UI application is fully quit. The
+helper is app-owned.

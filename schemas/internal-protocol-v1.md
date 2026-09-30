@@ -18,9 +18,9 @@ The Swift transport serializes exchanges. Stderr is reserved for application log
 Failure replaces `result` with `error: {"code": "...", "message": "..."}`.
 Swift checks version and request ID and decodes typed results. Error codes include
 InvalidTarget, InvalidWorkspace, WorkspaceNotFound, ScopeViolation, DatabaseError,
-MigrationFailure, ProviderFailure, EvidenceIntegrityError, BudgetExceeded,
-CoreBusy, InvalidState, InvalidRequest, ProtocolMismatch, and transport
-CoreUnavailable. Invalid/oversized requests without a decodable ID return an
+MigrationFailure, ProviderFailure, ProviderMissing, ProviderTimeout,
+ProviderUnsupported, EvidenceIntegrityError, BudgetExceeded, CoreBusy, InvalidState,
+InvalidRequest, ProtocolMismatch, and transport CoreUnavailable. Invalid/oversized requests without a decodable ID return an
 empty request ID; an oversized frame closes the helper session.
 
 | Method | Parameters | Result |
@@ -31,10 +31,10 @@ empty request ID; an oversized frame closes the helper session.
 | add_target | workspace_id, value | Classified stored target |
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
-| start_chain | workspace_id, target_id | Pending chain; execution occurs on worker |
+| start_chain | workspace_id, target_id, chain (optional: `synthetic` default, or `domain_recon`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
-| list_providers | none | Available provider metadata |
+| list_providers | none | Provider metadata plus live installation status (state/version) |
 
 IDs are UUID strings. Field names use snake_case; timestamps are RFC3339 UTC.
 Maximum request: 64 KiB including newline. Maximum response: 8 MiB of JSON.

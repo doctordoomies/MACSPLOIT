@@ -19,9 +19,19 @@ SHA-256 evidence, durable events, and replay. No scanner is installed or invoked
 The macOS bundle builds and launches. Rust and Swift integration tests verify
 execution and persisted state after restarting the core. Workspace creation was
 also verified through the UI. The remaining on-screen workflow and full GUI
-quit/reopen check are **blocked by the native UI automation connection**; Phase 0
-acceptance remains open until those checks are completed. See
+quit/reopen check are **blocked by the native UI automation connection**; that GUI
+acceptance check remains open. See
 [verification](docs/phase-0-verification.md) for precise results and limitations.
+
+**IMPLEMENTED — Phase 1A first real provider:** a `SubfinderProvider` runs the
+external ProjectDiscovery `subfinder` tool through a centralized, shell-free process
+supervisor to turn an in-scope domain into subdomains, with executable discovery,
+installation/version detection, structured JSONL parsing, raw evidence, provenance,
+scope enforcement, and durable events — plugged into the same provider architecture
+as the synthetic provider, which is retained. A `Domain Recon` chain and its UI are
+wired up. MACSPLOIT never installs Subfinder; automated tests run entirely offline
+against a fake executable. **PLANNED next:** DNS resolution, then Nmap, then HTTPX.
+See [providers](docs/providers.md) and [recon-chain](docs/recon-chain.md).
 
 ## Build and run
 

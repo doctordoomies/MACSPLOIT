@@ -1,7 +1,8 @@
 # Security model
 
-Status: **IMPLEMENTED** repository protections and offline foundation controls;
-external-tool and distribution protections remain planned.
+Status: **IMPLEMENTED** repository protections, offline foundation controls, and
+passive external-tool execution controls (Phase 1A); higher-risk execution and
+distribution protections remain planned.
 
 ## Repository
 
@@ -14,10 +15,19 @@ cannot prove that arbitrary content contains no secret.
 
 ## Implemented boundaries
 
-- The only provider is synthetic; the application has no scanner, DNS lookup,
-  socket, external HTTP request, telemetry, tool installer, or privilege request.
-- Foundation Process launches the bundled helper by path and argument array.
-  The environment is minimal; targets are structured JSON, never shell commands.
+- Two providers are registered: the offline synthetic provider and Subfinder (a
+  passive external tool). The application has no port scanner, HTTP prober,
+  telemetry, tool installer, or privilege request. Subfinder is run only when the
+  analyst launches Domain Recon and only if the tool is already installed.
+- Both the bundled helper and every external provider are launched by executable
+  path and argument array — never through a shell. The child environment is minimal;
+  targets are validated/normalized before use and can never become shell syntax.
+- External tools run under a centralized process supervisor: bounded stdout/stderr,
+  a wall-clock deadline within the chain budget, and cancellation that signals the
+  whole child process group (no orphaned grandchildren). Untrusted tool output is
+  size-, line-, and field-validated during parsing; one malformed line is skipped
+  without failing the run. Each run records the exact command, arguments, and
+  detected tool version, and stores raw stdout/stderr as hashed evidence.
 - Rust validates targets and UUIDs, uses parameterized SQL, enforces workspace
   foreign keys, and writes graph/provenance/events in transactions.
 - Each workspace uses a UUID-derived directory outside Git. Newly created private
@@ -43,17 +53,21 @@ SQLite `audit_events` records WorkspaceCreated, TargetAdded, ReconStarted, and
 ReconCancelled separately from UI activity events.
 
 Structured errors cross the bridge; storage error messages do not expose raw SQL,
-local paths, or captured content. The evidence viewer intentionally shows complete
-synthetic JSON after Rust verifies its SHA-256. General secret redaction and safe
-rendering of arbitrary scanner output are prerequisites for real providers.
+local paths, or captured content. The evidence viewer shows the stored provider
+envelope (including bounded raw stdout/stderr) after Rust verifies its SHA-256.
+Subfinder output is passive subdomain data; general secret redaction and hardened
+rendering of arbitrary scanner output remain prerequisites for higher-risk tools.
 
 ## Planned and future controls
 
-**PLANNED before real execution:** supervise subprocesses with argument arrays,
-output/runtime limits and process-group cancellation; validate parser output;
-recheck scope on addresses/redirects; record exact versions/arguments; show tool
-installation and active execution for explicit approval. Expand authorization
-and audit controls when those actions actually exist.
+**IMPLEMENTED for passive external execution (Phase 1A):** subprocess supervision
+with argument arrays, bounded output, a run deadline, and process-group
+cancellation; parser-output validation; exact command/argument/version recording.
+
+**PLANNED before higher-risk execution:** a dedicated per-provider timeout,
+per-host/request limits, scope rechecks on resolved addresses and HTTP redirects,
+and UI approval for tool installation and any active execution. Expand authorization
+and audit controls as those actions are added.
 
 **FUTURE:** Keychain-backed API credentials, retention/deletion/export controls,
 redacted display versus protected originals, signed/notarized distribution and
