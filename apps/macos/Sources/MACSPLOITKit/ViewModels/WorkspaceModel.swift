@@ -19,6 +19,7 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
 @MainActor
 public final class WorkspaceModel: ObservableObject {
     @Published public private(set) var workspaces: [Workspace] = []
+    @Published public private(set) var providerStatuses: [ProviderStatus] = []
     @Published public private(set) var snapshot: Snapshot?
     @Published public private(set) var selectedWorkspaceId: String?
     @Published public var section: WorkspaceSection? = .dashboard
@@ -42,6 +43,7 @@ public final class WorkspaceModel: ObservableObject {
             let hello = try await client.hello()
             guard hello.offlineOnly else { throw CoreFailure(code: "ProtocolMismatch", message: "This app requires the offline Phase 0 core.") }
             workspaces = try await client.listWorkspaces()
+            providerStatuses = (try? await client.listProviders()) ?? []
             isConnected = true; connectionError = nil
             let previous = selectedWorkspaceId
             if let id = previous, workspaces.contains(where: { $0.id == id }) { await selectWorkspace(id) }
@@ -104,15 +106,18 @@ public final class WorkspaceModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    public func runRecon() async {
+    public func runRecon(kind: String = "synthetic") async {
         guard let id = selectedWorkspaceId, let target = selectedTargetId else { return }
         isBusy = true; defer { isBusy = false }
         do {
-            let chain = try await client.startChain(workspace: id, target: target)
+            let chain = try await client.startChain(workspace: id, target: target, chain: kind)
             guard selectedWorkspaceId == id else { return }
             selectedChainId = chain.id; section = .recon; try await refresh()
         } catch { errorMessage = error.localizedDescription }
     }
+
+    public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }
+    public var subfinder: ProviderStatus? { provider("subfinder") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }

@@ -63,6 +63,8 @@ public struct ChainStage: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, chainId: String, name: String, status: String
     public let position: Int
     public let capability: String?, startedAt: String?, endedAt: String?
+    /// The provider pinned to this stage, when the preset specifies one.
+    public let providerId: String?
 }
 public struct TaskRecord: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, chainId: String, stageId: String, status: String, updatedAt: String
@@ -87,7 +89,7 @@ public struct CoreEvent: Codable, Identifiable, Sendable, Equatable {
         case "AssetDiscovered": return "Discovered \(payload["value"].string ?? "asset")"
         case "ProviderStarted": return "Provider started: \(payload["provider"].string ?? "")"
         case "ProviderCompleted": return "Provider \(payload["status"].string?.lowercased() ?? "completed")"
-        case "ChainStarted": return "Synthetic Recon started"
+        case "ChainStarted": return "Recon chain started"
         case "ChainCompleted": return "Recon \(payload["status"].string?.lowercased() ?? "completed")"
         case "ReconCancelled": return "Recon cancelled"
         case "RecoveryCompleted": return "Interrupted run recovered without restarting"
@@ -104,6 +106,26 @@ public struct Snapshot: Codable, Sendable, Equatable {
 }
 public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String
+}
+public struct ProviderInstallation: Codable, Sendable, Equatable {
+    public let state: String            // INSTALLED / MISSING / UNSUPPORTED_VERSION / EXECUTION_ERROR
+    public let version: String?
+    public let message: String?
+    public var isInstalled: Bool { state == "INSTALLED" }
+    public var summary: String {
+        switch state {
+        case "INSTALLED": return "Installed \(version.map { "(\($0))" } ?? "")"
+        case "MISSING": return "Not installed"
+        case "UNSUPPORTED_VERSION": return "Unsupported version \(version ?? "")"
+        default: return message ?? "Execution error"
+        }
+    }
+}
+public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
+    public let id: String, name: String, description: String, version: String
+    public let capabilities: [String], supportedTargetTypes: [String], riskClass: String
+    public let offline: Bool
+    public let installation: ProviderInstallation
 }
 public struct CoreHello: Codable, Sendable {
     public let coreVersion: String, protocolVersion: Int, offlineOnly: Bool

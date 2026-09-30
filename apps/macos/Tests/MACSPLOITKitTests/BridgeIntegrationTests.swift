@@ -36,7 +36,10 @@ import Testing
         #expect(replay.contains { $0.eventType == "ChainCompleted" })
         for evidence in result.evidence {
             let raw = try await client.readEvidence(workspace: workspace.id, evidence: evidence.id)
-            #expect(raw.rawJson.contains("\"synthetic\": true"))
+            // Evidence is now a provider envelope; the synthetic output is nested
+            // inside its stdout field.
+            #expect(raw.rawJson.contains("\"provider\": \"synthetic\""))
+            #expect(raw.rawJson.contains("\"offline\": true"))
         }
         transport.shutdown()
         let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
@@ -44,5 +47,54 @@ import Testing
         let reopened = CoreClient(transport: reopenedTransport)
         let persisted = try await reopened.snapshot(workspace: workspace.id)
         #expect(persisted == result)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_SUBFINDER"] != nil))
+    func testDomainReconRunsSubfinderThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-domain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        // The fake subfinder reports version 9.9.9 and is therefore "installed".
+        let providers = try await client.listProviders()
+        let subfinder = try #require(providers.first { $0.id == "subfinder" })
+        #expect(subfinder.installation.isInstalled)
+
+        let workspace = try await client.createWorkspace(name: "Domain bridge test", scope: ["example.test", "*.example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "domain_recon")
+        let deadline = Date().addingTimeInterval(15)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" { completed = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.chains.first?.name == "Domain Recon")
+        let subdomains = result.assets.filter { $0.assetType == "Subdomain" }
+        #expect(subdomains.count == 3)
+        #expect(result.relationships.count == 3)
+        #expect(result.providerRuns.count == 1)
+        #expect(result.providerRuns.first?.providerId == "subfinder")
+        #expect(result.providerRuns.first?.providerVersion == "9.9.9")
+        #expect(result.evidence.count == 1)
+        let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
+        #expect(evidence.rawJson.contains("subfinder"))
+        #expect(evidence.rawJson.contains("api.example.test"))
+
+        transport.shutdown()
+        let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        defer { reopenedTransport.shutdown() }
+        let reopened = try await CoreClient(transport: reopenedTransport).snapshot(workspace: workspace.id)
+        #expect(reopened.assets.count == result.assets.count)
+        #expect(reopened.providerRuns.count == 1)
+        #expect(reopened.evidence.count == 1)
     }
 }

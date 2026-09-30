@@ -55,4 +55,16 @@ actor ReplyTransport: CoreTransport {
         #expect(snapshot.events[0].summary == "Discovered api.example.test")
         #expect(snapshot.events[0].payload["synthetic"] == .bool(true))
     }
+
+    @Test func testProviderStatusDecodesFlattenedMetadataAndInstallation() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"subfinder","name":"Subfinder","description":"Passive subdomain enumeration.","version":"external","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","offline":false,"installation":{"state":"MISSING"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers.count == 1)
+        #expect(providers[0].id == "subfinder")
+        #expect(providers[0].capabilities == ["SUBDOMAIN_DISCOVERY"])
+        #expect(providers[0].supportedTargetTypes == ["Domain"])
+        #expect(providers[0].offline == false)
+        #expect(providers[0].installation.isInstalled == false)
+        #expect(providers[0].installation.summary == "Not installed")
+    }
 }

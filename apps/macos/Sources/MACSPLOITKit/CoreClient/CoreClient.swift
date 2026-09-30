@@ -10,9 +10,17 @@ public protocol CoreAPI: Sendable {
     func addTarget(workspace: String, value: String) async throws -> Target
     func snapshot(workspace: String) async throws -> Snapshot
     func events(workspace: String, after: Int64) async throws -> [CoreEvent]
-    func startChain(workspace: String, target: String) async throws -> ChainRun
+    func startChain(workspace: String, target: String, chain: String) async throws -> ChainRun
     func cancelChain(workspace: String, chain: String) async throws
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent
+    func listProviders() async throws -> [ProviderStatus]
+}
+
+public extension CoreAPI {
+    /// Convenience: start the default (synthetic) chain.
+    func startChain(workspace: String, target: String) async throws -> ChainRun {
+        try await startChain(workspace: workspace, target: target, chain: "synthetic")
+    }
 }
 
 private struct Request: Encodable {
@@ -57,9 +65,10 @@ public struct CoreClient: CoreAPI {
     public func events(workspace: String, after: Int64) async throws -> [CoreEvent] {
         try await call("events_after", ["workspace_id": .string(workspace), "after": .number(Double(after))])
     }
-    public func startChain(workspace: String, target: String) async throws -> ChainRun {
-        try await call("start_chain", ["workspace_id": .string(workspace), "target_id": .string(target)])
+    public func startChain(workspace: String, target: String, chain: String) async throws -> ChainRun {
+        try await call("start_chain", ["workspace_id": .string(workspace), "target_id": .string(target), "chain": .string(chain)])
     }
+    public func listProviders() async throws -> [ProviderStatus] { try await call("list_providers") }
     public func cancelChain(workspace: String, chain: String) async throws {
         let _: JSONValue = try await call("cancel_chain", ["workspace_id": .string(workspace), "chain_id": .string(chain)])
     }

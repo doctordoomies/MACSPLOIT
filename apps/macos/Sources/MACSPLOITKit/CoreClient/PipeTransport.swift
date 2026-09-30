@@ -50,7 +50,13 @@ public final class PipeTransport: CoreTransport, @unchecked Sendable {
         let child = Process(), toCore = Pipe(), fromCore = Pipe()
         child.executableURL = executable
         child.arguments = ["--data-dir", dataDirectory.path]
-        child.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
+        // Minimal environment by design. Forward only the explicit tool-location
+        // overrides when the app itself was launched with them (manual testing).
+        var environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
+        for key in ["MACSPLOIT_SUBFINDER", "MACSPLOIT_TOOLS_DIR"] {
+            if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
+        }
+        child.environment = environment
         child.standardInput = toCore; child.standardOutput = fromCore; child.standardError = logHandle
         try child.run()
         process = child; input = toCore.fileHandleForWriting; output = fromCore.fileHandleForReading; log = logHandle
