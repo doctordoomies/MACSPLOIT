@@ -52,7 +52,8 @@ import Testing
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_SUBFINDER"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_DNS_FAKE"] != nil
-        && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil))
+        && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
     func testDomainReconRunsSubfinderThroughBridgeOffline() async throws {
         let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-domain-\(UUID().uuidString)")
@@ -72,6 +73,9 @@ import Testing
         let nmap = try #require(providers.first { $0.id == "nmap" })
         #expect(nmap.installation.isInstalled)
         #expect(nmap.riskClass == "ACTIVE")
+        let httpx = try #require(providers.first { $0.id == "httpx" })
+        #expect(httpx.installation.isInstalled)
+        #expect(httpx.riskClass == "ACTIVE_LOW_IMPACT")
 
         let workspace = try await client.createWorkspace(name: "Domain bridge test", scope: ["example.test", "*.example.test", "192.0.2.0/24"])
         let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
@@ -90,26 +94,29 @@ import Testing
         let ips = result.assets.filter { $0.assetType == "IPAddress" }
         let ports = result.assets.filter { $0.assetType == "Port" }
         let services = result.assets.filter { $0.assetType == "Service" }
+        let websites = result.assets.filter { $0.assetType == "Website" }
+        let tech = result.assets.filter { $0.assetType == "Technology" }
         #expect(subdomains.count == 3)
         #expect(ips.count == 3)
         #expect(ports.count == 6)     // 22/tcp + 443/tcp per IP
         #expect(services.count == 6)
-        // 3 has_subdomain + 3 resolves_to + 6 exposes + 6 serves.
-        #expect(result.relationships.count == 18)
-        #expect(result.relationships.filter { $0.relationshipType == "resolves_to" }.count == 3)
-        #expect(result.relationships.filter { $0.relationshipType == "exposes" }.count == 6)
-        #expect(result.relationships.filter { $0.relationshipType == "serves" }.count == 6)
-        // Three provider runs: subfinder, native_dns, nmap.
-        #expect(result.providerRuns.count == 3)
-        #expect(result.providerRuns.contains { $0.providerId == "nmap" })
-        #expect(result.evidence.count == 3)
+        #expect(websites.count == 3)  // https service per IP
+        #expect(tech.count == 1)      // nginx, shared
+        // 3 has_subdomain + 3 resolves_to + 6 exposes + 6 serves + 3 has_endpoint + 3 uses_technology.
+        #expect(result.relationships.count == 24)
+        #expect(result.relationships.filter { $0.relationshipType == "has_endpoint" }.count == 3)
+        #expect(result.relationships.filter { $0.relationshipType == "uses_technology" }.count == 3)
+        // Four provider runs: subfinder, native_dns, nmap, httpx.
+        #expect(result.providerRuns.count == 4)
+        #expect(result.providerRuns.contains { $0.providerId == "httpx" })
+        #expect(result.evidence.count == 4)
 
         transport.shutdown()
         let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
         defer { reopenedTransport.shutdown() }
         let reopened = try await CoreClient(transport: reopenedTransport).snapshot(workspace: workspace.id)
         #expect(reopened.assets.count == result.assets.count)
-        #expect(reopened.providerRuns.count == 3)
-        #expect(reopened.evidence.count == 3)
+        #expect(reopened.providerRuns.count == 4)
+        #expect(reopened.evidence.count == 4)
     }
 }

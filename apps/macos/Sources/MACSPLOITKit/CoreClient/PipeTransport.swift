@@ -53,7 +53,7 @@ public final class PipeTransport: CoreTransport, @unchecked Sendable {
         // Minimal environment by design. Forward only the explicit tool-location
         // overrides when the app itself was launched with them (manual testing).
         var environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
-        for key in ["MACSPLOIT_SUBFINDER", "MACSPLOIT_NMAP", "MACSPLOIT_TOOLS_DIR", "MACSPLOIT_DNS_FAKE"] {
+        for key in ["MACSPLOIT_SUBFINDER", "MACSPLOIT_NMAP", "MACSPLOIT_HTTPX", "MACSPLOIT_TOOLS_DIR", "MACSPLOIT_DNS_FAKE"] {
             if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
         }
         child.environment = environment

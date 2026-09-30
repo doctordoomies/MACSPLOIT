@@ -10,6 +10,7 @@ export MACSPLOIT_CORE_BINARY="$PWD/target/debug/macsploit-core"
 export MACSPLOIT_SUBFINDER="$PWD/fixtures/fake-subfinder.sh"
 export MACSPLOIT_DNS_FAKE="api.example.test=192.0.2.10;dev.example.test=192.0.2.11;auth.example.test=192.0.2.12"
 export MACSPLOIT_NMAP="$PWD/fixtures/fake-nmap.sh"
+export MACSPLOIT_HTTPX="$PWD/fixtures/fake-httpx.sh"
 ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing
 python3 -m unittest discover -s tests -v
 python3 scripts/check_repository.py --all-history

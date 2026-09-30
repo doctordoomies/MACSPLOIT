@@ -36,6 +36,7 @@ fn tools_with_subfinder(path: PathBuf) -> ToolConfig {
     let mut tools = ToolConfig::default();
     tools.overrides.insert("subfinder".into(), path);
     tools.overrides.insert("nmap".into(), fixture("fake-nmap.sh"));
+    tools.overrides.insert("httpx".into(), fixture("fake-httpx.sh"));
     tools
 }
 
@@ -175,8 +176,33 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     assert_eq!(count(RelationshipType::Exposes), 6);
     assert_eq!(count(RelationshipType::Serves), 6);
 
-    // Three provider runs: subfinder, native_dns, nmap — all completed.
-    assert_eq!(snapshot.provider_runs.len(), 3);
+    // HTTPX: each https service (443 on 3 IPs) becomes a Website; nginx is a shared
+    // Technology asset. has_endpoint links IP→Website; uses_technology Website→Tech.
+    let websites = snapshot
+        .assets
+        .iter()
+        .filter(|a| a.asset_type == AssetType::Website)
+        .count();
+    let technologies: Vec<_> = snapshot
+        .assets
+        .iter()
+        .filter(|a| a.asset_type == AssetType::Technology)
+        .map(|a| a.canonical_identity.as_str())
+        .collect();
+    assert_eq!(websites, 3);
+    assert_eq!(technologies, vec!["nginx"]); // shared, deduplicated
+    assert_eq!(count(RelationshipType::HasEndpoint), 3);
+    assert_eq!(count(RelationshipType::UsesTechnology), 3);
+    let website = snapshot
+        .assets
+        .iter()
+        .find(|a| a.asset_type == AssetType::Website)
+        .unwrap();
+    assert_eq!(website.metadata["status_code"], serde_json::json!(200));
+    assert_eq!(website.metadata["server"], serde_json::json!("nginx"));
+
+    // Four provider runs: subfinder, native_dns, nmap, httpx — all completed.
+    assert_eq!(snapshot.provider_runs.len(), 4);
     let dns_run = snapshot
         .provider_runs
         .iter()
@@ -192,8 +218,8 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     assert_eq!(nmap_run.provider_version, "7.95");
     assert!(nmap_run.raw_output_reference.is_some());
 
-    // Evidence: subfinder + DNS + Nmap envelopes.
-    assert_eq!(snapshot.evidence.len(), 3);
+    // Evidence: subfinder + DNS + Nmap + HTTPX envelopes.
+    assert_eq!(snapshot.evidence.len(), 4);
     let nmap_evidence = snapshot
         .evidence
         .iter()
@@ -232,8 +258,12 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     let after = reopened.store.snapshot(workspace).unwrap();
     assert_eq!(after.assets.len(), snapshot.assets.len());
     assert_eq!(after.relationships.len(), snapshot.relationships.len());
-    assert_eq!(after.provider_runs.len(), 3);
-    assert_eq!(after.evidence.len(), 3);
+    assert_eq!(after.provider_runs.len(), 4);
+    assert_eq!(after.evidence.len(), 4);
+    assert_eq!(
+        after.assets.iter().filter(|a| a.asset_type == AssetType::Website).count(),
+        3
+    );
     // Port and Service assets survive the reopen.
     assert_eq!(
         after.assets.iter().filter(|a| a.asset_type == AssetType::Port).count(),

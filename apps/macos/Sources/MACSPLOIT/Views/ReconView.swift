@@ -135,6 +135,14 @@ struct ReconView: View {
                 status: model.nmap?.installation.summary ?? "Provider status unavailable",
                 risk: "ACTIVE", warn: true
             )
+            Divider()
+            providerRow(
+                title: "HTTPX",
+                detail: "HTTP Probing",
+                available: model.httpx?.installation.isAvailable ?? false,
+                status: model.httpx?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE · LOW", warn: false
+            )
         }
         .padding(14)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
