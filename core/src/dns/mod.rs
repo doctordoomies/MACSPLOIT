@@ -217,8 +217,6 @@ impl DnsResolver for SystemDnsResolver {
         deadline: Instant,
         cancelled: &AtomicBool,
     ) -> Vec<HostResolution> {
-        use hickory_resolver::TokioAsyncResolver;
-
         let limits = self.limits;
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -234,9 +232,12 @@ impl DnsResolver for SystemDnsResolver {
         };
 
         runtime.block_on(async move {
-            // Respect the system resolver configuration. If it cannot be read we
-            // fail closed rather than silently using a hardcoded public resolver.
-            let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
+            // Respect the system resolver configuration (hickory 0.26:
+            // builder_tokio() reads the host's resolv.conf). If it cannot be read
+            // we fail closed rather than silently using a hardcoded public resolver.
+            let resolver = match hickory_resolver::Resolver::builder_tokio()
+                .and_then(|builder| builder.build())
+            {
                 Ok(resolver) => resolver,
                 Err(_) => {
                     return hosts
@@ -287,74 +288,65 @@ fn ready_task(resolution: HostResolution) -> tokio::task::JoinHandle<HostResolut
 }
 
 async fn resolve_one(
-    resolver: &hickory_resolver::TokioAsyncResolver,
+    resolver: &hickory_resolver::TokioResolver,
     host: &str,
     per_query: Duration,
 ) -> HostResolution {
+    use std::net::IpAddr;
     use tokio::time::timeout;
 
-    let mut a = Vec::new();
-    let mut aaaa = Vec::new();
-    let mut errors = Vec::new();
-
-    match timeout(per_query, resolver.ipv4_lookup(host)).await {
+    // hickory 0.26 removed the per-family ipv4_lookup/ipv6_lookup helpers; lookup_ip
+    // queries both A and AAAA and returns the combined addresses, which we split by
+    // family. Host-level partial success (some addresses) is still preserved.
+    match timeout(per_query, resolver.lookup_ip(host)).await {
         Ok(Ok(lookup)) => {
-            for record in lookup.iter() {
-                let ip = record.0;
-                if !a.contains(&ip) {
-                    a.push(ip);
+            let mut a = Vec::new();
+            let mut aaaa = Vec::new();
+            for ip in lookup.iter() {
+                match ip {
+                    IpAddr::V4(v4) if !a.contains(&v4) => a.push(v4),
+                    IpAddr::V6(v6) if !aaaa.contains(&v6) => aaaa.push(v6),
+                    _ => {}
                 }
             }
-        }
-        Ok(Err(error)) => errors.push(classify(error.kind())),
-        Err(_) => errors.push(DnsOutcome::Timeout),
-    }
-    match timeout(per_query, resolver.ipv6_lookup(host)).await {
-        Ok(Ok(lookup)) => {
-            for record in lookup.iter() {
-                let ip = record.0;
-                if !aaaa.contains(&ip) {
-                    aaaa.push(ip);
-                }
+            let outcome = if a.is_empty() && aaaa.is_empty() {
+                DnsOutcome::NoRecords
+            } else {
+                DnsOutcome::Resolved
+            };
+            HostResolution {
+                host: host.to_owned(),
+                a,
+                aaaa,
+                outcome,
             }
         }
-        Ok(Err(error)) => errors.push(classify(error.kind())),
-        Err(_) => errors.push(DnsOutcome::Timeout),
-    }
-
-    // Any successful record means the host resolved (partial success is success).
-    let outcome = if !a.is_empty() || !aaaa.is_empty() {
-        DnsOutcome::Resolved
-    } else {
-        // No records: prefer the most specific classified error.
-        errors
-            .iter()
-            .copied()
-            .find(|o| *o == DnsOutcome::NxDomain)
-            .or_else(|| errors.first().copied())
-            .unwrap_or(DnsOutcome::NoRecords)
-    };
-    HostResolution {
-        host: host.to_owned(),
-        a,
-        aaaa,
-        outcome,
+        Ok(Err(error)) => HostResolution::empty(host, classify(&error)),
+        Err(_) => HostResolution::empty(host, DnsOutcome::Timeout),
     }
 }
 
-fn classify(kind: &hickory_resolver::error::ResolveErrorKind) -> DnsOutcome {
-    use hickory_resolver::error::ResolveErrorKind;
+fn classify(error: &hickory_resolver::net::NetError) -> DnsOutcome {
+    use hickory_resolver::net::{DnsError, NetError};
     use hickory_resolver::proto::op::ResponseCode;
-    match kind {
-        ResolveErrorKind::NoRecordsFound { response_code, .. } => {
-            if *response_code == ResponseCode::NXDomain {
+    match error {
+        NetError::Dns(DnsError::NoRecordsFound(no_records)) => {
+            if no_records.response_code == ResponseCode::NXDomain {
                 DnsOutcome::NxDomain
             } else {
                 DnsOutcome::NoRecords
             }
         }
-        ResolveErrorKind::Timeout => DnsOutcome::Timeout,
-        ResolveErrorKind::Proto(_) => DnsOutcome::TemporaryFailure,
+        NetError::Dns(DnsError::ResponseCode(code)) => {
+            if *code == ResponseCode::NXDomain {
+                DnsOutcome::NxDomain
+            } else {
+                DnsOutcome::ResolverFailure
+            }
+        }
+        NetError::Timeout => DnsOutcome::Timeout,
+        NetError::Proto(_) => DnsOutcome::TemporaryFailure,
+        NetError::Io(_) => DnsOutcome::ResolverFailure,
         _ => DnsOutcome::ResolverFailure,
     }
 }
