@@ -119,4 +119,43 @@ import Testing
         #expect(reopened.providerRuns.count == 4)
         #expect(reopened.evidence.count == 4)
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_WEB_FIXTURE"] != nil))
+    func testWebAnalysisRunsNativelyThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-webanalysis-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        // Native HTTP analysis is built-in.
+        let providers = try await client.listProviders()
+        let nativeHttp = try #require(providers.first { $0.id == "native_http" })
+        #expect(nativeHttp.installation.state == "BUILT_IN")
+        #expect(nativeHttp.riskClass == "ACTIVE_LOW_IMPACT")
+
+        let workspace = try await client.createWorkspace(name: "Web analysis bridge test", scope: ["example.test", "*.example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "https://example.test/")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "web_analysis")
+        let deadline = Date().addingTimeInterval(15)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" { completed = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.chains.first?.name == "Web Analysis")
+        #expect(result.assets.contains { $0.assetType == "Website" && $0.canonicalIdentity == "https://example.test/" })
+        #expect(result.providerRuns.count == 1)
+        #expect(result.providerRuns.first?.providerId == "native_http")
+        #expect(result.evidence.count == 1)
+        let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
+        #expect(evidence.rawJson.contains("strict-transport-security"))
+        #expect(!evidence.rawJson.contains("TOPSECRET")) // cookie value never persisted
+    }
 }

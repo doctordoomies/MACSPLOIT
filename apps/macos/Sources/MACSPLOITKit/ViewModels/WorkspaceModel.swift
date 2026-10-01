@@ -122,6 +122,7 @@ public final class WorkspaceModel: ObservableObject {
     public var nmap: ProviderStatus? { provider("nmap") }
     public var httpx: ProviderStatus? { provider("httpx") }
     public var katana: ProviderStatus? { provider("katana") }
+    public var nativeHttp: ProviderStatus? { provider("native_http") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }
