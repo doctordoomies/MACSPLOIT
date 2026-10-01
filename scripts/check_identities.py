@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 HUMAN = ("doctordoomies", "doctordoomies@users.noreply.github.com")
+OWNER_GITHUB = ("doctor", "160264866+doctordoomies@users.noreply.github.com")
 DEPENDABOT = ("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com")
 GITHUB = ("GitHub", "noreply@github.com")
 
@@ -21,8 +22,13 @@ def automated_branch(ref):
 
 
 def identity_allowed(ref, author, committer):
-    if author == HUMAN:
-        return committer == HUMAN
+    owner_pairs = {
+        (HUMAN, HUMAN),
+        (OWNER_GITHUB, OWNER_GITHUB),
+        (OWNER_GITHUB, GITHUB),
+    }
+    if (author, committer) in owner_pairs:
+        return True
     return (automated_branch(ref) and author == DEPENDABOT
             and committer in (DEPENDABOT, GITHUB))
 

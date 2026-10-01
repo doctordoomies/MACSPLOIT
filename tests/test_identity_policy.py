@@ -13,12 +13,20 @@ spec.loader.exec_module(identities)
 
 
 class IdentityPolicyTests(unittest.TestCase):
-    def test_human_author_and_committer_must_both_match(self):
+    def test_exact_owner_pairs_are_allowed_on_human_branches(self):
+        allowed = (
+            (identities.HUMAN, identities.HUMAN),
+            (identities.OWNER_GITHUB, identities.OWNER_GITHUB),
+            (identities.OWNER_GITHUB, identities.GITHUB),
+        )
         for ref in ("refs/heads/main", "refs/heads/release/public-launch",
                     "refs/heads/feature/test", "refs/remotes/origin/dependabot/cargo/test"):
-            self.assertTrue(identities.identity_allowed(ref, identities.HUMAN, identities.HUMAN))
+            for author, committer in allowed:
+                self.assertTrue(identities.identity_allowed(ref, author, committer))
             self.assertFalse(identities.identity_allowed(ref, identities.HUMAN, identities.GITHUB))
-            self.assertFalse(identities.identity_allowed(ref, ("Other Human", "other@example.test"), identities.HUMAN))
+            self.assertFalse(identities.identity_allowed(ref, identities.OWNER_GITHUB, identities.HUMAN))
+            self.assertFalse(identities.identity_allowed(
+                ref, ("Other Human", "other@example.test"), identities.HUMAN))
 
     def test_exact_dependabot_pairs_only_on_automation_branches(self):
         for ref in ("refs/heads/dependabot/cargo/test", "refs/remotes/origin/dependabot/github_actions/test"):

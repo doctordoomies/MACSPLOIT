@@ -1,1 +1,9 @@
-["assets/Neon Rain Hacker Workspace.png"]
+{
+  "reviewed_assets": [
+    {
+      "path": "assets/Neon Rain Hacker Workspace.png",
+      "sha256": "3c2cc2a7ebbe573af00b83d01a12e73cd163162df304f7df8a7ee146db925492",
+      "reason": "Approved MACSPLOIT README hero artwork; manually reviewed and contains no assessment data or secrets."
+    }
+  ]
+}
