@@ -26,7 +26,7 @@ jobs:
       # Pin to a tag; Dependabot (github-actions) keeps it current. Consider
       # pinning to an immutable commit SHA for stricter supply-chain hardening.
       - name: Checkout (full history for the repository audit)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
