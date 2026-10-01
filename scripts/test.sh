@@ -14,3 +14,4 @@ export MACSPLOIT_HTTPX="$PWD/fixtures/fake-httpx.sh"
 ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing
 python3 -m unittest discover -s tests -v
 python3 scripts/check_repository.py --all-history
+python3 scripts/check_identities.py

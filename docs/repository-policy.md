@@ -1,10 +1,12 @@
-# Private repository policy
+# Repository and release policy
 
 The sole approved remote is `https://github.com/doctordoomies/MACSPLOIT.git` (or its
-equivalent GitHub SSH URL). Visibility must remain **PRIVATE**. Publishing a
-release, enabling Pages, adding collaborators, or changing visibility requires
-the owner's explicit approval. No public license or distribution grant has been
-selected.
+equivalent GitHub SSH URL). The owner has explicitly authorized public launch.
+`scripts/release-policy.json` records that authorization with `allow_public: true`;
+without that explicit opt-in the audit requires PRIVATE. Canonical-destination,
+secret, sensitive-data, and history checks always remain active. Apache-2.0 is the
+selected license. Adding collaborators, Pages, tags, or a GitHub Release is not
+part of this public-visibility authorization.
 
 The canonical GitHub owner is `doctordoomies`. Both the supplied remote URL and
 GitHub's repository metadata must identify `doctordoomies/MACSPLOIT`. Every other
@@ -36,15 +38,15 @@ screenshots, and embedded strings before adding any sample.
    earlier commits that may still be in history. Confirm all fixtures are synthetic.
 2. Run `python3 scripts/check_repository.py --staged` before committing.
 3. Run `python3 scripts/check_repository.py --all-history` before pushing.
-4. Verify the GitHub destination remains private. The installed pre-push hook
+4. Verify canonical GitHub destination and intended visibility. The installed pre-push hook
    repeats this online check and audits each outgoing commit snapshot.
 5. Push only after all checks pass. Never use `--no-verify` to bypass a failure.
 
 `./scripts/setup-hooks.sh` activates tracked hooks in each local clone. Git does
 not automatically install hooks on clone. The pre-commit hook inspects staged
 blobs; the pre-push hook inspects the history being pushed, even if a sensitive
-file was removed in a later commit. It refuses unexpected remotes, public or
-unverifiable destinations, ignored paths, likely secret literals, and files it
+file was removed in a later commit. It refuses unexpected or unverifiable remotes, public destinations without the
+owner opt-in, ignored paths, likely secret literals, and files it
 cannot inspect as bounded UTF-8 text. Binary assets need an explicitly reviewed
 policy change before they can be committed.
 
@@ -58,3 +60,29 @@ If a check fails, remove the data from staging or outgoing history and rerun it.
 If a real secret has been exposed, revoke or rotate it through its issuing
 service; deletion alone does not undo exposure. Coordinate any history rewrite
 with the repository owner.
+
+## Reachable identity verification
+
+Run `python3 scripts/check_identities.py` after fetching current origin branches.
+The complete test suite also runs this release check. It checks every commit
+reachable from local branches, origin branches, and tags, rejects shallow history,
+and prints only ref/commit locations for failures rather than private identities.
+
+Human author and committer must both be exactly
+`doctordoomies <doctordoomies@users.noreply.github.com>`, including human commits
+on dependency branches. Only `dependabot/*` branches (local or origin) receive
+the trusted automation exception:
+
+- Author: `dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>`.
+- Committer: that same Dependabot identity, or `GitHub <noreply@github.com>`.
+
+No name-only, email-domain, arbitrary bot, other human, or GitHub-committer-on-human
+exception exists. Git metadata alone does not authenticate a bot; during launch
+verify the dependency commits' GitHub accounts and signatures through the API.
+Do not rewrite trusted automation commits into human identities. Unexpected human
+metadata blocks launch and requires review, not automatic history rewriting.
+
+This narrow branch exception does not authorize moving bot commits onto human
+branches. Integrate dependency changes using a canonical human-authored commit
+after review, or obtain a separately reviewed policy extension. CI audits branch
+refs; ephemeral GitHub PR test-merge refs are not published branch history.
