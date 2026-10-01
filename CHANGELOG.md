@@ -7,6 +7,13 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Native HTTP Analysis (Phase 2B):** a built-in `native_http` provider (no external
+  tool) and a `Web Analysis` chain that analyze an explicitly selected in-scope
+  HTTP(S) URL — response + security headers, cookie security flags (never values),
+  CORS headers, a scope-checked redirect chain, and conservative robots.txt parsing —
+  behind an injectable, offline-testable `WebTransport`. ACTIVE_LOW_IMPACT; bounded
+  redirects/body/time; TLS validation left on; results enrich the `Website` asset with
+  durable evidence. Independent of Katana.
 - **Katana Web Recon (Phase 2A):** bounded same-host crawling from an explicitly
   selected in-scope HTTP(S) URL into URL assets, with evidence, provenance,
   cancellation, depth/time/output limits, and offline fake-tool coverage.

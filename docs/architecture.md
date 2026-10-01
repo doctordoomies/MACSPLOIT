@@ -72,12 +72,20 @@ Full on-screen restart verification remains pending, as recorded in the test rep
 
 Providers implement one Rust trait (metadata/installation/execute/parse, plus an
 optional per-provider timeout) and are selected by capability, or pinned per chain
-stage when a capability has more than one provider. Four are registered: the offline
-synthetic provider, Subfinder (passive external tool), native DNS (built-in), and
-Nmap (active external tool). A pinned provider is trusted to operate on the chain's
-input assets, so provider selection by id is validated on capability only — the
-chain target type is not re-checked (Nmap consumes IPAddress assets while the chain
-target is a Domain).
+stage when a capability has more than one provider. Registered: the offline synthetic
+provider, Subfinder (passive external), native DNS (built-in), Nmap (active external),
+HTTPX (active-low-impact external), Katana (active-low-impact external), and native
+HTTP analysis (built-in). A pinned provider is trusted to operate on the chain's input
+assets, so provider selection by id is validated on capability only — the chain target
+type is not re-checked (Nmap consumes IPAddress assets while the chain target is a
+Domain). `ProviderContext` carries workspace scope so a provider can scope-check
+destinations it discovers at runtime (e.g. native HTTP redirect hops).
+
+**Native HTTP analysis (Phase 2B).** A built-in provider that fetches an in-scope
+HTTP(S) URL through an injectable `WebTransport` (`core/src/web`): production
+`UreqTransport` (one bounded request per hop, TLS left on, no redirect auto-follow)
+or an offline `StaticWebTransport` for tests and the `MACSPLOIT_WEB_FIXTURE` override.
+It runs its own `Web Analysis` chain, independent of Katana.
 
 **Nmap (Phase 1C).** The first ACTIVE provider. It runs the external Nmap tool
 through the process supervisor with a conservative, unprivileged profile

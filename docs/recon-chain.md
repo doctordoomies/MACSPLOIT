@@ -1,15 +1,37 @@
 # Recon Chain execution
 
-Status: **IMPLEMENTED** two chain presets — the offline Synthetic Recon chain and
-the real Domain Recon chain (Subfinder + native DNS + Nmap).
+Status: **IMPLEMENTED** four chain presets — offline **Synthetic Recon**; the real
+**Domain Recon** (Subfinder → DNS → Nmap → HTTPX); **Web Recon** (Katana crawl); and
+**Web Analysis** (native HTTP analysis).
 
 A chain requests provider capabilities and feeds scoped discoveries into later
 stages. It is not a shell sequence of installed tools. A stage may pin an exact
 provider so a capability offered by more than one provider is unambiguous. The
 stage plans are fixed presets; a general dependency-graph scheduler remains planned.
 `start_chain` selects the preset by a `chain` argument (`synthetic` by default, or
-`domain_recon`); the analyst chooses and launches a chain explicitly — adding a
-target never starts one.
+`domain_recon`, `web_recon`, `web_analysis`); the analyst chooses and launches a
+chain explicitly — adding a target never starts one.
+
+## Web Analysis (Phase 2B)
+
+A native, built-in chain (no external tool) over an explicitly selected in-scope
+HTTP(S) URL:
+
+```text
+HTTP(S) URL
+  → Native HTTP Analysis (native_http)
+      ├── response + security headers (HSTS/CSP/XFO/XCTO/Referrer/Permissions)
+      ├── cookie security flags (never values)
+      ├── CORS headers
+      ├── scope-checked redirect chain
+      └── robots.txt
+```
+
+Stages: Target Validation → Native HTTP Analysis (`native_http`) → Persistence →
+Completion. It is independent of Katana — Web Analysis runs even when Katana is not
+installed. Risk is ACTIVE_LOW_IMPACT; every redirect hop is scope-checked, and the
+full normalized report is stored as hashed evidence while the `Website` asset is
+enriched via an observation. Offline tests use a static web transport; no network.
 
 ## Implemented workflow
 

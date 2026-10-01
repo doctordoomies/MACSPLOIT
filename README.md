@@ -75,6 +75,14 @@ HTTP(S) URL
 URL assets
 ```
 
+**Web Analysis**
+
+```text
+HTTP(S) URL
+  ↓ Native HTTP Analysis
+headers · cookies · CORS · redirects · robots
+```
+
 </td>
 </tr>
 </table>
@@ -132,8 +140,13 @@ flowchart LR
         U[HTTP(S) URL] -->|Katana| V[URL assets]
     end
 
+    subgraph Web_Analysis[Web Analysis]
+        W[HTTP(S) URL] -->|Native HTTP Analysis| X[Headers / Cookies / CORS / Redirects / robots]
+    end
+
     E --> G[Evidence + Events + Asset Graph]
     V --> G
+    X --> G
 ```
 
 Every stage is implemented as a provider capability. Results flow through:
@@ -168,7 +181,7 @@ SwiftUI
 | ◉ | **Target classification** | Domain, URL, IP, CIDR, email, username, and more |
 | ◉ | **Asset graph** | Domains, subdomains, IPs, ports, services, websites, URLs, technologies |
 | ◉ | **Scope engine** | Exact hosts, wildcards, CIDR, IPv4/IPv6, redirect-aware decisions |
-| ◉ | **Modular providers** | Synthetic, Subfinder, Native DNS, Nmap, HTTPX, Katana |
+| ◉ | **Modular providers** | Synthetic, Subfinder, Native DNS, Nmap, HTTPX, Katana, Native HTTP Analysis |
 | ◉ | **Web Recon** | Bounded same-host Katana crawling from an explicitly selected in-scope URL |
 | ◉ | **Evidence + provenance** | Raw provider output preserved and tied to every observation |
 | ◉ | **Durable events** | Replayable activity history across application restarts |
@@ -311,6 +324,7 @@ MACSPLOIT detects external tools but **never silently installs them**.
 | **Nmap** | External | `brew install nmap` | Active |
 | **HTTPX** | External | `brew install httpx` | Active · Low Impact |
 | **Katana** | External | `brew install katana` | Active · Low Impact |
+| **Native HTTP Analysis** | Built in | None | Active · Low Impact |
 
 Tool availability, provider version, and risk are surfaced in the application.
 
@@ -346,11 +360,11 @@ MACSPLOIT is currently a **public beta**.
 
 ### Implemented
 
-`Synthetic Recon` · `Domain Recon` · `Web Recon` · `Subfinder` · `Native DNS` · `Nmap` · `HTTPX` · `Katana` · `Asset Graph` · `Evidence` · `Scope` · `Durable Events`
+`Synthetic Recon` · `Domain Recon` · `Web Recon` · `Web Analysis` · `Subfinder` · `Native DNS` · `Nmap` · `HTTPX` · `Katana` · `Asset Graph` · `Evidence` · `Scope` · `Durable Events`
 
 ### Planned
 
-`Native HTTP Analysis` · `JavaScript Analysis` · `Content Discovery` · `Historical URLs` · `TLS Analysis` · `Findings` · `Reporting` · `OSINT` · `Tool Manager`
+`Content Discovery` · `Historical URLs` · `JavaScript Analysis` · `TLS Analysis` · `Findings` · `Reporting` · `OSINT` · `Tool Manager`
 
 ### Future
 
