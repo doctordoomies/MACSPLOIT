@@ -35,7 +35,7 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Web crawling (Katana) | PLANNED | |
+| Web crawling (Katana) | BETA | Bounded same-host standard-mode crawl; depth 2; explicit URL target; evidence/provenance preserved |
 | Content discovery (ffuf) | PLANNED | Explicit stage; user-managed wordlists |
 | Historical URL collection (gau/waybackurls) | PLANNED | |
 | Technology detection | BETA | Basic, via HTTPX tech fingerprints |
