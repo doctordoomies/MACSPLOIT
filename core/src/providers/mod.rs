@@ -4,6 +4,7 @@ use crate::{
     error::{CoreError, Result},
     process::{self, Installation, ToolConfig},
     targets::TargetType,
+    web::{WebResponse, WebTransport},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,6 +32,7 @@ pub enum Capability {
     ServiceFingerprinting,
     HttpProbing,
     WebCrawling,
+    WebAnalysis,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +85,9 @@ pub struct ProviderContext<'a> {
     pub cancelled: &'a AtomicBool,
     pub deadline: Instant,
     pub tools: &'a ToolConfig,
+    /// Workspace scope entries, so a provider can scope-check destinations it
+    /// discovers during execution (e.g. redirect hops).
+    pub scope: &'a [String],
 }
 
 pub trait Provider: Send + Sync {
@@ -111,8 +116,14 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Build the registry with an explicit DNS resolver (injected in tests).
+    /// Build the registry with an explicit DNS resolver (injected in tests). The
+    /// web-analysis transport is selected from the environment.
     pub fn new(resolver: Arc<dyn DnsResolver>) -> Self {
+        Self::with_transports(resolver, crate::web::transport_from_env())
+    }
+
+    /// Build the registry with explicit DNS and web transports (injected in tests).
+    pub fn with_transports(resolver: Arc<dyn DnsResolver>, web: Arc<dyn WebTransport>) -> Self {
         Self {
             providers: vec![
                 Arc::new(SyntheticDiscoveryProvider),
@@ -121,6 +132,7 @@ impl ProviderRegistry {
                 Arc::new(NmapProvider),
                 Arc::new(HttpxProvider),
                 Arc::new(KatanaProvider),
+                Arc::new(NativeHttpProvider::new(web)),
             ],
         }
     }
@@ -128,7 +140,10 @@ impl ProviderRegistry {
 
 impl Default for ProviderRegistry {
     fn default() -> Self {
-        Self::new(Arc::new(crate::dns::SystemDnsResolver::default()))
+        Self::with_transports(
+            Arc::new(crate::dns::SystemDnsResolver::default()),
+            Arc::new(crate::web::UreqTransport::default()),
+        )
     }
 }
 
@@ -295,7 +310,10 @@ impl Provider for SyntheticDiscoveryProvider {
                 }
             }
             // The synthetic provider does not model port discovery or HTTP probing.
-            Capability::PortDiscovery | Capability::HttpProbing | Capability::WebCrawling => {}
+            Capability::PortDiscovery
+            | Capability::HttpProbing
+            | Capability::WebCrawling
+            | Capability::WebAnalysis => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -1405,6 +1423,324 @@ fn clip(value: &str, max: usize) -> String {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Native HTTP analysis provider (Phase 2B). Built-in (no external tool). Takes an
+// explicitly selected in-scope HTTP(S) URL and produces normalized web-security
+// metadata: response info, security headers, cookie flags (never values), CORS
+// headers, a scope-checked redirect chain, and conservative robots.txt parsing.
+// ACTIVE_LOW_IMPACT: ordinary HTTP requests to an authorized target only.
+// ---------------------------------------------------------------------------
+
+pub struct NativeHttpProvider {
+    transport: Arc<dyn WebTransport>,
+}
+
+impl NativeHttpProvider {
+    pub fn new(transport: Arc<dyn WebTransport>) -> Self {
+        Self { transport }
+    }
+}
+
+const MAX_REDIRECTS: usize = 5;
+/// Security response headers MACSPLOIT normalizes (collection only; absence is not
+/// treated as a finding in this phase).
+const SECURITY_HEADERS: &[&str] = &[
+    "strict-transport-security",
+    "content-security-policy",
+    "content-security-policy-report-only",
+    "x-frame-options",
+    "x-content-type-options",
+    "referrer-policy",
+    "permissions-policy",
+];
+const CORS_HEADERS: &[&str] = &[
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+    "access-control-allow-methods",
+    "access-control-allow-headers",
+];
+
+/// A validated http(s) URL with no embedded credentials.
+fn safe_http_url(value: &str) -> Option<url::Url> {
+    let parsed = url::Url::parse(value).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Parse one Set-Cookie header into security metadata, discarding the value.
+fn cookie_metadata(set_cookie: &str) -> serde_json::Value {
+    let mut parts = set_cookie.split(';');
+    let name = parts
+        .next()
+        .and_then(|p| p.split('=').next())
+        .unwrap_or("")
+        .trim();
+    let mut secure = false;
+    let mut http_only = false;
+    let mut same_site: Option<String> = None;
+    let mut path: Option<String> = None;
+    for attr in parts {
+        let attr = attr.trim();
+        let (key, val) = attr.split_once('=').unwrap_or((attr, ""));
+        match key.to_ascii_lowercase().as_str() {
+            "secure" => secure = true,
+            "httponly" => http_only = true,
+            "samesite" => same_site = Some(clip(val.trim(), 16)),
+            "path" => path = Some(clip(val.trim(), 128)),
+            _ => {}
+        }
+    }
+    json!({
+        "name": clip(name, 128),
+        "secure": secure,
+        "http_only": http_only,
+        "same_site": same_site,
+        "path": path,
+    })
+}
+
+/// Conservative robots.txt parsing: bounded counts and line lengths.
+fn parse_robots(body: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8_lossy(body);
+    let mut user_agents = Vec::new();
+    let mut disallow = Vec::new();
+    let mut allow = Vec::new();
+    let mut sitemaps = Vec::new();
+    for line in text.lines().take(2000) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.len() > 2048 {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = clip(value.trim(), 1024);
+        match key.trim().to_ascii_lowercase().as_str() {
+            "user-agent" if user_agents.len() < 100 => user_agents.push(value),
+            "disallow" if disallow.len() < 500 => disallow.push(value),
+            "allow" if allow.len() < 500 => allow.push(value),
+            "sitemap" if sitemaps.len() < 100 => sitemaps.push(value),
+            _ => {}
+        }
+    }
+    json!({"user_agents": user_agents, "disallow": disallow, "allow": allow, "sitemaps": sitemaps})
+}
+
+impl Provider for NativeHttpProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "native_http".into(),
+            name: "Native HTTP Analysis".into(),
+            description:
+                "Built-in HTTP(S) analysis: response, security headers, cookie flags, CORS, redirects, robots."
+                    .into(),
+            version: "built-in".into(),
+            risk_class: RiskClass::ActiveLowImpact,
+            offline: false, // makes real network requests when live
+            capabilities: vec![Capability::WebAnalysis],
+            supported_target_types: vec![TargetType::URL],
+        }
+    }
+
+    fn installation(&self, _tools: &ToolConfig) -> Installation {
+        Installation::BuiltIn
+    }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        _inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let started_at = crate::now();
+        let mut notes: Vec<String> = Vec::new();
+        let mut redirects: Vec<serde_json::Value> = Vec::new();
+
+        let Some(start) = safe_http_url(target) else {
+            return Err(CoreError::new(
+                "InvalidTarget",
+                "Native HTTP analysis requires an http(s) URL without credentials.",
+            ));
+        };
+        let robots_host_url = format!(
+            "{}://{}{}/robots.txt",
+            start.scheme(),
+            start.host_str().unwrap_or(""),
+            start.port().map(|p| format!(":{p}")).unwrap_or_default()
+        );
+
+        // Follow redirects manually so every hop is scope-checked.
+        let mut current = target.to_owned();
+        let mut final_response: Option<WebResponse> = None;
+        let mut final_url = current.clone();
+        for hop in 0..=MAX_REDIRECTS {
+            if ctx.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(CoreError::new("Cancelled", "Web analysis cancelled."));
+            }
+            let response = self
+                .transport
+                .fetch(&current, ctx.deadline, ctx.cancelled)?;
+            let status = response.status;
+            if (300..400).contains(&status) {
+                let location = response.header("location").map(str::to_owned);
+                let next = location.as_ref().and_then(|loc| {
+                    url::Url::parse(&current)
+                        .ok()?
+                        .join(loc)
+                        .ok()
+                        .map(String::from)
+                });
+                let follow = match &next {
+                    Some(next_url) if hop < MAX_REDIRECTS => {
+                        if safe_http_url(next_url).is_none() {
+                            notes
+                                .push("redirect to unsupported/credential URL not followed".into());
+                            false
+                        } else if !crate::scope::contains(ctx.scope, next_url) {
+                            notes.push("redirect to out-of-scope host not followed".into());
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    Some(_) => {
+                        notes.push("redirect limit reached".into());
+                        false
+                    }
+                    None => false,
+                };
+                redirects.push(json!({
+                    "url": clip(&current, 2048),
+                    "status": status,
+                    "location": next.as_deref().map(|n| clip(n, 2048)),
+                    "followed": follow,
+                }));
+                if follow {
+                    current = next.expect("followed redirect has a destination");
+                    final_url = current.clone();
+                    continue;
+                }
+                final_url = current.clone();
+                final_response = Some(response);
+                break;
+            }
+            final_url = current.clone();
+            final_response = Some(response);
+            break;
+        }
+
+        let response = final_response.unwrap_or_default();
+
+        // Security headers (present only).
+        let mut security_headers = serde_json::Map::new();
+        for name in SECURITY_HEADERS {
+            if let Some(value) = response.header(name) {
+                security_headers.insert((*name).to_owned(), json!(clip(value, 4096)));
+            }
+        }
+        // CORS headers (present only).
+        let mut cors = serde_json::Map::new();
+        for name in CORS_HEADERS {
+            if let Some(value) = response.header(name) {
+                cors.insert((*name).to_owned(), json!(clip(value, 2048)));
+            }
+        }
+        // Cookie flags only — values are never recorded.
+        let cookies: Vec<serde_json::Value> = response
+            .header_all("set-cookie")
+            .iter()
+            .take(100)
+            .map(|c| cookie_metadata(c))
+            .collect();
+
+        // robots.txt for the selected host (in scope, authorized).
+        let robots = match self
+            .transport
+            .fetch(&robots_host_url, ctx.deadline, ctx.cancelled)
+        {
+            Ok(r) if r.status == 200 => {
+                json!({"retrieved": true, "status": 200, "records": parse_robots(&r.body)})
+            }
+            Ok(r) => json!({"retrieved": false, "status": r.status}),
+            Err(error) if error.code == "Cancelled" => {
+                return Err(error);
+            }
+            Err(error) => json!({"retrieved": false, "error": error.code}),
+        };
+
+        let report = json!({
+            "provider": "native_http",
+            "target": target,
+            "final_url": final_url,
+            "status": response.status,
+            "content_type": response.header("content-type").map(|v| clip(v, 256)),
+            "content_length": response.header("content-length").map(|v| clip(v, 32)),
+            "server": response.header("server").map(|v| clip(v, 256)),
+            "redirects": redirects,
+            "security_headers": security_headers,
+            "cors": cors,
+            "cookies": cookies,
+            "robots": robots,
+            "notes": notes,
+        });
+        let stdout = serde_json::to_vec_pretty(&report)?;
+        Ok(Execution {
+            target: target.into(),
+            capability,
+            command: vec!["native_http".into(), target.into()],
+            stdout,
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at,
+            ended_at: crate::now(),
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        let report: serde_json::Value = serde_json::from_slice(&execution.stdout)
+            .map_err(|_| CoreError::new("ProviderFailure", "Native HTTP output is malformed."))?;
+        let final_url = report
+            .get("final_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| safe_http_url(s).is_some())
+            .map(str::to_owned)
+            .unwrap_or_else(|| execution.target.clone());
+        // Enrich the Website asset for this URL with a concise, non-sensitive
+        // summary; the full normalized detail lives in the evidence envelope.
+        let present: Vec<&str> = SECURITY_HEADERS
+            .iter()
+            .filter(|h| report["security_headers"].get(**h).is_some())
+            .copied()
+            .collect();
+        let metadata = json!({
+            "tool": "native_http",
+            "status": report.get("status"),
+            "server": report.get("server"),
+            "security_headers_present": present,
+            "cookie_count": report["cookies"].as_array().map(|a| a.len()).unwrap_or(0),
+            "cors_present": report["cors"].as_object().map(|o| !o.is_empty()).unwrap_or(false),
+            "redirect_count": report["redirects"].as_array().map(|a| a.len()).unwrap_or(0),
+            "robots_retrieved": report["robots"].get("retrieved") == Some(&json!(true)),
+        });
+        Ok(vec![Discovery {
+            asset_type: AssetType::Website,
+            value: final_url,
+            source: None,
+            relationship: None,
+            metadata,
+        }])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1414,6 +1750,20 @@ mod tests {
             cancelled,
             deadline: Instant::now() + Duration::from_secs(10),
             tools,
+            scope: &[],
+        }
+    }
+
+    fn context_scoped<'a>(
+        tools: &'a ToolConfig,
+        cancelled: &'a AtomicBool,
+        scope: &'a [String],
+    ) -> ProviderContext<'a> {
+        ProviderContext {
+            cancelled,
+            deadline: Instant::now() + Duration::from_secs(10),
+            tools,
+            scope,
         }
     }
 
@@ -2027,5 +2377,224 @@ mod tests {
             .overrides
             .insert("katana".into(), "/nonexistent/katana".into());
         assert_eq!(KatanaProvider.installation(&tools), Installation::Missing);
+    }
+
+    // --- Native HTTP analysis provider ---
+
+    fn scope_entries() -> Vec<String> {
+        vec!["example.test".into(), "*.example.test".into()]
+    }
+
+    fn run_native_http(
+        transport: crate::web::StaticWebTransport,
+        target: &str,
+        scope: &[String],
+    ) -> (serde_json::Value, Vec<Discovery>) {
+        let provider = NativeHttpProvider::new(Arc::new(transport));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let execution = provider
+            .execute(
+                target,
+                Capability::WebAnalysis,
+                &[],
+                &context_scoped(&tools, &cancelled, scope),
+            )
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&execution.stdout).unwrap();
+        let discoveries = provider.parse(&execution).unwrap();
+        (report, discoveries)
+    }
+
+    #[test]
+    fn native_http_metadata_is_builtin_low_impact() {
+        let provider = NativeHttpProvider::new(Arc::new(crate::web::StaticWebTransport::new()));
+        let m = provider.metadata();
+        assert_eq!(m.id, "native_http");
+        assert_eq!(m.risk_class, RiskClass::ActiveLowImpact);
+        assert_eq!(m.capabilities, vec![Capability::WebAnalysis]);
+        assert_eq!(m.supported_target_types, vec![TargetType::URL]);
+        assert!(matches!(
+            provider.installation(&ToolConfig::default()),
+            Installation::BuiltIn
+        ));
+    }
+
+    #[test]
+    fn native_http_normalizes_headers_cors_and_enriches_website() {
+        let transport = crate::web::StaticWebTransport::new()
+            .with_response(
+                "https://example.test/",
+                200,
+                &[
+                    ("Server", "nginx"),
+                    ("Content-Type", "text/html"),
+                    ("Strict-Transport-Security", "max-age=63072000"),
+                    ("Content-Security-Policy", "default-src 'self'"),
+                    ("Access-Control-Allow-Origin", "*"),
+                    ("Access-Control-Allow-Credentials", "true"),
+                ],
+                "<html></html>",
+            )
+            .with_response("https://example.test/robots.txt", 404, &[], "");
+        let (report, discoveries) =
+            run_native_http(transport, "https://example.test/", &scope_entries());
+        assert_eq!(report["status"], json!(200));
+        assert_eq!(report["server"], json!("nginx"));
+        assert_eq!(
+            report["security_headers"]["strict-transport-security"],
+            json!("max-age=63072000")
+        );
+        assert_eq!(report["cors"]["access-control-allow-origin"], json!("*"));
+        // Enriches the Website asset.
+        assert_eq!(discoveries.len(), 1);
+        assert_eq!(discoveries[0].asset_type, AssetType::Website);
+        assert_eq!(discoveries[0].value, "https://example.test/");
+        assert_eq!(discoveries[0].metadata["cors_present"], json!(true));
+    }
+
+    #[test]
+    fn native_http_records_cookie_flags_but_never_values() {
+        let transport = crate::web::StaticWebTransport::new().with_response(
+            "https://example.test/",
+            200,
+            &[
+                (
+                    "Set-Cookie",
+                    "sid=SUPERSECRETVALUE; Secure; HttpOnly; SameSite=Lax; Path=/",
+                ),
+                ("Set-Cookie", "theme=dark"),
+            ],
+            "",
+        );
+        let (report, _d) = run_native_http(transport, "https://example.test/", &scope_entries());
+        let cookies = report["cookies"].as_array().unwrap();
+        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies[0]["name"], json!("sid"));
+        assert_eq!(cookies[0]["secure"], json!(true));
+        assert_eq!(cookies[0]["http_only"], json!(true));
+        assert_eq!(cookies[0]["same_site"], json!("Lax"));
+        assert_eq!(cookies[1]["secure"], json!(false));
+        // The secret cookie value must never appear anywhere in the report.
+        let raw = serde_json::to_string(&report).unwrap();
+        assert!(!raw.contains("SUPERSECRETVALUE"), "cookie value leaked");
+    }
+
+    #[test]
+    fn native_http_follows_in_scope_redirects_and_scope_blocks_others() {
+        // In-scope redirect is followed.
+        let t1 = crate::web::StaticWebTransport::new()
+            .with_response(
+                "https://example.test/old",
+                301,
+                &[("Location", "https://api.example.test/new")],
+                "",
+            )
+            .with_response(
+                "https://api.example.test/new",
+                200,
+                &[("Server", "caddy")],
+                "",
+            )
+            .with_response("https://example.test/robots.txt", 404, &[], "");
+        let (report, _d) = run_native_http(t1, "https://example.test/old", &scope_entries());
+        assert_eq!(report["final_url"], json!("https://api.example.test/new"));
+        assert_eq!(report["redirects"][0]["followed"], json!(true));
+        assert_eq!(report["status"], json!(200));
+
+        // Out-of-scope redirect is NOT followed.
+        let t2 = crate::web::StaticWebTransport::new()
+            .with_response(
+                "https://example.test/x",
+                302,
+                &[("Location", "https://evil.test/")],
+                "",
+            )
+            .with_response("https://example.test/robots.txt", 404, &[], "");
+        let (report, _d) = run_native_http(t2, "https://example.test/x", &scope_entries());
+        assert_eq!(report["final_url"], json!("https://example.test/x"));
+        assert_eq!(report["redirects"][0]["followed"], json!(false));
+        assert!(report["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n.as_str().unwrap().contains("out-of-scope")));
+    }
+
+    #[test]
+    fn native_http_parses_robots() {
+        let transport = crate::web::StaticWebTransport::new()
+            .with_response("https://example.test/", 200, &[], "")
+            .with_response(
+                "https://example.test/robots.txt",
+                200,
+                &[],
+                "User-agent: *\nDisallow: /admin\nAllow: /public\nSitemap: https://example.test/sitemap.xml\n",
+            );
+        let (report, _d) = run_native_http(transport, "https://example.test/", &scope_entries());
+        assert_eq!(report["robots"]["retrieved"], json!(true));
+        assert_eq!(report["robots"]["records"]["disallow"][0], json!("/admin"));
+        assert_eq!(
+            report["robots"]["records"]["sitemaps"][0],
+            json!("https://example.test/sitemap.xml")
+        );
+    }
+
+    #[test]
+    fn native_http_rejects_bad_scheme_and_credentials() {
+        let provider = NativeHttpProvider::new(Arc::new(crate::web::StaticWebTransport::new()));
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let scope = scope_entries();
+        // The credential URL is assembled so no credential literal appears in source.
+        let credential_url = ["https://", "user:pass", "@example.test/"].concat();
+        let bad = [
+            "ftp://example.test/".to_string(),
+            "file:///etc/passwd".to_string(),
+            credential_url,
+        ];
+        for target in &bad {
+            let err = provider
+                .execute(
+                    target,
+                    Capability::WebAnalysis,
+                    &[],
+                    &context_scoped(&tools, &cancelled, &scope),
+                )
+                .unwrap_err();
+            assert_eq!(err.code, "InvalidTarget", "accepted {target}");
+        }
+    }
+
+    #[test]
+    fn native_http_propagates_cancellation_and_timeout() {
+        let tools = ToolConfig::default();
+        let scope = scope_entries();
+        // Cancellation.
+        let provider = NativeHttpProvider::new(Arc::new(crate::web::StaticWebTransport::new()));
+        let cancelled = AtomicBool::new(true);
+        let err = provider
+            .execute(
+                "https://example.test/",
+                Capability::WebAnalysis,
+                &[],
+                &context_scoped(&tools, &cancelled, &scope),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "Cancelled");
+        // Timeout on the primary request propagates.
+        let provider = NativeHttpProvider::new(Arc::new(
+            crate::web::StaticWebTransport::new().with_timeout("https://example.test/"),
+        ));
+        let ok = AtomicBool::new(false);
+        let err = provider
+            .execute(
+                "https://example.test/",
+                Capability::WebAnalysis,
+                &[],
+                &context_scoped(&tools, &ok, &scope),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "ProviderTimeout");
     }
 }

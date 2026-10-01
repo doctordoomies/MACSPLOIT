@@ -65,6 +65,9 @@ pub enum ChainKind {
     DomainRecon,
     /// Bounded web crawling from an explicitly selected in-scope HTTP(S) URL.
     WebRecon,
+    /// Native HTTP/security analysis of an in-scope HTTP(S) URL (no external tool,
+    /// independent of Katana).
+    WebAnalysis,
 }
 
 /// One preset stage: (display name, optional capability, optional pinned provider).
@@ -226,6 +229,28 @@ impl Store {
                     vec![
                         ("Target Validation", None, None),
                         ("Web Crawl", Some(Capability::WebCrawling), Some("katana")),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::WebAnalysis => {
+                if target.target_type != TargetType::URL {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "Web Analysis requires an HTTP(S) URL target.",
+                    ));
+                }
+                // Native, built-in; independent of Katana (no external tool).
+                (
+                    "Web Analysis",
+                    vec![
+                        ("Target Validation", None, None),
+                        (
+                            "Native HTTP Analysis",
+                            Some(Capability::WebAnalysis),
+                            Some("native_http"),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -568,13 +593,32 @@ impl Engine {
         Self::open_with(store, stage_delay, tools, crate::dns::resolver_from_env())
     }
 
-    /// Open an engine with an explicit tool configuration and DNS resolver. Tests
-    /// use this to inject a fake executable and a static, offline DNS resolver.
+    /// Open an engine with an explicit tool configuration and DNS resolver (web
+    /// transport selected from the environment). Tests use this to inject a fake
+    /// executable and a static, offline DNS resolver.
     pub fn open_with(
         store: Store,
         stage_delay: Duration,
         tools: crate::process::ToolConfig,
         resolver: Arc<dyn crate::dns::DnsResolver>,
+    ) -> Result<Self> {
+        Self::open_with_web(
+            store,
+            stage_delay,
+            tools,
+            resolver,
+            crate::web::transport_from_env(),
+        )
+    }
+
+    /// Open an engine with explicit tool configuration, DNS resolver, and web
+    /// transport. Tests use this to inject a static, offline HTTP transport.
+    pub fn open_with_web(
+        store: Store,
+        stage_delay: Duration,
+        tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
+        web: Arc<dyn crate::web::WebTransport>,
     ) -> Result<Self> {
         let lock = OpenOptions::new()
             .create(true)
@@ -591,7 +635,7 @@ impl Engine {
         })?;
         let engine = Self {
             store,
-            registry: ProviderRegistry::new(resolver),
+            registry: ProviderRegistry::with_transports(resolver, web),
             tools,
             active: Arc::new(Mutex::new(None)),
             _lock: Arc::new(lock),
@@ -867,6 +911,7 @@ impl Engine {
             cancelled,
             deadline,
             tools: &self.tools,
+            scope: &scope,
         };
         let execution = provider.execute(&target.normalized_value, capability, &inputs, &ctx)?;
 
