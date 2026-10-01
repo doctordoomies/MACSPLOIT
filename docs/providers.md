@@ -1,8 +1,9 @@
 # Providers
 
 Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, one
-built-in native provider (DNS), and two real external providers (Subfinder,
-passive; Nmap, active).
+built-in native provider (DNS), and four real external providers: Subfinder
+(passive), Nmap (active), HTTPX (active-low-impact), and Katana
+(active-low-impact).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
@@ -17,7 +18,7 @@ executables or parses raw provider output. This is an internal interface, not a
 third-party plugin ABI.
 
 Implemented capabilities: SUBDOMAIN_DISCOVERY, DNS_RESOLUTION, PORT_DISCOVERY,
-SERVICE_FINGERPRINTING. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
+SERVICE_FINGERPRINTING, HTTP_PROBING, WEB_CRAWLING. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
 VALIDATION, LAB_ONLY. Passive and low-impact work runs on any in-scope target;
 full ACTIVE work (Nmap) is authorized by the analyst explicitly launching the
 chain and is still re-checked against per-asset scope before execution;
@@ -176,11 +177,38 @@ Service assets.
 MACSPLOIT never installs it. Automated tests use `fixtures/fake-nmap.sh` (emitting
 deterministic XML) injected via `MACSPLOIT_NMAP` — no real scanning.
 
+## HTTPXProvider
+
+Status: **IMPLEMENTED** (Phase 1D). HTTPX performs low-impact HTTP/HTTPS probing of
+in-scope web services discovered by Nmap and produces Website and Technology assets.
+It runs shell-free through the centralized supervisor with bounded output, timeout,
+cancellation, JSONL parsing, evidence capture, and scope enforcement.
+
+## KatanaProvider
+
+Status: **IMPLEMENTED** (Phase 2A). `katana`, risk **ACTIVE_LOW_IMPACT**,
+capability WEB_CRAWLING, supported target type URL.
+
+- Runs only from an explicitly selected in-scope HTTP(S) URL using a separate
+  **Web Recon** chain, so Domain Recon does not require Katana.
+- Standard non-headless mode only. MACSPLOIT does not enable automatic form filling,
+  authentication flows, JavaScript crawling, or `-no-scope` in Phase 2A.
+- Uses same-host `fqdn` scope, depth 2, a 20-second crawl duration, 5-second
+  request timeout, 1 MiB response-read bound, bounded stdout/stderr, and provider
+  cancellation.
+- JSONL is treated as untrusted. Only valid same-host HTTP(S) endpoints are accepted;
+  duplicates, malformed records, the root URL itself, and external hosts are dropped.
+- Each discovered endpoint becomes a URL asset linked from the selected URL with a
+  `has_endpoint` relationship. Raw Katana output is preserved as evidence before
+  parsing.
+- MACSPLOIT never installs Katana. Automated tests use `fixtures/fake-katana.sh`;
+  the real network tool is never invoked by CI.
+
 ## Next adapter boundary
 
-**PLANNED — HTTPX** (HTTP/HTTPS probing of discovered web services) is the next
-step (Phase 1D). It is not implemented; Nmap stores the Service asset (e.g. `http`,
-`https`) but no web probing is performed yet.
+Next Phase 2 work: native HTTP analyzers (headers/CSP/cookies/CORS/robots), then
+JavaScript analysis and historical URL collection. Content discovery remains an
+explicit active stage rather than something silently folded into crawling.
 
 **FUTURE:** approved installation/update tooling (Tool Manager), dependency and
 license metadata, version compatibility policy, and a public provider SDK. No
