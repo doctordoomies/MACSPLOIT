@@ -191,25 +191,29 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertIn("not the approved MACSPLOIT repository", result.stderr)
 
     def test_public_wrong_and_unverifiable_destinations_fail(self):
+        # Pin the PRIVATE-enforcement policy regardless of the committed
+        # release-policy.json so this test deterministically exercises the
+        # not-opted-into-public path.
         remote = "https://github.com/doctordoomies/MACSPLOIT.git"
-        for metadata in [dict(nameWithOwner="doctordoomies/MACSPLOIT",
-                              isPrivate=False, visibility="PUBLIC"), {},
-                         dict(nameWithOwner="doctordoomies/MACSPLOIT",
-                              isPrivate=True, visibility="PUBLIC"),
-                         dict(nameWithOwner="doctordoomies/MACSPLOIT",
-                              isPrivate=False, visibility="PRIVATE"),
-                         dict(nameWithOwner=FORMER_REPOSITORY,
-                              isPrivate=True, visibility="PRIVATE"),
-                         dict(nameWithOwner="unexpected/repository",
-                              isPrivate=True, visibility="PRIVATE")]:
-            with patch.object(audit, "run", return_value=json.dumps(metadata).encode()):
+        with patch.object(audit, "release_allows_public", return_value=False):
+            for metadata in [dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                                  isPrivate=False, visibility="PUBLIC"), {},
+                             dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                                  isPrivate=True, visibility="PUBLIC"),
+                             dict(nameWithOwner="doctordoomies/MACSPLOIT",
+                                  isPrivate=False, visibility="PRIVATE"),
+                             dict(nameWithOwner=FORMER_REPOSITORY,
+                                  isPrivate=True, visibility="PRIVATE"),
+                             dict(nameWithOwner="unexpected/repository",
+                                  isPrivate=True, visibility="PRIVATE")]:
+                with patch.object(audit, "run", return_value=json.dumps(metadata).encode()):
+                    with self.assertRaises(RuntimeError):
+                        audit.verify_private_remote(remote)
+            with patch.object(audit, "run", side_effect=RuntimeError("unavailable")):
                 with self.assertRaises(RuntimeError):
                     audit.verify_private_remote(remote)
-        with patch.object(audit, "run", side_effect=RuntimeError("unavailable")):
             with self.assertRaises(RuntimeError):
-                audit.verify_private_remote(remote)
-        with self.assertRaises(RuntimeError):
-            audit.verify_private_remote("https://example.test/unapproved.git")
+                audit.verify_private_remote("https://example.test/unapproved.git")
 
     def test_public_destination_allowed_only_after_owner_opts_in(self):
         remote = "https://github.com/doctordoomies/MACSPLOIT.git"
