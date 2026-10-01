@@ -36,7 +36,9 @@ fn wait(engine: &Engine, workspace: Id) -> Snapshot {
 fn web_recon_crawls_same_host_and_persists_evidence() {
     let temp = tempfile::tempdir().unwrap();
     let mut tools = ToolConfig::default();
-    tools.overrides.insert("katana".into(), fixture("fake-katana.sh"));
+    tools
+        .overrides
+        .insert("katana".into(), fixture("fake-katana.sh"));
 
     let engine = Engine::open_with(
         Store::open(temp.path()).unwrap(),
@@ -57,7 +59,9 @@ fn web_recon_crawls_same_host_and_persists_evidence() {
         .add_target(workspace.id, "https://app.example.test/")
         .unwrap();
 
-    engine.start(workspace.id, target.id, ChainKind::WebRecon).unwrap();
+    engine
+        .start(workspace.id, target.id, ChainKind::WebRecon)
+        .unwrap();
     let snapshot = wait(&engine, workspace.id);
 
     assert_eq!(snapshot.chains[0].name, "Web Recon");
@@ -85,7 +89,10 @@ fn web_recon_crawls_same_host_and_persists_evidence() {
     assert_eq!(endpoint_links, 2);
 
     let evidence = &snapshot.evidence[0];
-    let raw = engine.store.read_evidence(workspace.id, evidence.id).unwrap();
+    let raw = engine
+        .store
+        .read_evidence(workspace.id, evidence.id)
+        .unwrap();
     assert!(raw.contains("app.example.test/login"));
     assert!(raw.contains("outside.test"));
 }
@@ -104,8 +111,13 @@ fn web_recon_requires_url_target() {
         .store
         .create_workspace("Web Assessment", &["example.test".into()])
         .unwrap();
-    let target = engine.store.add_target(workspace.id, "example.test").unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "example.test")
+        .unwrap();
 
-    let error = engine.start(workspace.id, target.id, ChainKind::WebRecon).unwrap_err();
+    let error = engine
+        .start(workspace.id, target.id, ChainKind::WebRecon)
+        .unwrap_err();
     assert_eq!(error.code, "InvalidTarget");
 }
