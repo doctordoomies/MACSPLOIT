@@ -6,29 +6,178 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Least privilege: CI only needs to read the repository.
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build & test (macOS)
-    runs-on: macos-15
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "13.0"
-      # Swift 6 is required for the package and Swift Testing CLI flags.
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.paths.outputs.full }}
+      rust: ${{ steps.paths.outputs.rust }}
+      swift: ${{ steps.paths.outputs.swift }}
     steps:
-      # Pin to a tag; Dependabot (github-actions) keeps it current. Consider
-      # pinning to an immutable commit SHA for stricter supply-chain hardening.
-      - name: Checkout (full history for the repository audit)
+      - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Classify changed paths
+        id: paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pushes to main/release branches and manual runs get the complete
+          # integration suite. Pull requests use path-aware checks.
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "swift=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed="$(git diff --name-only "$base" "$head")"
+          printf '%s\n' "$changed"
+
+          rust=false
+          swift=false
+
+          if grep -Eq '^(core/|Cargo\.toml$|Cargo\.lock$|scripts/build-core\.sh$)' <<<"$changed"; then
+            rust=true
+          fi
+
+          if grep -Eq '^(apps/macos/|scripts/swift-command\.sh$|scripts/build-macos\.sh$)' <<<"$changed"; then
+            swift=true
+          fi
+
+          # Integration or CI orchestration changes deliberately exercise both
+          # code paths once.
+          if grep -Eq '^(scripts/test\.sh$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            rust=true
+            swift=true
+          fi
+
+          echo "full=false" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "swift=$swift" >> "$GITHUB_OUTPUT"
+
+  policy:
+    name: Repository policy
+    needs: changes
+    if: needs.changes.outputs.full != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Policy unit tests
+        run: |
+          python3 -m unittest tests.test_repository_policy tests.test_identity_policy -v
+
+      - name: Full-history repository audit
+        run: |
+          python3 scripts/check_repository.py --all-history
+          python3 scripts/check_identities.py
+
+  rust:
+    name: Rust checks
+    needs: changes
+    if: needs.changes.outputs.full != 'true' && needs.changes.outputs.rust == 'true'
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Rust clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --locked --workspace
+
+  swift:
+    name: Swift checks
+    needs: changes
+    if: needs.changes.outputs.full != 'true' && needs.changes.outputs.swift == 'true'
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build core helper
+        run: ./scripts/build-core.sh
+
+      - name: Swift tests (offline providers)
+        env:
+          MACSPLOIT_CORE_BINARY: ${{ github.workspace }}/target/debug/macsploit-core
+          MACSPLOIT_SUBFINDER: ${{ github.workspace }}/fixtures/fake-subfinder.sh
+          MACSPLOIT_DNS_FAKE: api.example.test=192.0.2.10;dev.example.test=192.0.2.11;auth.example.test=192.0.2.12
+          MACSPLOIT_NMAP: ${{ github.workspace }}/fixtures/fake-nmap.sh
+          MACSPLOIT_HTTPX: ${{ github.workspace }}/fixtures/fake-httpx.sh
+        run: ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing
+
+      - name: Build macOS app (ad-hoc signed)
+        run: ./scripts/build-macos.sh
+
+  full:
+    name: Full integration suite
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Show toolchain versions
         run: |
@@ -45,10 +194,38 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Full test suite (offline)
-        # Runs Rust tests, builds the real core helper, runs Swift tests against it
-        # with offline fake tools, runs the Python repository-policy tests, and the
-        # full-history repository audit. No test performs real network scanning.
         run: ./scripts/test.sh
 
       - name: Build macOS app (ad-hoc signed)
         run: ./scripts/build-macos.sh
+
+  required:
+    # Keep the legacy required-check name so existing branch protection does not
+    # need to change. This job is only a result gate; expensive work lives above.
+    name: Build & test (macOS)
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [changes, policy, rust, swift, full]
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_result() {
+            name="$1"
+            result="$2"
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::$name finished with result: $result"
+                return 1
+                ;;
+            esac
+          }
+
+          check_result "change detection" "${{ needs.changes.result }}"
+          check_result "repository policy" "${{ needs.policy.result }}"
+          check_result "Rust checks" "${{ needs.rust.result }}"
+          check_result "Swift checks" "${{ needs.swift.result }}"
+          check_result "full integration suite" "${{ needs.full.result }}"
