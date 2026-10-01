@@ -1,5 +1,6 @@
 """Offline tests using invented values and temporary Git repositories only."""
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -127,6 +128,14 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertTrue(audit.content_issues(b"binary\0payload"))
         self.assertTrue(audit.content_issues(b"\xff\xfe"))
         self.assertTrue(audit.content_issues(b"x" * (audit.MAX_BLOB_BYTES + 1)))
+
+    def test_reviewed_binary_requires_exact_sha256(self):
+        data = b"binary\0payload"
+        checksum = hashlib.sha256(data).hexdigest()
+        reviewed = {"assets/hero.png": checksum}
+        self.assertTrue(audit.reviewed_asset_matches("assets/hero.png", data, reviewed))
+        self.assertFalse(audit.reviewed_asset_matches("assets/hero.png", data + b"x", reviewed))
+        self.assertFalse(audit.reviewed_asset_matches("assets/other.png", data, reviewed))
 
     def test_secret_categories_are_detected_without_storing_real_values(self):
         examples = [

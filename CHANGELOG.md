@@ -7,6 +7,10 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Katana Web Recon (Phase 2A):** bounded same-host crawling from an explicitly
+  selected in-scope HTTP(S) URL into URL assets, with evidence, provenance,
+  cancellation, depth/time/output limits, and offline fake-tool coverage.
+
 Preparing the first public beta: Apache-2.0 license, community-health files,
 contributor and threat-model documentation, CI, and a security review. No public
 release has been made yet.

@@ -47,8 +47,7 @@ not automatically install hooks on clone. The pre-commit hook inspects staged
 blobs; the pre-push hook inspects the history being pushed, even if a sensitive
 file was removed in a later commit. It refuses unexpected or unverifiable remotes, public destinations without the
 owner opt-in, ignored paths, likely secret literals, and files it
-cannot inspect as bounded UTF-8 text. Binary assets need an explicitly reviewed
-policy change before they can be committed.
+cannot inspect as bounded UTF-8 text. Binary assets require an explicit entry in `scripts/reviewed-assets.json` with the exact repository path, SHA-256 checksum, and review reason. The audit permits only the pinned bytes; replacing an approved binary requires a new review and checksum.
 
 The audit is deliberately conservative, but it cannot prove that arbitrary text
 contains no secrets or private assessment details. Review remains mandatory.
@@ -68,15 +67,22 @@ The complete test suite also runs this release check. It checks every commit
 reachable from local branches, origin branches, and tags, rejects shallow history,
 and prints only ref/commit locations for failures rather than private identities.
 
-Human author and committer must both be exactly
-`doctordoomies <doctordoomies@users.noreply.github.com>`, including human commits
-on dependency branches. Only `dependabot/*` branches (local or origin) receive
-the trusted automation exception:
+Owner-authored commits must match one of these exact pairs:
+
+- Canonical local/API identity: author and committer are both
+  `doctordoomies <doctordoomies@users.noreply.github.com>`.
+- GitHub API identity: author and committer are both
+  `doctor <160264866+doctordoomies@users.noreply.github.com>`.
+- GitHub web identity: author is
+  `doctor <160264866+doctordoomies@users.noreply.github.com>` and committer is
+  `GitHub <noreply@github.com>`.
+
+Only `dependabot/*` branches (local or origin) receive the trusted automation exception:
 
 - Author: `dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>`.
 - Committer: that same Dependabot identity, or `GitHub <noreply@github.com>`.
 
-No name-only, email-domain, arbitrary bot, other human, or GitHub-committer-on-human
+No name-only, email-domain, arbitrary bot, other human, or other GitHub-committer
 exception exists. Git metadata alone does not authenticate a bot; during launch
 verify the dependency commits' GitHub accounts and signatures through the API.
 Do not rewrite trusted automation commits into human identities. Unexpected human

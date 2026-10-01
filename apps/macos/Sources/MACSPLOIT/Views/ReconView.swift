@@ -4,15 +4,29 @@ import MACSPLOITKit
 private enum ReconMode: String, CaseIterable, Identifiable {
     case synthetic = "Synthetic Recon"
     case domain = "Domain Recon"
+    case web = "Web Recon"
     var id: String { rawValue }
-    var chainKind: String { self == .synthetic ? "synthetic" : "domain_recon" }
+    var chainKind: String {
+        switch self {
+        case .synthetic: return "synthetic"
+        case .domain: return "domain_recon"
+        case .web: return "web_recon"
+        }
+    }
     var subtitle: String {
         switch self {
         case .synthetic: return "A real orchestration path using invented discoveries. No network activity."
-        case .domain: return "Passive subdomain discovery for an in-scope domain, via the external Subfinder tool."
+        case .domain: return "Subdomains → DNS → ports/services → HTTP probing for an in-scope domain."
+        case .web: return "Bounded same-host crawling from an explicitly selected in-scope HTTP(S) URL."
         }
     }
-    var badge: String { self == .synthetic ? "PASSIVE · SYNTHETIC" : "PASSIVE · SUBFINDER" }
+    var badge: String {
+        switch self {
+        case .synthetic: return "PASSIVE · SYNTHETIC"
+        case .domain: return "MIXED · DOMAIN"
+        case .web: return "ACTIVE · LOW"
+        }
+    }
 }
 
 struct ReconView: View {
@@ -23,6 +37,7 @@ struct ReconView: View {
         model.snapshot?.targets.first { $0.id == model.selectedTargetId }
     }
     private var subfinderReady: Bool { model.subfinder?.installation.isInstalled ?? false }
+    private var katanaReady: Bool { model.katana?.installation.isInstalled ?? false }
 
     private var canRun: Bool {
         guard model.isConnected, !model.isBusy,
@@ -31,6 +46,7 @@ struct ReconView: View {
         switch mode {
         case .synthetic: return target.normalizedValue == "example.test"
         case .domain: return target.targetType == "Domain" && subfinderReady
+        case .web: return target.targetType == "URL" && katanaReady
         }
     }
 
@@ -42,7 +58,8 @@ struct ReconView: View {
                     ForEach(ReconMode.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented).frame(maxWidth: 360)
 
-                if mode == .domain { providerPanel }
+                if mode == .domain { domainProviderPanel }
+                else if mode == .web { webProviderPanel }
 
                 HStack(spacing: 14) {
                     Picker("Target", selection: $model.selectedTargetId) {
@@ -111,7 +128,7 @@ struct ReconView: View {
         }
     }
 
-    @ViewBuilder private var providerPanel: some View {
+    @ViewBuilder private var domainProviderPanel: some View {
         VStack(spacing: 10) {
             providerRow(
                 title: "Subfinder",
@@ -148,6 +165,20 @@ struct ReconView: View {
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder private var webProviderPanel: some View {
+        VStack(spacing: 10) {
+            providerRow(
+                title: "Katana",
+                detail: "Same-host Web Crawling · depth 2 · 20s crawl budget",
+                available: katanaReady,
+                status: model.katana?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE · LOW", warn: false
+            )
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     @ViewBuilder private func providerRow(title: String, detail: String, available: Bool, status: String, risk: String = "PASSIVE", warn: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: available ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -171,7 +202,11 @@ struct ReconView: View {
 
     @ViewBuilder private var runHint: some View {
         if model.snapshot?.targets.isEmpty != false {
-            Text(mode == .synthetic ? "Add example.test using the target bar above." : "Add an in-scope domain using the target bar above.")
+            Text(mode == .synthetic
+                 ? "Add example.test using the target bar above."
+                 : mode == .domain
+                 ? "Add an in-scope domain using the target bar above."
+                 : "Add an in-scope HTTP(S) URL using the target bar above.")
                 .foregroundStyle(.secondary)
         } else if mode == .domain && !subfinderReady {
             Text("Subfinder is not installed. Install it manually (or via a future Tool Manager) to run Domain Recon.")
@@ -181,6 +216,11 @@ struct ReconView: View {
                 .font(.callout).foregroundStyle(.orange)
         } else if mode == .domain, let target = selectedTarget, target.targetType != "Domain" {
             Text("Domain Recon requires a domain target.").font(.callout).foregroundStyle(.secondary)
+        } else if mode == .web && !katanaReady {
+            Text("Katana is not installed. Install it manually to run Web Recon.")
+                .font(.callout).foregroundStyle(.orange)
+        } else if mode == .web, let target = selectedTarget, target.targetType != "URL" {
+            Text("Web Recon requires an HTTP(S) URL target.").font(.callout).foregroundStyle(.secondary)
         }
     }
 
