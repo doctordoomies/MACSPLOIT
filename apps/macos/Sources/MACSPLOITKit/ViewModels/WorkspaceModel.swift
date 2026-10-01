@@ -121,6 +121,7 @@ public final class WorkspaceModel: ObservableObject {
     public var nativeDns: ProviderStatus? { provider("native_dns") }
     public var nmap: ProviderStatus? { provider("nmap") }
     public var httpx: ProviderStatus? { provider("httpx") }
+    public var katana: ProviderStatus? { provider("katana") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }
