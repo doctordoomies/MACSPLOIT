@@ -2,6 +2,7 @@
 """Conservative local Git audit. Reports rule names, never matched secrets."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -11,6 +12,7 @@ import sys
 
 EXPECTED_REPOSITORY = "doctordoomies/MACSPLOIT"
 MAX_BLOB_BYTES = 2 * 1024 * 1024
+REVIEWED_ASSET_MANIFEST = Path(__file__).resolve().parent / "reviewed-assets.json"
 ALLOWED_REMOTES = {
     f"https://github.com/{EXPECTED_REPOSITORY}.git",
     f"https://github.com/{EXPECTED_REPOSITORY}",
@@ -49,6 +51,41 @@ SECRET_RULES = {
     ),
 }
 
+
+
+def load_reviewed_assets():
+    """Load exact path -> SHA-256 approvals for manually reviewed binary assets."""
+    try:
+        payload = json.loads(REVIEWED_ASSET_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError("Reviewed-asset manifest is missing or invalid") from error
+
+    entries = payload.get("reviewed_assets")
+    if not isinstance(entries, list):
+        raise RuntimeError("Reviewed-asset manifest must contain a reviewed_assets list")
+
+    reviewed = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            raise RuntimeError("Reviewed-asset entries must be objects")
+        path = item.get("path")
+        checksum = item.get("sha256")
+        reason = item.get("reason")
+        if not isinstance(path, str) or not path:
+            raise RuntimeError("Reviewed-asset entry has an invalid path")
+        if not isinstance(checksum, str) or re.fullmatch(r"[0-9a-f]{64}", checksum) is None:
+            raise RuntimeError("Reviewed-asset entry has an invalid SHA-256")
+        if not isinstance(reason, str) or not reason.strip():
+            raise RuntimeError("Reviewed-asset entry must document a review reason")
+        if path in reviewed and reviewed[path] != checksum:
+            raise RuntimeError("Reviewed-asset manifest contains conflicting checksums")
+        reviewed[path] = checksum
+    return reviewed
+
+
+def reviewed_asset_matches(path, data, reviewed):
+    expected = reviewed.get(path)
+    return expected is not None and hashlib.sha256(data).hexdigest() == expected
 
 def run(*args, input_bytes=None):
     result = subprocess.run(args, input=input_bytes, stdout=subprocess.PIPE,
@@ -114,6 +151,7 @@ def ignored_paths(paths):
 def audit_snapshots(revisions):
     failures = set()
     checked = set()
+    reviewed = load_reviewed_assets()
     for revision in revisions:
         if revision is not None:
             message = run("git", "show", "--no-patch", "--format=%B", revision)
@@ -134,14 +172,18 @@ def audit_snapshots(revisions):
             if size > MAX_BLOB_BYTES:
                 failures.add((path, "oversized file requires explicit review"))
                 continue
-            for issue in content_issues(run("git", "cat-file", "blob", oid)):
+            data = run("git", "cat-file", "blob", oid)
+            if path in reviewed:
+                if not reviewed_asset_matches(path, data, reviewed):
+                    failures.add((path, "reviewed binary checksum mismatch"))
+                continue
+            for issue in content_issues(data):
                 failures.add((path, issue))
     for path, issue in sorted(failures):
         print(f"BLOCKED {json.dumps(path)}: {issue}", file=sys.stderr)
     if failures:
         raise RuntimeError("Repository audit failed. Fix the data; do not bypass the check.")
     print(f"Repository audit passed: {len(checked)} file versions checked.")
-
 
 def release_allows_public():
     """Whether the owner has intentionally opted into a public destination.
