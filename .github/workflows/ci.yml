@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, "release/**"]
   pull_request:
+  workflow_dispatch:
 
 # Least privilege: CI only needs to read the repository.
 permissions:
@@ -16,9 +17,11 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & test (macOS)
-    runs-on: macos-14 # Apple Silicon
+    runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
+      # Swift 6 is required for the package and Swift Testing CLI flags.
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
       # Pin to a tag; Dependabot (github-actions) keeps it current. Consider
       # pinning to an immutable commit SHA for stricter supply-chain hardening.
@@ -39,7 +42,7 @@ jobs:
       - name: Rust clippy
         run: |
           rustup component add clippy
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Full test suite (offline)
         # Runs Rust tests, builds the real core helper, runs Swift tests against it
