@@ -61,8 +61,10 @@ pub enum ChainKind {
     /// Fully offline invented discoveries (Phase 0). Requires example.test.
     #[default]
     Synthetic,
-    /// First real chain (Phase 1A): passive subdomain discovery via Subfinder.
+    /// Domain-to-web-service reconnaissance (Phase 1).
     DomainRecon,
+    /// Bounded web crawling from an explicitly selected in-scope HTTP(S) URL.
+    WebRecon,
 }
 
 /// One preset stage: (display name, optional capability, optional pinned provider).
@@ -207,6 +209,27 @@ impl Store {
                             Some("nmap"),
                         ),
                         ("HTTP Probing", Some(Capability::HttpProbing), Some("httpx")),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::WebRecon => {
+                if target.target_type != TargetType::URL {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "Web Recon requires an HTTP(S) URL target.",
+                    ));
+                }
+                (
+                    "Web Recon",
+                    vec![
+                        ("Target Validation", None, None),
+                        (
+                            "Web Crawl",
+                            Some(Capability::WebCrawling),
+                            Some("katana"),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
