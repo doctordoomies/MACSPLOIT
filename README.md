@@ -1,8 +1,10 @@
-<div align="center">
+<table>
+<tr>
+<td width="60%" valign="middle">
 
-# MACSPLOIT
+<h1>MACSPLOIT</h1>
 
-### Native macOS security reconnaissance, correlation, and evidence — in one workspace.
+<h3>Native macOS security reconnaissance, correlation, and evidence — in one workspace.</h3>
 
 <p>
   <strong>SwiftUI frontend · Rust core · SQLite persistence · Modular providers</strong>
@@ -16,10 +18,14 @@
   <img alt="Swift" src="https://img.shields.io/badge/UI-SwiftUI-black?style=for-the-badge&logo=swift">
 </p>
 
-> **v0.1 public beta** · pre-1.0 APIs and provider contracts may change.
+<p><strong>v0.1 public beta</strong> · pre-1.0 APIs and provider contracts may change.</p>
 
-</div>
-
+</td>
+<td width="40%" align="right" valign="top">
+  <img src="assets/Neon%20Rain%20Hacker%20Workspace.png" alt="MACSPLOIT neon security workstation artwork" width="380">
+</td>
+</tr>
+</table>
 ---
 
 <table>
