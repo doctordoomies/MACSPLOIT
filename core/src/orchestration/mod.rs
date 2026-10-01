@@ -225,11 +225,7 @@ impl Store {
                     "Web Recon",
                     vec![
                         ("Target Validation", None, None),
-                        (
-                            "Web Crawl",
-                            Some(Capability::WebCrawling),
-                            Some("katana"),
-                        ),
+                        ("Web Crawl", Some(Capability::WebCrawling), Some("katana")),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
