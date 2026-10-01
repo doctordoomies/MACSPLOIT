@@ -30,6 +30,7 @@ pub enum Capability {
     PortDiscovery,
     ServiceFingerprinting,
     HttpProbing,
+    WebCrawling,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +120,7 @@ impl ProviderRegistry {
                 Arc::new(NativeDnsProvider::new(resolver)),
                 Arc::new(NmapProvider),
                 Arc::new(HttpxProvider),
+                Arc::new(KatanaProvider),
             ],
         }
     }
@@ -293,7 +295,7 @@ impl Provider for SyntheticDiscoveryProvider {
                 }
             }
             // The synthetic provider does not model port discovery or HTTP probing.
-            Capability::PortDiscovery | Capability::HttpProbing => {}
+            Capability::PortDiscovery | Capability::HttpProbing | Capability::WebCrawling => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -1196,6 +1198,143 @@ impl Provider for HttpxProvider {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Katana provider (Phase 2A). Performs bounded, same-host web crawling from an
+// explicitly selected in-scope HTTP(S) URL. Standard mode only: no headless
+// browser, automatic form filling, authentication flows, or out-of-scope crawl.
+// ---------------------------------------------------------------------------
+
+pub struct KatanaProvider;
+
+const KATANA_STDOUT_CAP: usize = 512 * 1024;
+const KATANA_STDERR_CAP: usize = 64 * 1024;
+
+impl KatanaProvider {
+    fn arguments(target: &str) -> Vec<String> {
+        vec![
+            "-u".into(), target.into(),
+            "-d".into(), "2".into(),
+            "-fs".into(), "fqdn".into(),
+            "-ct".into(), "20s".into(),
+            "-timeout".into(), "5".into(),
+            "-retry".into(), "0".into(),
+            "-mrs".into(), "1048576".into(),
+            "-j".into(), "-silent".into(), "-nc".into(),
+            "-ob".into(), "-or".into(), "-iqp".into(),
+        ]
+    }
+}
+
+impl Provider for KatanaProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "katana".into(),
+            name: "Katana".into(),
+            description: "Bounded same-host web crawling via the external ProjectDiscovery Katana tool.".into(),
+            version: "external".into(),
+            risk_class: RiskClass::ActiveLowImpact,
+            offline: false,
+            capabilities: vec![Capability::WebCrawling],
+            supported_target_types: vec![TargetType::URL],
+        }
+    }
+
+    fn installation(&self, tools: &ToolConfig) -> Installation {
+        let Some(executable) = tools.locate("katana") else { return Installation::Missing; };
+        let cancelled = AtomicBool::new(false);
+        match process::run(
+            &executable, &["-version".into()], &cancelled,
+            Instant::now() + Duration::from_secs(5),
+            KATANA_STDERR_CAP, KATANA_STDERR_CAP,
+        ) {
+            Ok(outcome) => {
+                let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
+                text.push('\n');
+                text.push_str(&String::from_utf8_lossy(&outcome.stderr));
+                let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
+                Installation::Installed { version }
+            }
+            Err(error) => Installation::ExecutionError { message: error.message },
+        }
+    }
+
+    fn timeout(&self) -> Duration { Duration::from_secs(30) }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        _inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let target = crate::targets::web_url(target)?;
+        let executable = ctx.tools.locate("katana").ok_or_else(|| {
+            CoreError::new("ProviderMissing", "Katana is not installed. Install it manually to run Web Recon.")
+        })?;
+        let mut args = Self::arguments(&target);
+        let outcome = process::run(
+            &executable, &args, ctx.cancelled, ctx.deadline,
+            KATANA_STDOUT_CAP, KATANA_STDERR_CAP,
+        )?;
+        if outcome.cancelled {
+            return Err(CoreError::new("Cancelled", "Web crawling cancelled."));
+        }
+        let mut command = vec![executable.to_string_lossy().into_owned()];
+        command.append(&mut args);
+        Ok(Execution {
+            target, capability, command,
+            stdout: outcome.stdout, stderr: outcome.stderr,
+            exit_status: outcome.exit_status, pid: outcome.pid,
+            timed_out: outcome.timed_out,
+            started_at: outcome.started_at, ended_at: outcome.ended_at,
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        if execution.stdout.len() > KATANA_STDOUT_CAP {
+            return Err(CoreError::new("ProviderFailure", "Katana output exceeds the size budget."));
+        }
+        let target = crate::targets::web_url(&execution.target)?;
+        let target_url = url::Url::parse(&target)
+            .map_err(|_| CoreError::new("ProviderFailure", "Katana target URL is invalid."))?;
+        let target_host = target_url.host_str()
+            .ok_or_else(|| CoreError::new("ProviderFailure", "Katana target has no host."))?;
+
+        let mut discoveries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for line in String::from_utf8_lossy(&execution.stdout).lines().take(3000) {
+            let line = line.trim();
+            if line.is_empty() || line.len() > 8192 { continue; }
+            let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
+            let raw_url = record.pointer("/request/endpoint").and_then(serde_json::Value::as_str)
+                .or_else(|| record.get("url").and_then(serde_json::Value::as_str))
+                .or_else(|| record.get("endpoint").and_then(serde_json::Value::as_str));
+            let Some(raw_url) = raw_url else { continue; };
+            let Ok(url) = crate::targets::web_url(raw_url) else { continue; };
+            let Ok(parsed) = url::Url::parse(&url) else { continue; };
+            if parsed.host_str() != Some(target_host) || url == target || !seen.insert(url.clone()) {
+                continue;
+            }
+            let mut metadata = json!({"tool":"katana"});
+            if let Some(method) = record.pointer("/request/method").and_then(serde_json::Value::as_str) {
+                metadata["method"] = json!(clip(method, 16));
+            }
+            if let Some(status) = record.pointer("/response/status_code").and_then(serde_json::Value::as_i64) {
+                metadata["status_code"] = json!(status);
+            }
+            discoveries.push(Discovery {
+                asset_type: AssetType::URL,
+                value: url,
+                source: Some(target.clone()),
+                relationship: Some(RelationshipType::HasEndpoint),
+                metadata,
+            });
+        }
+        Ok(discoveries)
+    }
+}
+
 /// Truncate untrusted strings to a bounded length (char-safe).
 fn clip(value: &str, max: usize) -> String {
     // Drop control characters (defense against ANSI/terminal-escape injection from
@@ -1755,4 +1894,66 @@ mod tests {
         assert_eq!(execution.exit_status, Some(0));
         assert!(HttpxProvider.parse(&execution).unwrap().is_empty());
     }
+    // --- Katana provider ---
+
+    fn katana_exec(jsonl: &str) -> Execution {
+        Execution {
+            target: "https://app.example.test/".into(),
+            capability: Capability::WebCrawling,
+            command: vec!["katana".into()],
+            stdout: jsonl.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at: crate::now(),
+            ended_at: crate::now(),
+        }
+    }
+
+    #[test]
+    fn katana_metadata_is_low_impact_web_crawling() {
+        let metadata = KatanaProvider.metadata();
+        assert_eq!(metadata.id, "katana");
+        assert_eq!(metadata.risk_class, RiskClass::ActiveLowImpact);
+        assert_eq!(metadata.capabilities, vec![Capability::WebCrawling]);
+        assert_eq!(metadata.supported_target_types, vec![TargetType::URL]);
+        assert_eq!(KatanaProvider.timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn katana_arguments_are_bounded_and_same_host() {
+        let args = KatanaProvider::arguments("https://app.example.test/");
+        let joined = args.join(" ");
+        assert!(joined.contains("-d 2"));
+        assert!(joined.contains("-fs fqdn"));
+        assert!(joined.contains("-ct 20s"));
+        assert!(joined.contains("-mrs 1048576"));
+        assert!(!args.iter().any(|a| matches!(a.as_str(), "-ns" | "-aff" | "-hl" | "-jc")));
+    }
+
+    #[test]
+    fn katana_parses_only_same_host_urls() {
+        let jsonl = concat!(
+            r#"{"request":{"method":"GET","endpoint":"https://app.example.test/login"},"response":{"status_code":200}}"#, "\n",
+            r#"{"request":{"method":"GET","endpoint":"https://app.example.test/api/users?x=1"}}"#, "\n",
+            r#"{"request":{"method":"GET","endpoint":"https://outside.test/"}}"#, "\n",
+            r#"{"request":{"method":"GET","endpoint":"https://app.example.test/login"}}"#, "\n",
+            "not json\n"
+        );
+        let discoveries = KatanaProvider.parse(&katana_exec(jsonl)).unwrap();
+        assert_eq!(discoveries.len(), 2);
+        assert!(discoveries.iter().all(|d| d.asset_type == AssetType::URL));
+        assert!(discoveries.iter().all(|d| d.source.as_deref() == Some("https://app.example.test/")));
+        assert!(discoveries.iter().all(|d| d.relationship == Some(RelationshipType::HasEndpoint)));
+        assert!(discoveries.iter().all(|d| !d.value.contains("outside.test")));
+    }
+
+    #[test]
+    fn katana_missing_executable_reports_missing() {
+        let mut tools = ToolConfig::default();
+        tools.overrides.insert("katana".into(), "/nonexistent/katana".into());
+        assert_eq!(KatanaProvider.installation(&tools), Installation::Missing);
+    }
+
 }
