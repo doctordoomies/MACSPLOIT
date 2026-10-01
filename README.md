@@ -4,7 +4,7 @@
 
 <h1>MACSPLOIT</h1>
 
-<h3>Native macOS security reconnaissance, correlation, and evidence — in one workspace.</h3>
+<h3>Native macOS security reconnaissance, crawling, correlation, and evidence — in one workspace.</h3>
 
 <p>
   <strong>SwiftUI frontend · Rust core · SQLite persistence · Modular providers</strong>
@@ -18,7 +18,9 @@
   <img alt="Swift" src="https://img.shields.io/badge/UI-SwiftUI-black?style=for-the-badge&logo=swift">
 </p>
 
-<p><strong>v0.1 public beta</strong> · pre-1.0 APIs and provider contracts may change.</p>
+<p><strong>v0.1 public beta</strong> · Domain Recon · Web Recon · Asset Graph · Evidence</p>
+
+<p><sub>Pre-1.0 APIs and provider contracts may change.</sub></p>
 
 </td>
 <td width="40%" align="right" valign="top">
@@ -49,26 +51,28 @@ MACSPLOIT is built for **authorized security research** and runs locally with **
 </td>
 <td width="42%" valign="top">
 
-### Current real recon chain
+### Real recon workflows
+
+**Domain Recon**
 
 ```text
 Domain
-  │
-  ├─ Subfinder
-  ▼
+  ↓ Subfinder
 Subdomain
-  │
-  ├─ Native DNS
-  ▼
+  ↓ Native DNS
 IPAddress
-  │
-  ├─ Nmap
-  ▼
+  ↓ Nmap
 Port / Service
-  │
-  ├─ HTTPX
-  ▼
+  ↓ HTTPX
 Website / Technology
+```
+
+**Web Recon**
+
+```text
+HTTP(S) URL
+  ↓ Katana
+URL assets
 ```
 
 </td>
@@ -117,11 +121,19 @@ Out-of-scope discoveries do **not** silently become active scan targets.
 
 ```mermaid
 flowchart LR
-    A[Domain] -->|Subfinder| B[Subdomain]
-    B -->|Native DNS| C[IPAddress]
-    C -->|Nmap| D[Port / Service]
-    D -->|HTTPX| E[Website / Technology]
-    E --> F[Evidence + Events + Asset Graph]
+    subgraph Domain_Recon[Domain Recon]
+        A[Domain] -->|Subfinder| B[Subdomain]
+        B -->|Native DNS| C[IPAddress]
+        C -->|Nmap| D[Port / Service]
+        D -->|HTTPX| E[Website / Technology]
+    end
+
+    subgraph Web_Recon[Web Recon]
+        U[HTTP(S) URL] -->|Katana| V[URL assets]
+    end
+
+    E --> G[Evidence + Events + Asset Graph]
+    V --> G
 ```
 
 Every stage is implemented as a provider capability. Results flow through:
@@ -154,9 +166,10 @@ SwiftUI
 |---|---|---|
 | ◉ | **Persistent workspaces** | Each assessment has isolated SQLite-backed state outside the repo |
 | ◉ | **Target classification** | Domain, URL, IP, CIDR, email, username, and more |
-| ◉ | **Asset graph** | Domains, subdomains, IPs, ports, services, websites, technologies |
+| ◉ | **Asset graph** | Domains, subdomains, IPs, ports, services, websites, URLs, technologies |
 | ◉ | **Scope engine** | Exact hosts, wildcards, CIDR, IPv4/IPv6, redirect-aware decisions |
-| ◉ | **Modular providers** | Synthetic, Subfinder, Native DNS, Nmap, HTTPX |
+| ◉ | **Modular providers** | Synthetic, Subfinder, Native DNS, Nmap, HTTPX, Katana |
+| ◉ | **Web Recon** | Bounded same-host Katana crawling from an explicitly selected in-scope URL |
 | ◉ | **Evidence + provenance** | Raw provider output preserved and tied to every observation |
 | ◉ | **Durable events** | Replayable activity history across application restarts |
 | ◉ | **Safe execution** | Shell-free process supervision, timeouts, bounded output, cancellation |
@@ -296,7 +309,8 @@ MACSPLOIT detects external tools but **never silently installs them**.
 | **Subfinder** | External | `brew install subfinder` | Passive |
 | **Native DNS** | Built in | None | Active · Low Impact |
 | **Nmap** | External | `brew install nmap` | Active |
-| **HTTPX** | External | `brew install httpx` | Active |
+| **HTTPX** | External | `brew install httpx` | Active · Low Impact |
+| **Katana** | External | `brew install katana` | Active · Low Impact |
 
 Tool availability, provider version, and risk are surfaced in the application.
 
@@ -332,11 +346,11 @@ MACSPLOIT is currently a **public beta**.
 
 ### Implemented
 
-`Synthetic Recon` · `Subfinder` · `Native DNS` · `Nmap` · `HTTPX` · `Asset Graph` · `Evidence` · `Scope` · `Durable Events`
+`Synthetic Recon` · `Domain Recon` · `Web Recon` · `Subfinder` · `Native DNS` · `Nmap` · `HTTPX` · `Katana` · `Asset Graph` · `Evidence` · `Scope` · `Durable Events`
 
 ### Planned
 
-`Web Crawling` · `Content Discovery` · `Historical URLs` · `TLS Analysis` · `Findings` · `Reporting` · `OSINT` · `Tool Manager`
+`Native HTTP Analysis` · `JavaScript Analysis` · `Content Discovery` · `Historical URLs` · `TLS Analysis` · `Findings` · `Reporting` · `OSINT` · `Tool Manager`
 
 ### Future
 

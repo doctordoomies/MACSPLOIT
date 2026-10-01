@@ -2,10 +2,11 @@
 
 Repository setup and Phase 0 are implemented with passing automated checks; the
 native UI walkthrough/restart check remains blocked by the UI automation connection.
-**Phase 1A, 1B, and 1C are implemented:** Subfinder (passive external), native DNS
-(built-in), and Nmap (active external) plug into the provider architecture behind a
-`Domain Recon` chain (Subfinder → DNS Resolution → Port + Service Discovery), with
-offline tests. HTTPX remains planned. See [verification](phase-0-verification.md),
+**Phase 1A–1D are implemented:** Subfinder (passive external), native DNS
+(built-in), Nmap (active external), and HTTPX (low-impact external) plug into the
+provider architecture behind `Domain Recon` (Subfinder → DNS → Nmap → HTTPX), with
+offline tests. **Phase 2A begins with Katana Web Recon:** a separate bounded,
+same-host crawl from an explicitly selected in-scope HTTP(S) URL. See [verification](phase-0-verification.md),
 [providers](providers.md), and [recon-chain](recon-chain.md).
 
 | Phase | Scope | Exit condition |
@@ -28,8 +29,8 @@ releases or changing repository visibility still requires explicit approval.
 
 ## Next starting point
 
-Phase 1A (Subfinder), 1B (native DNS), and 1C (Nmap) are complete. The next step is
-**Phase 1D — HTTPX** (HTTP/HTTPS probing of discovered web services), introduced
-independently and only after its timeout, cancellation, output-bound, and scope tests
-pass. The blocked Phase 0 GUI acceptance walkthrough still remains to be performed
-when reliable native UI automation is available.
+Phase 1A–1D are complete. **Phase 2A — Katana Web Recon** is the current step:
+bounded standard-mode crawling from an explicitly selected in-scope HTTP(S) URL,
+with same-host scope, depth/output/time limits, cancellation, raw evidence, and URL
+asset provenance. After Katana, continue Phase 2 with native HTTP analyzers,
+JavaScript analysis, historical URLs, and explicit content discovery.
