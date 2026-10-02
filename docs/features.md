@@ -39,7 +39,7 @@ today, not aspirations. Statuses:
 | Content discovery (ffuf) | PLANNED | Explicit stage; user-managed wordlists |
 | Historical URL collection (gau/waybackurls) | PLANNED | |
 | Technology detection | BETA | Basic, via HTTPX tech fingerprints |
-| Native HTTP analyzers (headers/CSP/cookies/CORS/robots/…) | PLANNED | |
+| Native HTTP analyzers (headers/CSP/cookies/CORS/robots) | BETA | Built-in `native_http`; ACTIVE_LOW_IMPACT; `Web Analysis` chain; cookie flags only (no values) |
 | JavaScript analysis | PLANNED | |
 | API discovery (OpenAPI/Swagger/GraphQL) | PLANNED | |
 | Screenshots | PLANNED | |

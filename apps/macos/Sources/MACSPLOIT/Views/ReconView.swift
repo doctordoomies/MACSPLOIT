@@ -5,12 +5,14 @@ private enum ReconMode: String, CaseIterable, Identifiable {
     case synthetic = "Synthetic Recon"
     case domain = "Domain Recon"
     case web = "Web Recon"
+    case webAnalysis = "Web Analysis"
     var id: String { rawValue }
     var chainKind: String {
         switch self {
         case .synthetic: return "synthetic"
         case .domain: return "domain_recon"
         case .web: return "web_recon"
+        case .webAnalysis: return "web_analysis"
         }
     }
     var subtitle: String {
@@ -18,13 +20,14 @@ private enum ReconMode: String, CaseIterable, Identifiable {
         case .synthetic: return "A real orchestration path using invented discoveries. No network activity."
         case .domain: return "Subdomains → DNS → ports/services → HTTP probing for an in-scope domain."
         case .web: return "Bounded same-host crawling from an explicitly selected in-scope HTTP(S) URL."
+        case .webAnalysis: return "Native HTTP analysis of an in-scope URL: headers, cookies, CORS, redirects, robots."
         }
     }
     var badge: String {
         switch self {
         case .synthetic: return "PASSIVE · SYNTHETIC"
         case .domain: return "MIXED · DOMAIN"
-        case .web: return "ACTIVE · LOW"
+        case .web, .webAnalysis: return "ACTIVE · LOW"
         }
     }
 }
@@ -47,6 +50,7 @@ struct ReconView: View {
         case .synthetic: return target.normalizedValue == "example.test"
         case .domain: return target.targetType == "Domain" && subfinderReady
         case .web: return target.targetType == "URL" && katanaReady
+        case .webAnalysis: return target.targetType == "URL" // native, built-in
         }
     }
 
@@ -60,6 +64,7 @@ struct ReconView: View {
 
                 if mode == .domain { domainProviderPanel }
                 else if mode == .web { webProviderPanel }
+                else if mode == .webAnalysis { webAnalysisProviderPanel }
 
                 HStack(spacing: 14) {
                     Picker("Target", selection: $model.selectedTargetId) {
@@ -179,6 +184,20 @@ struct ReconView: View {
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder private var webAnalysisProviderPanel: some View {
+        VStack(spacing: 10) {
+            providerRow(
+                title: "Native HTTP Analysis",
+                detail: "Headers · Cookies · CORS · Redirects · robots.txt",
+                available: model.nativeHttp?.installation.isAvailable ?? true,
+                status: model.nativeHttp?.installation.summary ?? "Built in",
+                risk: "ACTIVE · LOW", warn: false
+            )
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     @ViewBuilder private func providerRow(title: String, detail: String, available: Bool, status: String, risk: String = "PASSIVE", warn: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: available ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -221,6 +240,8 @@ struct ReconView: View {
                 .font(.callout).foregroundStyle(.orange)
         } else if mode == .web, let target = selectedTarget, target.targetType != "URL" {
             Text("Web Recon requires an HTTP(S) URL target.").font(.callout).foregroundStyle(.secondary)
+        } else if mode == .webAnalysis, let target = selectedTarget, target.targetType != "URL" {
+            Text("Web Analysis requires an HTTP(S) URL target.").font(.callout).foregroundStyle(.secondary)
         }
     }
 

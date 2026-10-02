@@ -1,8 +1,8 @@
 # Providers
 
-Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, one
-built-in native provider (DNS), and four real external providers: Subfinder
-(passive), Nmap (active), HTTPX (active-low-impact), and Katana
+Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, two
+built-in native providers (DNS, HTTP analysis), and four real external providers:
+Subfinder (passive), Nmap (active), HTTPX (active-low-impact), and Katana
 (active-low-impact).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
@@ -204,11 +204,40 @@ capability WEB_CRAWLING, supported target type URL.
 - MACSPLOIT never installs Katana. Automated tests use `fixtures/fake-katana.sh`;
   the real network tool is never invoked by CI.
 
+## NativeHttpProvider
+
+Status: **IMPLEMENTED** (Phase 2B). `native_http`, risk **ACTIVE_LOW_IMPACT**,
+capability WebAnalysis, supported target type URL, installation **BUILT_IN** (no
+external tool). It takes an explicitly selected in-scope HTTP(S) URL and produces
+normalized web-security metadata.
+
+- **Built-in, Katana-independent.** It runs its own `Web Analysis` chain and shares
+  no dependency on Katana; native analysis works even if Katana is not installed.
+- **Transport boundary.** HTTP goes through an injectable `WebTransport`
+  (`core/src/web`): the production `UreqTransport` makes one bounded request per hop
+  with TLS validation left **on** (never disabled); the offline `StaticWebTransport`
+  serves fixtures for tests and the `MACSPLOIT_WEB_FIXTURE` override.
+- **What it normalizes.** Final response (status, content-type/length, server);
+  security headers (HSTS, CSP, CSP-Report-Only, X-Frame-Options,
+  X-Content-Type-Options, Referrer-Policy, Permissions-Policy); **cookie security
+  flags only** (name, Secure, HttpOnly, SameSite, Path — **never cookie values**);
+  CORS headers; a **scope-checked redirect chain** (each hop validated against
+  workspace scope, http(s)-only, no credentials; off-scope redirects are recorded
+  but not followed); and conservative `robots.txt` parsing.
+- **Bounds.** http/https only, no credential URLs, small redirect limit, request +
+  operation deadline, capped body read (256 KiB), cooperative cancellation. No
+  fuzzing, form submission, auth, or exploit payloads. Collection only — a missing
+  header is not yet a Finding.
+- **Model.** Enriches the `Website` asset for the URL via an `Observation`
+  attributed to `native_http`; the full normalized report is stored as hashed
+  evidence. No new asset types are created for headers/cookies.
+
 ## Next adapter boundary
 
-Next Phase 2 work: native HTTP analyzers (headers/CSP/cookies/CORS/robots), then
-JavaScript analysis and historical URL collection. Content discovery remains an
-explicit active stage rather than something silently folded into crawling.
+Next Phase 2 work (**2C**): explicit content discovery (ffuf-style, bounded,
+user-selected wordlist), then historical URL collection and JavaScript analysis.
+Content discovery remains an explicit active stage rather than something silently
+folded into crawling.
 
 **FUTURE:** approved installation/update tooling (Tool Manager), dependency and
 license metadata, version compatibility policy, and a public provider SDK. No
