@@ -47,6 +47,10 @@ pub enum Command {
         target_id: Id,
         #[serde(default)]
         chain: crate::orchestration::ChainKind,
+        /// Optional per-run options (e.g. `{"wordlist_path": "..."}` for content
+        /// discovery). Defaults to an empty object.
+        #[serde(default)]
+        options: serde_json::Value,
     },
     CancelChain {
         workspace_id: Id,
@@ -141,7 +145,8 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 workspace_id,
                 target_id,
                 chain,
-            } => serde_json::to_value(engine.start(workspace_id, target_id, chain)?)?,
+                options,
+            } => serde_json::to_value(engine.start(workspace_id, target_id, chain, options)?)?,
             Command::CancelChain {
                 workspace_id,
                 chain_id,

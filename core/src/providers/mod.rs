@@ -33,6 +33,7 @@ pub enum Capability {
     HttpProbing,
     WebCrawling,
     WebAnalysis,
+    ContentDiscovery,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +89,8 @@ pub struct ProviderContext<'a> {
     /// Workspace scope entries, so a provider can scope-check destinations it
     /// discovers during execution (e.g. redirect hops).
     pub scope: &'a [String],
+    /// Per-run options (e.g. the content-discovery wordlist path). Null when unused.
+    pub options: &'a serde_json::Value,
 }
 
 pub trait Provider: Send + Sync {
@@ -133,6 +136,7 @@ impl ProviderRegistry {
                 Arc::new(HttpxProvider),
                 Arc::new(KatanaProvider),
                 Arc::new(NativeHttpProvider::new(web)),
+                Arc::new(FfufProvider),
             ],
         }
     }
@@ -313,7 +317,8 @@ impl Provider for SyntheticDiscoveryProvider {
             Capability::PortDiscovery
             | Capability::HttpProbing
             | Capability::WebCrawling
-            | Capability::WebAnalysis => {}
+            | Capability::WebAnalysis
+            | Capability::ContentDiscovery => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -1424,6 +1429,292 @@ fn clip(value: &str, max: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// ffuf content-discovery provider (Phase 2C). Bounded path discovery over an
+// explicitly selected in-scope HTTP(S) URL with a user-chosen wordlist. ACTIVE;
+// only runs from its own Content Discovery chain, never automatically.
+// ---------------------------------------------------------------------------
+
+/// Conservative Phase 2C wordlist limits (the Rust core is the security boundary).
+pub const WORDLIST_MAX_ENTRIES: usize = 500;
+pub const WORDLIST_MAX_BYTES: u64 = 1024 * 1024;
+pub const WORDLIST_MAX_LINE_BYTES: usize = 512;
+
+/// Validate a user-selected wordlist and return its usable entry count. Blank lines
+/// and `#` comments are ignored; the file must be UTF-8 text within the limits. This
+/// is enforced in the core (never trusting Swift-provided metadata) and fails clearly
+/// rather than silently truncating.
+pub fn validate_wordlist(path: &std::path::Path) -> Result<usize> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| CoreError::new("WordlistMissing", "The selected wordlist does not exist."))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CoreError::new(
+            "WordlistMissing",
+            "The wordlist must be a regular file (symlinks are not accepted).",
+        ));
+    }
+    if metadata.len() > WORDLIST_MAX_BYTES {
+        return Err(CoreError::new(
+            "WordlistTooLarge",
+            "The wordlist exceeds the 1 MiB limit.",
+        ));
+    }
+    let data = std::fs::read(path)
+        .map_err(|_| CoreError::new("WordlistMissing", "The wordlist could not be read."))?;
+    if data.contains(&0) {
+        return Err(CoreError::new(
+            "InvalidData",
+            "The wordlist appears to be binary (contains NUL bytes).",
+        ));
+    }
+    let text = std::str::from_utf8(&data)
+        .map_err(|_| CoreError::new("InvalidData", "The wordlist must be UTF-8 text."))?;
+    let mut count = 0usize;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue; // blank lines and # comments are ignored
+        }
+        if line.len() > WORDLIST_MAX_LINE_BYTES {
+            return Err(CoreError::new(
+                "WordlistTooLarge",
+                "A wordlist entry exceeds the 512-byte line limit.",
+            ));
+        }
+        count += 1;
+        if count > WORDLIST_MAX_ENTRIES {
+            return Err(CoreError::new(
+                "WordlistTooLarge",
+                "The wordlist exceeds the 500-entry limit for Phase 2C.",
+            ));
+        }
+    }
+    if count == 0 {
+        return Err(CoreError::new(
+            "WordlistMissing",
+            "The wordlist has no usable entries.",
+        ));
+    }
+    Ok(count)
+}
+
+pub struct FfufProvider;
+
+const FFUF_STDOUT_CAP: usize = 512 * 1024;
+const FFUF_STDERR_CAP: usize = 64 * 1024;
+
+#[derive(Deserialize)]
+struct FfufOutput {
+    #[serde(default)]
+    results: Vec<FfufResult>,
+}
+#[derive(Deserialize)]
+struct FfufResult {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    status: Option<i64>,
+    #[serde(default)]
+    length: Option<i64>,
+    #[serde(default)]
+    redirectlocation: Option<String>,
+}
+
+impl FfufProvider {
+    /// Append the FUZZ keyword at a path boundary of the normalized URL.
+    fn fuzz_url(url: &str) -> String {
+        if url.ends_with('/') {
+            format!("{url}FUZZ")
+        } else {
+            format!("{url}/FUZZ")
+        }
+    }
+
+    /// Deterministic, bounded argument array. No shell, no recursion, redirects off.
+    fn arguments(fuzz_url: &str, wordlist: &str) -> Vec<String> {
+        vec![
+            "-u".into(),
+            fuzz_url.into(),
+            "-w".into(),
+            wordlist.into(),
+            "-mc".into(),
+            // Useful statuses; 404 is intentionally excluded so it creates no asset.
+            "200,204,301,302,307,308,401,403,405".into(),
+            "-t".into(),
+            "10".into(), // bounded concurrency
+            "-rate".into(),
+            "10".into(), // bounded requests/sec
+            "-timeout".into(),
+            "5".into(),     // per-request seconds
+            "-json".into(), // machine-readable output to stdout
+        ]
+    }
+}
+
+impl Provider for FfufProvider {
+    fn metadata(&self) -> ProviderMetadata {
+        ProviderMetadata {
+            id: "ffuf".into(),
+            name: "ffuf".into(),
+            description:
+                "Bounded path/content discovery over an in-scope HTTP(S) URL with a chosen wordlist."
+                    .into(),
+            version: "external".into(),
+            risk_class: RiskClass::Active,
+            offline: false,
+            capabilities: vec![Capability::ContentDiscovery],
+            supported_target_types: vec![TargetType::URL],
+        }
+    }
+
+    fn installation(&self, tools: &ToolConfig) -> Installation {
+        let Some(executable) = tools.locate("ffuf") else {
+            return Installation::Missing;
+        };
+        let cancelled = AtomicBool::new(false);
+        match process::run(
+            &executable,
+            &["-V".into()],
+            &cancelled,
+            Instant::now() + Duration::from_secs(5),
+            FFUF_STDERR_CAP,
+            FFUF_STDERR_CAP,
+        ) {
+            Ok(outcome) => {
+                let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
+                text.push('\n');
+                text.push_str(&String::from_utf8_lossy(&outcome.stderr));
+                let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
+                Installation::Installed { version }
+            }
+            Err(error) => Installation::ExecutionError {
+                message: error.message,
+            },
+        }
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(90)
+    }
+
+    fn execute(
+        &self,
+        target: &str,
+        capability: Capability,
+        _inputs: &[Asset],
+        ctx: &ProviderContext,
+    ) -> Result<Execution> {
+        let started_at = crate::now();
+        let base = crate::targets::web_url(target)?;
+        let wordlist = ctx
+            .options
+            .get("wordlist_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                CoreError::new(
+                    "WordlistMissing",
+                    "No wordlist was provided for content discovery.",
+                )
+            })?;
+        // Re-validate in the provider — the core is the security boundary.
+        validate_wordlist(std::path::Path::new(wordlist))?;
+
+        let executable = ctx.tools.locate("ffuf").ok_or_else(|| {
+            CoreError::new(
+                "ProviderMissing",
+                "ffuf is not installed. Install it manually to run content discovery.",
+            )
+        })?;
+        let fuzz_url = Self::fuzz_url(&base);
+        let args = Self::arguments(&fuzz_url, wordlist);
+        let outcome = process::run(
+            &executable,
+            &args,
+            ctx.cancelled,
+            ctx.deadline,
+            FFUF_STDOUT_CAP,
+            FFUF_STDERR_CAP,
+        )?;
+        if outcome.cancelled {
+            return Err(CoreError::new("Cancelled", "Content discovery cancelled."));
+        }
+        // Persisted command redacts the local wordlist path to its file name only,
+        // preserving provenance without leaking a private filesystem path. The URL
+        // target and provider identity are kept.
+        let redacted_wordlist = std::path::Path::new(wordlist)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "<wordlist>".into());
+        let mut command = vec![executable.to_string_lossy().into_owned()];
+        command.extend(Self::arguments(&fuzz_url, &redacted_wordlist));
+        Ok(Execution {
+            target: target.into(),
+            capability,
+            command,
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+            exit_status: outcome.exit_status,
+            pid: outcome.pid,
+            timed_out: outcome.timed_out,
+            started_at,
+            ended_at: crate::now(),
+        })
+    }
+
+    fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>> {
+        let base = crate::targets::web_url(&execution.target)?;
+        let base_host = url::Url::parse(&base)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned));
+        let output: FfufOutput = serde_json::from_slice(&execution.stdout)
+            .map_err(|_| CoreError::new("ProviderFailure", "ffuf output is malformed."))?;
+        let mut discoveries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for result in output.results.into_iter().take(5000) {
+            let Some(raw_url) = result.url else { continue };
+            if raw_url.len() > 2048 {
+                continue;
+            }
+            // 404 creates no asset (defensive; -mc already excludes it).
+            if result.status == Some(404) {
+                continue;
+            }
+            let Ok(url) = crate::targets::web_url(&raw_url) else {
+                continue; // malformed/credential URL
+            };
+            // Same-host only: never turn one authorized site into permission to
+            // record another host's paths.
+            let host = url::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned));
+            if host.is_none() || host != base_host {
+                continue;
+            }
+            if !seen.insert(url.clone()) {
+                continue;
+            }
+            let mut metadata = json!({"tool": "ffuf"});
+            if let Some(status) = result.status {
+                metadata["status"] = json!(status);
+            }
+            if let Some(length) = result.length {
+                metadata["content_length"] = json!(length);
+            }
+            if let Some(redirect) = result.redirectlocation.filter(|r| !r.is_empty()) {
+                metadata["redirect_location"] = json!(clip(&redirect, 1024));
+            }
+            discoveries.push(Discovery {
+                asset_type: AssetType::URL,
+                value: url,
+                source: Some(base.clone()),
+                relationship: Some(RelationshipType::HasEndpoint),
+                metadata,
+            });
+        }
+        Ok(discoveries)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Native HTTP analysis provider (Phase 2B). Built-in (no external tool). Takes an
 // explicitly selected in-scope HTTP(S) URL and produces normalized web-security
 // metadata: response info, security headers, cookie flags (never values), CORS
@@ -1751,6 +2042,7 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(10),
             tools,
             scope: &[],
+            options: &serde_json::Value::Null,
         }
     }
 
@@ -1764,6 +2056,7 @@ mod tests {
             deadline: Instant::now() + Duration::from_secs(10),
             tools,
             scope,
+            options: &serde_json::Value::Null,
         }
     }
 
@@ -2596,5 +2889,172 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.code, "ProviderTimeout");
+    }
+
+    // --- ffuf content discovery provider ---
+
+    fn ffuf_exec(target: &str, json: &str) -> Execution {
+        Execution {
+            target: target.into(),
+            capability: Capability::ContentDiscovery,
+            command: vec!["ffuf".into()],
+            stdout: json.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at: crate::now(),
+            ended_at: crate::now(),
+        }
+    }
+
+    fn write_wordlist(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn ffuf_metadata_is_active_content_discovery() {
+        let m = FfufProvider.metadata();
+        assert_eq!(m.id, "ffuf");
+        assert_eq!(m.risk_class, RiskClass::Active);
+        assert_eq!(m.capabilities, vec![Capability::ContentDiscovery]);
+        assert_eq!(m.supported_target_types, vec![TargetType::URL]);
+        assert_eq!(FfufProvider.timeout(), Duration::from_secs(90));
+    }
+
+    #[test]
+    fn ffuf_arguments_are_bounded_shell_free_and_no_recursion() {
+        let args = FfufProvider::arguments(
+            &FfufProvider::fuzz_url("https://example.test/"),
+            "/tmp/w.txt",
+        );
+        assert_eq!(args.iter().filter(|a| *a == "-u").count(), 1);
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-u", "https://example.test/FUZZ"]));
+        assert!(args.windows(2).any(|w| w == ["-w", "/tmp/w.txt"]));
+        assert!(args.windows(2).any(|w| w == ["-t", "10"]));
+        assert!(args.windows(2).any(|w| w == ["-rate", "10"]));
+        assert!(args.windows(2).any(|w| w == ["-timeout", "5"]));
+        assert!(args.contains(&"-json".to_string()));
+        // No recursion, no redirect following, no scope-disabling, no shell.
+        assert!(!args
+            .iter()
+            .any(|a| a == "-recursion" || a == "-r" || a == "-no-scope" || a == "-x"));
+        assert_eq!(
+            FfufProvider::fuzz_url("https://example.test/app"),
+            "https://example.test/app/FUZZ"
+        );
+    }
+
+    #[test]
+    fn ffuf_parses_discoveries_filters_404_and_offhost() {
+        let json = r#"{"results":[
+            {"url":"https://example.test/admin","status":200,"length":10,"redirectlocation":""},
+            {"url":"https://example.test/admin","status":200,"length":10,"redirectlocation":""},
+            {"url":"https://example.test/api","status":301,"length":0,"redirectlocation":"https://example.test/api/"},
+            {"url":"https://example.test/missing","status":404,"length":0,"redirectlocation":""},
+            {"url":"https://evil.test/x","status":200,"length":5,"redirectlocation":""}
+        ]}"#;
+        let discoveries = FfufProvider
+            .parse(&ffuf_exec("https://example.test/", json))
+            .unwrap();
+        let values: Vec<_> = discoveries.iter().map(|d| d.value.as_str()).collect();
+        assert_eq!(
+            values,
+            vec!["https://example.test/admin", "https://example.test/api"]
+        ); // dedup, 404 + off-host dropped
+        assert_eq!(discoveries[0].asset_type, AssetType::URL);
+        assert_eq!(
+            discoveries[0].relationship,
+            Some(RelationshipType::HasEndpoint)
+        );
+        assert_eq!(
+            discoveries[0].source.as_deref(),
+            Some("https://example.test/")
+        );
+        assert_eq!(discoveries[0].metadata["status"], json!(200));
+        assert_eq!(
+            discoveries[1].metadata["redirect_location"],
+            json!("https://example.test/api/")
+        );
+    }
+
+    #[test]
+    fn ffuf_malformed_output_is_an_error() {
+        assert!(FfufProvider
+            .parse(&ffuf_exec("https://example.test/", "not json"))
+            .is_err());
+    }
+
+    #[test]
+    fn ffuf_missing_executable_reports_missing() {
+        let mut tools = ToolConfig::default();
+        tools
+            .overrides
+            .insert("ffuf".into(), "/nonexistent/ffuf".into());
+        assert_eq!(FfufProvider.installation(&tools), Installation::Missing);
+    }
+
+    #[test]
+    fn wordlist_validation_accepts_small_and_rejects_bad() {
+        let dir = tempfile::tempdir().unwrap();
+        // Valid: blanks + # comments ignored; 3 usable entries.
+        let ok = write_wordlist(dir.path(), "ok.txt", "# comment\nadmin\n\nlogin\napi\n");
+        assert_eq!(validate_wordlist(&ok).unwrap(), 3);
+        // Empty (only blanks/comments).
+        let empty = write_wordlist(dir.path(), "empty.txt", "# only a comment\n\n");
+        assert_eq!(
+            validate_wordlist(&empty).unwrap_err().code,
+            "WordlistMissing"
+        );
+        // Too many entries.
+        let many = write_wordlist(
+            dir.path(),
+            "many.txt",
+            &"a\n".repeat(WORDLIST_MAX_ENTRIES + 1),
+        );
+        assert_eq!(
+            validate_wordlist(&many).unwrap_err().code,
+            "WordlistTooLarge"
+        );
+        // Overlong line.
+        let longline = write_wordlist(
+            dir.path(),
+            "long.txt",
+            &format!("{}\n", "a".repeat(WORDLIST_MAX_LINE_BYTES + 1)),
+        );
+        assert_eq!(
+            validate_wordlist(&longline).unwrap_err().code,
+            "WordlistTooLarge"
+        );
+        // Binary / NUL.
+        let binary = dir.path().join("bin.txt");
+        std::fs::write(&binary, [0u8, 1, 2, 3]).unwrap();
+        assert_eq!(validate_wordlist(&binary).unwrap_err().code, "InvalidData");
+        // Missing.
+        assert_eq!(
+            validate_wordlist(&dir.path().join("nope.txt"))
+                .unwrap_err()
+                .code,
+            "WordlistMissing"
+        );
+    }
+
+    #[test]
+    fn ffuf_execute_requires_wordlist_option() {
+        let tools = ToolConfig::default();
+        let cancelled = AtomicBool::new(false);
+        let err = FfufProvider
+            .execute(
+                "https://example.test/",
+                Capability::ContentDiscovery,
+                &[],
+                &context(&tools, &cancelled),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "WordlistMissing");
     }
 }

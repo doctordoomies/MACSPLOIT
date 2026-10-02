@@ -37,6 +37,11 @@ pub struct ChainRun {
     pub created_at: String,
     pub updated_at: String,
     pub error_code: Option<String>,
+    /// Per-run options (e.g. the validated content-discovery wordlist path). Held
+    /// in memory for the live worker only; not persisted (content-discovery runs are
+    /// not resumed after a restart), so snapshots default it to Null.
+    #[serde(default)]
+    pub options: serde_json::Value,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stage {
@@ -70,6 +75,9 @@ pub enum ChainKind {
     /// Native HTTP/security analysis of an in-scope HTTP(S) URL (no external tool,
     /// independent of Katana).
     WebAnalysis,
+    /// Bounded path/content discovery (ffuf) over an in-scope HTTP(S) URL with an
+    /// explicitly selected wordlist. Never runs as part of another chain.
+    ContentDiscovery,
 }
 
 /// One preset stage: (display name, optional capability, optional pinned provider).
@@ -143,7 +151,13 @@ impl Store {
         Ok(snapshot)
     }
 
-    fn create_chain(&self, workspace: Id, target: Id, kind: ChainKind) -> Result<ChainRun> {
+    fn create_chain(
+        &self,
+        workspace: Id,
+        target: Id,
+        kind: ChainKind,
+        options: serde_json::Value,
+    ) -> Result<ChainRun> {
         let mut conn = self.connect(workspace)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let target = targets_in(&tx, workspace)?
@@ -282,6 +296,40 @@ impl Store {
                     ],
                 )
             }
+            ChainKind::ContentDiscovery => {
+                if target.target_type != TargetType::URL {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "Content Discovery requires an HTTP(S) URL target.",
+                    ));
+                }
+                // The wordlist is validated here (fail fast) and again by the ffuf
+                // provider before execution. The core is the security boundary.
+                let wordlist = options
+                    .get("wordlist_path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        CoreError::new(
+                            "WordlistMissing",
+                            "Choose a wordlist before running Content Discovery.",
+                        )
+                    })?;
+                crate::providers::validate_wordlist(std::path::Path::new(wordlist))?;
+                (
+                    "Content Discovery",
+                    vec![
+                        ("Target Validation", None, None),
+                        ("Wordlist Validation", None, None),
+                        (
+                            "Content Discovery",
+                            Some(Capability::ContentDiscovery),
+                            Some("ffuf"),
+                        ),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
         };
         // Scope authorization is mandatory for every preset, real or synthetic.
         crate::scope::authorize(
@@ -306,6 +354,7 @@ impl Store {
             created_at: crate::now(),
             updated_at: crate::now(),
             error_code: None,
+            options,
         };
         tx.execute(
             "INSERT INTO chain_runs VALUES(?1,?2,?3,?4,'PENDING',?5,?5,NULL)",
@@ -698,7 +747,13 @@ impl Engine {
         self.registry.status(&self.tools)
     }
 
-    pub fn start(&self, workspace: Id, target: Id, kind: ChainKind) -> Result<ChainRun> {
+    pub fn start(
+        &self,
+        workspace: Id,
+        target: Id,
+        kind: ChainKind,
+        options: serde_json::Value,
+    ) -> Result<ChainRun> {
         let mut active = self
             .active
             .lock()
@@ -709,7 +764,7 @@ impl Engine {
                 "One Recon Chain is already running. Wait or cancel it.",
             ));
         }
-        let chain = self.store.create_chain(workspace, target, kind)?;
+        let chain = self.store.create_chain(workspace, target, kind, options)?;
         let cancellation = Arc::new(AtomicBool::new(false));
         *active = Some(ActiveRun {
             workspace,
@@ -938,6 +993,7 @@ impl Engine {
             deadline,
             tools: &self.tools,
             scope: &scope,
+            options: &chain.options,
         };
         let execution = provider.execute(&target.normalized_value, capability, &inputs, &ctx)?;
 
