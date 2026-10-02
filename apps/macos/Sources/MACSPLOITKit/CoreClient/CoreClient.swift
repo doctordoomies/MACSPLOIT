@@ -7,6 +7,7 @@ public protocol CoreAPI: Sendable {
     func hello() async throws -> CoreHello
     func listWorkspaces() async throws -> [Workspace]
     func createWorkspace(name: String, scope: [String]) async throws -> Workspace
+    func updateWorkspaceScope(workspace: String, scope: [String]) async throws -> Workspace
     func addTarget(workspace: String, value: String) async throws -> Target
     func snapshot(workspace: String) async throws -> Snapshot
     func events(workspace: String, after: Int64) async throws -> [CoreEvent]
@@ -55,6 +56,9 @@ public struct CoreClient: CoreAPI {
     public func listWorkspaces() async throws -> [Workspace] { try await call("list_workspaces") }
     public func createWorkspace(name: String, scope: [String]) async throws -> Workspace {
         try await call("create_workspace", ["name": .string(name), "scope": .array(scope.map(JSONValue.string))])
+    }
+    public func updateWorkspaceScope(workspace: String, scope: [String]) async throws -> Workspace {
+        try await call("update_workspace_scope", ["workspace_id": .string(workspace), "scope": .array(scope.map(JSONValue.string))])
     }
     public func addTarget(workspace: String, value: String) async throws -> Target {
         try await call("add_target", ["workspace_id": .string(workspace), "value": .string(value)])
