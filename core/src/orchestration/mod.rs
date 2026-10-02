@@ -61,6 +61,8 @@ pub enum ChainKind {
     /// Fully offline invented discoveries (Phase 0). Requires example.test.
     #[default]
     Synthetic,
+    /// Built-in DNS resolution for an in-scope domain or hostname.
+    DnsRecon,
     /// Domain-to-web-service reconnaissance (Phase 1).
     DomainRecon,
     /// Bounded web crawling from an explicitly selected in-scope HTTP(S) URL.
@@ -181,6 +183,27 @@ impl Store {
                             Some(Capability::ServiceFingerprinting),
                             Some("synthetic"),
                         ),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::DnsRecon => {
+                if !matches!(target.target_type, TargetType::Domain | TargetType::Hostname) {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "DNS Recon requires a domain or hostname target.",
+                    ));
+                }
+                (
+                    "DNS Recon",
+                    vec![
+                        ("Target Validation", None, None),
+                        (
+                            "DNS Resolution",
+                            Some(Capability::DnsResolution),
+                            Some("native_dns"),
+                        ),
+                        ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
                 )
