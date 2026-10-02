@@ -12,4 +12,6 @@ export MACSPLOIT_NMAP="$PWD/fixtures/fake-nmap.sh"
 export MACSPLOIT_HTTPX="$PWD/fixtures/fake-httpx.sh"
 export MACSPLOIT_WEB_FIXTURE="$PWD/fixtures/web-analysis-fixture.json"
 export MACSPLOIT_KATANA="$PWD/fixtures/fake-katana.sh"
+export MACSPLOIT_FFUF="$PWD/fixtures/fake-ffuf.sh"
+export MACSPLOIT_FFUF_WORDLIST="$PWD/fixtures/content-discovery-small.txt"
 ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing

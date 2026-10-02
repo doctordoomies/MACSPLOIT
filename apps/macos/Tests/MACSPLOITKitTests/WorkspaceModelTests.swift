@@ -27,7 +27,7 @@ actor ModelAPI: CoreAPI {
         if let subsequent { current = subsequent; self.subsequent = nil; return current.events }
         return []
     }
-    func startChain(workspace: String, target: String, chain: String) async throws -> ChainRun { throw CoreFailure(code: "TestOnly", message: "Unused test operation.") }
+    func startChain(workspace: String, target: String, chain: String, options: JSONValue) async throws -> ChainRun { throw CoreFailure(code: "TestOnly", message: "Unused test operation.") }
     func cancelChain(workspace: String, chain: String) async throws {}
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent { EvidenceContent(evidenceId: evidence, rawJson: "{}") }
     func listProviders() async throws -> [ProviderStatus] { [] }

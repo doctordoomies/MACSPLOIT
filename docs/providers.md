@@ -1,9 +1,9 @@
 # Providers
 
 Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, two
-built-in native providers (DNS, HTTP analysis), and four real external providers:
-Subfinder (passive), Nmap (active), HTTPX (active-low-impact), and Katana
-(active-low-impact).
+built-in native providers (DNS, HTTP analysis), and five real external providers:
+Subfinder (passive), Nmap (active), HTTPX (active-low-impact), Katana
+(active-low-impact), and ffuf (active content discovery).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
@@ -232,12 +232,42 @@ normalized web-security metadata.
   attributed to `native_http`; the full normalized report is stored as hashed
   evidence. No new asset types are created for headers/cookies.
 
+## FfufProvider
+
+Status: **IMPLEMENTED** (Phase 2C). `ffuf`, risk **ACTIVE**, capability
+ContentDiscovery, supported target type URL. Bounded path/content discovery over an
+explicitly selected in-scope HTTP(S) URL with a user-chosen wordlist.
+
+- **Explicit only.** Runs solely from its own `Content Discovery` chain — never as
+  part of Domain/Web/Web Analysis/DNS Recon. No hidden background fuzzing.
+- **Wordlist.** The analyst explicitly selects a local wordlist; nothing is bundled
+  or downloaded. The **Rust core** validates it (the Swift UI is not the boundary):
+  UTF-8, ≤ 1 MiB, ≤ 500 usable entries, ≤ 512-byte lines; blank lines and `#`
+  comments are ignored; binary/oversized/empty lists are rejected with a clear error
+  (it never silently truncates). The wordlist path is carried as a typed `start_chain`
+  option and re-validated by the provider.
+- **Bounded, deterministic ffuf profile:** `-u <url>/FUZZ -w <list> -mc
+  200,204,301,302,307,308,401,403,405 -t 10 -rate 10 -timeout 5 -json`. Redirects are
+  **not** followed, **no recursion**, no extension/vhost/header/parameter fuzzing, no
+  auth, no evasion. 404 creates no asset; raw output is still preserved.
+- **Execution/evidence.** Shell-free process supervisor (argument array), bounded
+  stdout/stderr, 90 s provider timeout, cancellation, version via `ffuf -V`. Raw JSON
+  is hashed evidence before parsing. The persisted command **redacts the local
+  wordlist path to its file name only** (keeping the URL target and provider identity).
+- **Model.** Each accepted result becomes (or reuses) a `URL` asset with a
+  `has_endpoint` relationship from the root URL; status/length/redirect live in
+  observation/asset metadata and evidence. Same-host only — a discovery on another
+  host is dropped (no cross-host scope expansion). Soft-404 detection is a documented
+  initial limitation.
+
+**Manual installation.** Install ffuf yourself (`brew install ffuf`); MACSPLOIT never
+installs it. Automated tests use `fixtures/fake-ffuf.sh` + a small fixture wordlist.
+
 ## Next adapter boundary
 
-Next Phase 2 work (**2C**): explicit content discovery (ffuf-style, bounded,
-user-selected wordlist), then historical URL collection and JavaScript analysis.
-Content discovery remains an explicit active stage rather than something silently
-folded into crawling.
+Next Phase 2 work: historical URL intelligence (gau/waybackurls), then JavaScript
+analysis. Content discovery remains an explicit active stage rather than something
+silently folded into crawling.
 
 **FUTURE:** approved installation/update tooling (Tool Manager), dependency and
 license metadata, version compatibility policy, and a public provider SDK. No

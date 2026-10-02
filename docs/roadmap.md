@@ -6,9 +6,10 @@ native UI walkthrough/restart check remains blocked by the UI automation connect
 (built-in), Nmap (active external), and HTTPX (low-impact external) plug into the
 provider architecture behind `Domain Recon` (Subfinder → DNS → Nmap → HTTPX), with
 offline tests. **Phase 2 (Web reconnaissance) is underway:** 2A — Katana Web Recon
-(bounded same-host crawl) and 2B — native HTTP analysis (`Web Analysis`: security
-headers, cookie flags, CORS, redirects, robots — built-in, no external tool) are
-implemented. See [verification](phase-0-verification.md), [providers](providers.md),
+(bounded same-host crawl), 2B — native HTTP analysis (`Web Analysis`: security
+headers, cookie flags, CORS, redirects, robots — built-in), and 2C — content
+discovery (`Content Discovery`: bounded ffuf path discovery with a user-selected
+wordlist) are implemented. See [verification](phase-0-verification.md), [providers](providers.md),
 and [recon-chain](recon-chain.md).
 
 | Phase | Scope | Exit condition |
@@ -31,9 +32,8 @@ releases or changing repository visibility still requires explicit approval.
 
 ## Next starting point
 
-Phase 1A–1D, Phase 2A (Katana Web Recon), and Phase 2B (native HTTP analysis) are
-complete. **Phase 2C — Content Discovery** is the next breadth step: an explicit,
-bounded `ffuf`-style stage with a user-selected wordlist, strict request/concurrency
-budgets, scope enforcement, and URL/Endpoint assets. After that, continue Phase 2
-with historical URL intelligence (gau/waybackurls) and JavaScript analysis, then
-Phase 3 (a normalized Findings model + a conservative Nuclei baseline).
+Phase 1A–1D, Phase 2A (Katana Web Recon), Phase 2B (native HTTP analysis), and Phase
+2C (ffuf content discovery) are complete. **Historical URL intelligence**
+(gau/waybackurls — collecting archived URLs as clearly-distinguished observations) is
+the next breadth step, followed by JavaScript analysis, then Phase 3 (a normalized
+Findings model + a conservative Nuclei baseline).

@@ -54,7 +54,12 @@ fn dns_recon_is_useful_without_external_tools() {
         .unwrap();
 
     let chain = engine
-        .start(workspace.id, target.id, ChainKind::DnsRecon)
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::DnsRecon,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace.id);
 

@@ -1,0 +1,7 @@
+# small content-discovery wordlist (synthetic)
+admin
+login
+api
+secret
+
+robots.txt

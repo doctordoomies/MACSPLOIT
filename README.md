@@ -90,6 +90,17 @@ flowchart LR
 
 The provider is `ACTIVE_LOW_IMPACT` and deliberately bounded. It accepts only HTTP/HTTPS targets, rejects credential-bearing URLs, keeps TLS validation enabled, caps response bodies at **256 KiB**, follows redirects itself, and scope-checks every redirect hop before continuing. Cookie **security attributes** are retained; cookie values are not persisted. The result enriches the Website asset through observations and hashed evidence rather than inventing asset types for individual headers or cookies.
 
+### Content Discovery
+
+Select an in-scope HTTP(S) URL, choose a wordlist, and explicitly launch bounded path discovery with **ffuf**.
+
+```mermaid
+flowchart LR
+    U["Selected HTTP(S) URL"] -->|ffuf + chosen wordlist| P["Same-host URL assets · has_endpoint"]
+```
+
+`ACTIVE` and bounded: the analyst picks the wordlist (nothing bundled or downloaded), which the Rust core validates (≤ 500 entries, ≤ 1 MiB, ≤ 512-byte lines; `#` comments and blanks ignored). ffuf runs with a fixed profile (top status codes, 10 threads, 10 req/s, 5 s timeout, **no redirect following, no recursion**). Accepted results become same-host `URL` assets with `has_endpoint` links; 404s create no asset; raw output is hashed evidence and the stored command redacts the local wordlist path to its file name.
+
 ### Synthetic Recon
 
 Exercise the complete orchestration path using invented subdomains, documentation IP addresses, ports, and services. No scanner installation, DNS, or network requests are needed. [Try the offline walkthrough below.](#quick-start)
@@ -140,6 +151,7 @@ HTTPX currently builds probe URLs from IP-based service identities. A path such 
 | **HTTPX** | HTTP probing and basic technology detection | External | `ACTIVE_LOW_IMPACT` | Websites and technologies |
 | **Katana** | Bounded same-host crawling | External | `ACTIVE_LOW_IMPACT` | URLs; `has_endpoint` links |
 | **Native HTTP Analysis** | HTTP/security metadata analysis | Built in | `ACTIVE_LOW_IMPACT` | Website observations; headers, cookie flags, CORS, redirects, robots evidence |
+| **ffuf** | Bounded path/content discovery | External | `ACTIVE` | Same-host URL assets; `has_endpoint` links |
 
 The app surfaces provider availability, version, and risk. Stages select capabilities through an internal provider contract; SwiftUI never parses scanner output. Native HTTP Analysis is built in and runs independently of Katana. [Provider details](docs/providers.md) · [Installation](#external-providers)
 
@@ -275,6 +287,7 @@ Install only the tools needed for the workflows you intend to run. MACSPLOIT det
 | Domain Recon | `brew install subfinder nmap httpx` | [Subfinder](https://formulae.brew.sh/formula/subfinder) · [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
 | Web Recon | `brew install katana` | [Katana](https://formulae.brew.sh/formula/katana) |
 | Web Analysis | None — built in | Native provider |
+| Content Discovery | `brew install ffuf` | [ffuf](https://formulae.brew.sh/formula/ffuf) |
 
 HTTPX here is **ProjectDiscovery's CLI**, not the Python HTTP client. Formula availability and OS support follow Homebrew's current support policy. For executable discovery and explicit path overrides, see [providers](docs/providers.md).
 
@@ -290,9 +303,10 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | Domain Recon providers | **BETA** | Subfinder → DNS → Nmap → HTTPX |
 | Web Recon | **BETA** | Bounded Katana crawling |
 | Native HTTP Analysis | **BETA** | Built-in headers, cookie flags, CORS, redirects, and robots analysis |
+| Content Discovery | **BETA** | Bounded ffuf path discovery with a user-selected wordlist |
 | Technology detection | **BETA** | Basic HTTPX fingerprints |
 | JavaScript analysis | **PLANNED** | Deeper web analysis |
-| Content discovery and historical URLs | **PLANNED** | Explicit ffuf stage; historical URL collection |
+| Historical URLs and JavaScript analysis | **PLANNED** | gau/waybackurls collection; bounded static JS analysis |
 | API discovery and screenshots | **PLANNED** | Web reconnaissance expansion |
 | TLS, vulnerability assessment, findings | **PLANNED** | Conservative detection and evidence-backed correlation |
 | OSINT | **PLANNED** | Username, email, phone, and domain research |
@@ -301,7 +315,7 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | Source/secret analysis, cloud/containers | **FUTURE** | Outside the current implementation |
 | Authorized lab, hardware, wireless | **FUTURE** | Separate from normal reconnaissance |
 
-The next documented breadth step is **Phase 2C — explicit, bounded Content Discovery**, followed by historical URL intelligence and JavaScript analysis. The broader sequence then continues through **vulnerability assessment → OSINT → reporting → provider SDK**. These are development directions, not release dates. See the [full roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md).
+The next documented breadth step is **historical URL intelligence** (gau/waybackurls), followed by JavaScript analysis. The broader sequence then continues through **vulnerability assessment → OSINT → reporting → provider SDK**. These are development directions, not release dates. See the [full roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md).
 
 ## Contributing
 

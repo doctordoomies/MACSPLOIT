@@ -45,7 +45,12 @@ fn complete_vertical_slice_persists_graph_events_evidence_and_restart() {
     let (temp, engine, workspace, target) = setup();
     let cursor = engine.store.snapshot(workspace).unwrap().last_sequence;
     let chain = engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     assert_eq!(snapshot.chains[0].id, chain.id);
@@ -136,7 +141,12 @@ fn complete_vertical_slice_persists_graph_events_evidence_and_restart() {
 fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
     let (_temp, engine, workspace, target) = setup();
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let first = wait(&engine, workspace);
     let api = first
@@ -153,7 +163,12 @@ fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
         3
     );
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let second = wait(&engine, workspace);
     assert_eq!(second.assets.len(), 11);
@@ -176,7 +191,12 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
     let target = engine.store.add_target(denied.id, "example.test").unwrap();
     assert_eq!(
         engine
-            .start(denied.id, target.id, ChainKind::Synthetic)
+            .start(
+                denied.id,
+                target.id,
+                ChainKind::Synthetic,
+                serde_json::Value::Null
+            )
             .unwrap_err()
             .code,
         "ScopeViolation"
@@ -187,7 +207,12 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
         .unwrap();
     let target = engine.store.add_target(limited.id, "example.test").unwrap();
     engine
-        .start(limited.id, target.id, ChainKind::Synthetic)
+        .start(
+            limited.id,
+            target.id,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, limited.id);
     assert_eq!(snapshot.assets.len(), 3); // passive out-of-scope subdomains remain visible
@@ -206,7 +231,12 @@ fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
 fn evidence_tampering_and_path_traversal_are_rejected() {
     let (_temp, engine, workspace, target) = setup();
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     let evidence = &snapshot.evidence[0];
@@ -246,7 +276,12 @@ fn evidence_tampering_and_path_traversal_are_rejected() {
 fn discovery_transaction_rolls_back_asset_provenance_and_events() {
     let (_temp, engine, workspace, target) = setup();
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let before = wait(&engine, workspace);
     let discoveries = vec![
@@ -299,11 +334,21 @@ fn cancellation_is_durable_and_global_concurrency_is_bounded() {
         .add_target(workspace.id, "example.test")
         .unwrap();
     let run = engine
-        .start(workspace.id, target.id, ChainKind::Synthetic)
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     assert_eq!(
         engine
-            .start(workspace.id, target.id, ChainKind::Synthetic)
+            .start(
+                workspace.id,
+                target.id,
+                ChainKind::Synthetic,
+                serde_json::Value::Null
+            )
             .unwrap_err()
             .code,
         "CoreBusy"
@@ -338,13 +383,23 @@ fn workspace_isolation_and_exclusive_helper_ownership() {
         .unwrap();
     assert_eq!(
         engine
-            .start(other.id, target, ChainKind::Synthetic)
+            .start(
+                other.id,
+                target,
+                ChainKind::Synthetic,
+                serde_json::Value::Null
+            )
             .unwrap_err()
             .code,
         "InvalidTarget"
     );
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     assert!(engine
@@ -368,7 +423,12 @@ fn workspace_isolation_and_exclusive_helper_ownership() {
 fn interrupted_run_is_recovered_without_rescanning() {
     let (temp, engine, workspace, target) = setup();
     engine
-        .start(workspace, target, ChainKind::Synthetic)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     let conn = engine.store.connect(workspace).unwrap();

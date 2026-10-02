@@ -1,16 +1,31 @@
 # Recon Chain execution
 
-Status: **IMPLEMENTED** five chain presets — offline **Synthetic Recon**; built-in
+Status: **IMPLEMENTED** six chain presets — offline **Synthetic Recon**; built-in
 **DNS Recon**; the full **Domain Recon** (Subfinder → DNS → Nmap → HTTPX);
-**Web Recon** (Katana crawl); and **Web Analysis** (native HTTP analysis).
+**Web Recon** (Katana crawl); **Web Analysis** (native HTTP analysis); and
+**Content Discovery** (bounded ffuf path discovery).
 
 A chain requests provider capabilities and feeds scoped discoveries into later
 stages. It is not a shell sequence of installed tools. A stage may pin an exact
 provider so a capability offered by more than one provider is unambiguous. The
 stage plans are fixed presets; a general dependency-graph scheduler remains planned.
 `start_chain` selects the preset by a `chain` argument (`synthetic` by default, or
-`dns_recon`, `domain_recon`, `web_recon`, `web_analysis`); the analyst chooses
-and launches a chain explicitly — adding a target never starts one. Workspace scope
+`dns_recon`, `domain_recon`, `web_recon`, `web_analysis`, `content_discovery`); the
+analyst chooses and launches a chain explicitly — adding a target never starts one.
+
+## Content Discovery (Phase 2C)
+
+An explicit, bounded path-discovery chain over an in-scope HTTP(S) URL using ffuf
+and a wordlist the analyst selects. Stages: Target Validation → Wordlist Validation →
+Content Discovery (`ffuf`) → Persistence → Completion. Risk is **ACTIVE**; it never
+runs as part of another chain. The wordlist path is passed as a typed `start_chain`
+option (`{"wordlist_path": ...}`) and validated in the core (≤ 500 entries, ≤ 1 MiB,
+≤ 512-byte lines, UTF-8; blanks and `#` comments ignored). ffuf runs with a bounded,
+deterministic profile (top status codes, 10 threads, 10 req/s, 5 s per request, no
+redirects, no recursion). Accepted results become same-host `URL` assets with
+`has_endpoint` relationships from the root; 404s create no asset; raw output is hashed
+evidence, and the persisted command redacts the local wordlist path to its file name.
+Offline tests use a fake ffuf and a fixture wordlist — no network. Workspace scope
 can be edited after creation, but the Rust core still authorizes the target at chain
 creation and re-checks scoped assets before provider dispatch.
 
