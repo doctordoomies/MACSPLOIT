@@ -35,6 +35,24 @@ class IdentityPolicyTests(unittest.TestCase):
         for ref in ("refs/heads/main", "refs/heads/feature/dependabot/test", "refs/remotes/other/dependabot/test", "refs/tags/test"):
             self.assertFalse(identities.identity_allowed(ref, identities.DEPENDABOT, identities.GITHUB))
 
+    def test_reviewed_dependabot_commit_is_allowed_after_merge(self):
+        reviewed_sha = "b0b591ac08d5e2f342ab60499418e2c774b6947b"
+        reviewed = {reviewed_sha}
+        for ref in ("refs/heads/main", "refs/remotes/origin/main", "refs/tags/v0.1-test"):
+            self.assertTrue(identities.identity_allowed(
+                ref, identities.DEPENDABOT, identities.GITHUB,
+                reviewed_sha, reviewed))
+            self.assertFalse(identities.identity_allowed(
+                ref, identities.DEPENDABOT, identities.GITHUB,
+                "0" * 40, reviewed))
+            self.assertFalse(identities.identity_allowed(
+                ref, ("dependabot[bot]", "other@example.test"), identities.GITHUB,
+                reviewed_sha, reviewed))
+
+    def test_reviewed_automation_manifest_is_strict(self):
+        reviewed = identities.load_reviewed_automation_commits()
+        self.assertIn("b0b591ac08d5e2f342ab60499418e2c774b6947b", reviewed)
+
     def test_bot_name_does_not_trust_other_email_or_human_committer(self):
         ref = "refs/heads/dependabot/cargo/test"
         for author, committer in (
