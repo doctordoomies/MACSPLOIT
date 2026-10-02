@@ -5,6 +5,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     WorkspaceCreated,
+    WorkspaceScopeUpdated,
     TargetAdded,
     AssetDiscovered,
     RelationshipCreated,
