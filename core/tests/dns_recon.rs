@@ -71,7 +71,9 @@ fn dns_recon_is_useful_without_external_tools() {
         .iter()
         .filter(|stage| stage.chain_id == chain.id)
         .collect();
-    assert!(stages.iter().all(|stage| stage.status == TaskStatus::Completed));
+    assert!(stages
+        .iter()
+        .all(|stage| stage.status == TaskStatus::Completed));
     assert!(stages.iter().any(|stage| {
         stage.name == "DNS Resolution" && stage.provider_id.as_deref() == Some("native_dns")
     }));
@@ -80,8 +82,7 @@ fn dns_recon_is_useful_without_external_tools() {
         .assets
         .iter()
         .find(|asset| {
-            asset.asset_type == AssetType::IPAddress
-                && asset.canonical_identity == "192.0.2.20"
+            asset.asset_type == AssetType::IPAddress && asset.canonical_identity == "192.0.2.20"
         })
         .expect("DNS Recon should persist the resolved IP");
     assert_eq!(ip.metadata["in_scope"], serde_json::json!(true));
