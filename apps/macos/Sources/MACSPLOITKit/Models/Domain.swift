@@ -85,6 +85,7 @@ public struct CoreEvent: Codable, Identifiable, Sendable, Equatable {
     public var summary: String {
         switch eventType {
         case "WorkspaceCreated": return "Workspace created: \(payload["name"].string ?? "")"
+        case "WorkspaceScopeUpdated": return "Workspace scope updated"
         case "TargetAdded": return "Target added: \(payload["value"].string ?? "")"
         case "AssetDiscovered": return "Discovered \(payload["value"].string ?? "asset")"
         case "ProviderStarted": return "Provider started: \(payload["provider"].string ?? "")"
