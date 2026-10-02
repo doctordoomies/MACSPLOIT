@@ -12,7 +12,7 @@ import Testing
         let client = CoreClient(transport: transport)
         defer { transport.shutdown() }
         let hello = try await client.hello()
-        #expect(hello.offlineOnly)
+        #expect(!hello.offlineOnly)
         let workspace = try await client.createWorkspace(name: "Swift bridge test", scope: ["example.test", "*.example.test", "192.0.2.0/24"])
         let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
         #expect(target.targetType == "Domain")
