@@ -4,6 +4,11 @@
       "sha": "b0b591ac08d5e2f342ab60499418e2c774b6947b",
       "source": "Dependabot PR #1",
       "reason": "Reviewed actions/checkout v7 dependency update retained in main history after merge."
+    },
+    {
+      "sha": "d3b76dd0d2ee616cb27867e689306ff991a28467",
+      "source": "Dependabot PR #4",
+      "reason": "Reviewed roxmltree 0.21.1 dependency update retained in main history after merge."
     }
   ]
 }
