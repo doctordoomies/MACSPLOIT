@@ -101,7 +101,12 @@ fn domain_recon_resolves_subdomains_end_to_end_and_persists() {
     let (temp, engine, workspace, target) =
         engine_with(tools_with_subfinder(fake_subfinder()), fake_resolver());
     let chain = engine
-        .start(workspace, target, ChainKind::DomainRecon)
+        .start(
+            workspace,
+            target,
+            ChainKind::DomainRecon,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
 
@@ -331,7 +336,12 @@ fn domain_recon_handles_many_to_many_and_partial_dns() {
     let (_temp, engine, workspace, target) =
         engine_with(tools_with_subfinder(fake_subfinder()), resolver);
     engine
-        .start(workspace, target, ChainKind::DomainRecon)
+        .start(
+            workspace,
+            target,
+            ChainKind::DomainRecon,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
@@ -365,7 +375,12 @@ fn domain_recon_fails_cleanly_when_subfinder_is_missing() {
         fake_resolver(),
     );
     engine
-        .start(workspace, target, ChainKind::DomainRecon)
+        .start(
+            workspace,
+            target,
+            ChainKind::DomainRecon,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace);
     let chain = &snapshot.chains[0];
@@ -384,7 +399,12 @@ fn domain_recon_requires_target_in_scope() {
         engine_with(tools_with_subfinder(fake_subfinder()), fake_resolver());
     let outside = engine.store.add_target(workspace, "other.test").unwrap();
     let error = engine
-        .start(workspace, outside.id, ChainKind::DomainRecon)
+        .start(
+            workspace,
+            outside.id,
+            ChainKind::DomainRecon,
+            serde_json::Value::Null,
+        )
         .unwrap_err();
     assert_eq!(error.code, "ScopeViolation");
 }

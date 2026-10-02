@@ -69,7 +69,12 @@ fn web_analysis_runs_natively_end_to_end_and_persists() {
         .unwrap();
 
     engine
-        .start(workspace.id, target.id, ChainKind::WebAnalysis)
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebAnalysis,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace.id);
 
@@ -160,7 +165,12 @@ fn web_analysis_requires_in_scope_url() {
         .add_target(workspace.id, "https://other.test/")
         .unwrap();
     let error = engine
-        .start(workspace.id, outside.id, ChainKind::WebAnalysis)
+        .start(
+            workspace.id,
+            outside.id,
+            ChainKind::WebAnalysis,
+            serde_json::Value::Null,
+        )
         .unwrap_err();
     assert_eq!(error.code, "ScopeViolation");
 }

@@ -60,7 +60,12 @@ fn web_recon_crawls_same_host_and_persists_evidence() {
         .unwrap();
 
     engine
-        .start(workspace.id, target.id, ChainKind::WebRecon)
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebRecon,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let snapshot = wait(&engine, workspace.id);
 
@@ -117,7 +122,12 @@ fn web_recon_requires_url_target() {
         .unwrap();
 
     let error = engine
-        .start(workspace.id, target.id, ChainKind::WebRecon)
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebRecon,
+            serde_json::Value::Null,
+        )
         .unwrap_err();
     assert_eq!(error.code, "InvalidTarget");
 }
