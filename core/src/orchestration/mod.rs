@@ -188,7 +188,10 @@ impl Store {
                 )
             }
             ChainKind::DnsRecon => {
-                if !matches!(target.target_type, TargetType::Domain | TargetType::Hostname) {
+                if !matches!(
+                    target.target_type,
+                    TargetType::Domain | TargetType::Hostname
+                ) {
                     return Err(CoreError::new(
                         "InvalidTarget",
                         "DNS Recon requires a domain or hostname target.",
