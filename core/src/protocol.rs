@@ -27,6 +27,10 @@ pub enum Command {
         name: String,
         scope: Vec<String>,
     },
+    UpdateWorkspaceScope {
+        workspace_id: Id,
+        scope: Vec<String>,
+    },
     AddTarget {
         workspace_id: Id,
         value: String,
@@ -61,6 +65,7 @@ impl Command {
             Self::Hello { .. } => "hello",
             Self::ListWorkspaces { .. } => "list_workspaces",
             Self::CreateWorkspace { .. } => "create_workspace",
+            Self::UpdateWorkspaceScope { .. } => "update_workspace_scope",
             Self::AddTarget { .. } => "add_target",
             Self::Snapshot { .. } => "snapshot",
             Self::EventsAfter { .. } => "events_after",
@@ -111,12 +116,16 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
     let result: Result<Value> = (|| {
         Ok(match request.command {
             Command::Hello {} => {
-                json!({"core_version":env!("CARGO_PKG_VERSION"),"protocol_version":VERSION,"offline_only":true})
+                json!({"core_version":env!("CARGO_PKG_VERSION"),"protocol_version":VERSION,"offline_only":false})
             }
             Command::ListWorkspaces {} => serde_json::to_value(engine.store.list_workspaces()?)?,
             Command::CreateWorkspace { name, scope } => {
                 serde_json::to_value(engine.store.create_workspace(&name, &scope)?)?
             }
+            Command::UpdateWorkspaceScope {
+                workspace_id,
+                scope,
+            } => serde_json::to_value(engine.store.update_workspace_scope(workspace_id, &scope)?)?,
             Command::AddTarget {
                 workspace_id,
                 value,
