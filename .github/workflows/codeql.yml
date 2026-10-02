@@ -1,0 +1,181 @@
+name: CodeQL advanced
+
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # PR/push supersede the same ref; full scans have independent run groups.
+  group: codeql-${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Default setup remains authoritative during PR validation. Owner cutover:
+# docs/ci-performance.md. Set the repository variable to true only after
+# disabling default setup, then immediately dispatch a full advanced scan.
+env:
+  CODEQL_UPLOAD: ${{ vars.MACSPLOIT_CODEQL_ADVANCED == 'true' && 'always' || 'never' }}
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      policy: ${{ steps.paths.outputs.policy }}
+      rust: ${{ steps.paths.outputs.rust }}
+      swift: ${{ steps.paths.outputs.swift }}
+      python: ${{ steps.paths.outputs.python }}
+      actions: ${{ steps.paths.outputs.actions }}
+      full: ${{ steps.paths.outputs.full }}
+      docs: ${{ steps.paths.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        run: python3 scripts/classify_ci_changes.py
+
+  rust:
+    name: CodeQL rust
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:rust
+          upload: ${{ env.CODEQL_UPLOAD }}
+          upload-database: ${{ vars.MACSPLOIT_CODEQL_ADVANCED == 'true' }}
+
+  swift:
+    name: CodeQL swift
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+          build-mode: manual
+      # No compiled Swift cache: the extractor must observe every compilation.
+      # --product includes MACSPLOITKit through the executable's dependency.
+      - name: Build all production Swift for extraction
+        run: |
+          uname -m
+          swift --version
+          ./scripts/swift-command.sh build --product MACSPLOIT
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:swift
+          upload: ${{ env.CODEQL_UPLOAD }}
+          upload-database: ${{ vars.MACSPLOIT_CODEQL_ADVANCED == 'true' }}
+
+  python:
+    name: CodeQL python
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:python
+          upload: ${{ env.CODEQL_UPLOAD }}
+          upload-database: ${{ vars.MACSPLOIT_CODEQL_ADVANCED == 'true' }}
+
+  actions:
+    name: CodeQL actions
+    needs: changes
+    if: needs.changes.outputs.actions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+          build-mode: none
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:actions
+          upload: ${{ env.CODEQL_UPLOAD }}
+          upload-database: ${{ vars.MACSPLOIT_CODEQL_ADVANCED == 'true' }}
+
+  security:
+    name: Security analysis
+    if: always()
+    needs: [changes, rust, swift, python, actions]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce expected analyzer results
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/check_ci_gate.py codeql
+      - name: State upload mode
+        run: |
+          if [ "$CODEQL_UPLOAD" = always ]; then
+            echo 'Advanced CodeQL uploads enabled.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'REHEARSAL: no advanced uploads. Default CodeQL must remain enabled until the owner cutover.' >> "$GITHUB_STEP_SUMMARY"
+          fi
