@@ -1,0 +1,9 @@
+{
+  "reviewed_commits": [
+    {
+      "sha": "b0b591ac08d5e2f342ab60499418e2c774b6947b",
+      "source": "Dependabot PR #1",
+      "reason": "Reviewed actions/checkout v7 dependency update retained in main history after merge."
+    }
+  ]
+}
