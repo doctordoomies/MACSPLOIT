@@ -218,6 +218,48 @@ impl Store {
         self.workspace(id)
     }
 
+    pub fn update_workspace_scope(&self, id: Id, scope: &[String]) -> Result<Workspace> {
+        if scope.len() > 100 {
+            return Err(CoreError::new(
+                "InvalidWorkspace",
+                "A workspace can have at most 100 scope entries.",
+            ));
+        }
+        let mut normalized: Vec<_> = scope
+            .iter()
+            .map(|entry| crate::scope::normalize_entry(entry.trim()))
+            .collect::<Result<_>>()?;
+        normalized.sort();
+        normalized.dedup();
+
+        let mut conn = self.connect(id)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "DELETE FROM scope_entries WHERE workspace_id=?1",
+            [id.to_string()],
+        )?;
+        for entry in &normalized {
+            tx.execute(
+                "INSERT INTO scope_entries VALUES(?1,?2)",
+                params![id.to_string(), entry],
+            )?;
+        }
+        let timestamp = crate::now();
+        tx.execute(
+            "UPDATE workspaces SET updated_at=?1 WHERE id=?2",
+            params![timestamp, id.to_string()],
+        )?;
+        emit(
+            &tx,
+            id,
+            EventType::WorkspaceScopeUpdated,
+            json!({"workspace_id":id,"scope_count":normalized.len()}),
+        )?;
+        audit(&tx, id, "WorkspaceScopeUpdated", id)?;
+        tx.commit()?;
+        self.workspace(id)
+    }
+
     pub fn workspace(&self, id: Id) -> Result<Workspace> {
         workspace(&self.connect(id)?, id)
     }
@@ -447,6 +489,38 @@ mod tests {
         conn.pragma_update(None, "user_version", 999).unwrap();
         assert_eq!(migrate(&mut conn).unwrap_err().code, "MigrationFailure");
     }
+    #[test]
+    fn workspace_scope_can_be_replaced_and_persists() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path()).unwrap();
+        let workspace = store
+            .create_workspace("Editable Scope", &["example.test".into()])
+            .unwrap();
+
+        let updated = store
+            .update_workspace_scope(
+                workspace.id,
+                &[
+                    "EXAMPLE.COM".into(),
+                    "*.example.com".into(),
+                    "192.0.2.1/24".into(),
+                    "example.com".into(),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            updated.scope,
+            vec![
+                "*.example.com".to_string(),
+                "192.0.2.0/24".to_string(),
+                "example.com".to_string()
+            ]
+        );
+
+        let reopened = Store::open(directory.path()).unwrap();
+        assert_eq!(reopened.workspace(workspace.id).unwrap().scope, updated.scope);
+    }
+
     #[test]
     fn workspace_and_targets_survive_reopen() {
         let directory = tempfile::tempdir().unwrap();
