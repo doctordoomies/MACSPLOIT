@@ -10,6 +10,7 @@ pub mod protocol;
 pub mod providers;
 pub mod scope;
 pub mod targets;
+pub mod web;
 
 pub fn now() -> String {
     time::OffsetDateTime::now_utc()

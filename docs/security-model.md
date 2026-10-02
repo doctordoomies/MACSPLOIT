@@ -16,14 +16,21 @@ cannot prove that arbitrary content contains no secret.
 
 ## Implemented boundaries
 
-- Four providers are registered: the offline synthetic provider, Subfinder (passive
-  external tool), native DNS (built-in, ACTIVE_LOW_IMPACT), and Nmap (ACTIVE external
-  tool). The application has no HTTP prober, telemetry, tool installer, or privilege
-  request. Subfinder and Nmap run only when the analyst launches Domain Recon and
-  only if the tool is already installed. Native DNS performs ordinary A/AAAA
-  resolution using the host's own system resolver configuration (never a hardcoded
-  public resolver); there are no third-party DNS/passive-DNS API integrations (no
-  SecurityTrails, Shodan, VirusTotal, etc.).
+- Providers registered: the offline synthetic provider; Subfinder (passive external);
+  native DNS (built-in, ACTIVE_LOW_IMPACT); Nmap (ACTIVE external); HTTPX (ACTIVE_LOW_IMPACT
+  external); Katana (ACTIVE_LOW_IMPACT external); and native HTTP analysis (built-in,
+  ACTIVE_LOW_IMPACT). The application has no telemetry, tool installer, or privilege
+  request. External tools run only when the analyst launches a chain and only if the
+  tool is already installed. Native DNS uses the host's own system resolver config
+  (never a hardcoded public resolver); there are no third-party DNS/passive-DNS API
+  integrations (no SecurityTrails, Shodan, VirusTotal, etc.).
+- Native HTTP analysis (ACTIVE_LOW_IMPACT, built-in) makes ordinary HTTP(S) requests
+  to an explicitly selected in-scope URL only. It restricts schemes to http/https,
+  rejects credential URLs, bounds redirects/body/time, follows redirects manually and
+  **scope-checks every hop** (off-scope redirects are recorded but not followed), and
+  leaves TLS validation enabled (never disabled). It records cookie security **flags
+  only — never cookie values** — and does not fuzz, submit forms, authenticate, or
+  send payloads.
 - Nmap is the only ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

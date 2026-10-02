@@ -1,0 +1,20 @@
+{
+  "https://example.test/": {
+    "status": 200,
+    "headers": {
+      "Server": "nginx",
+      "Content-Type": "text/html",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+      "Content-Security-Policy": "default-src 'self'",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "https://example.test",
+      "Set-Cookie": ["sid=TOPSECRET; Secure; HttpOnly; SameSite=Strict; Path=/", "theme=dark"]
+    },
+    "body": "<html><title>MACSPLOIT Demo</title></html>"
+  },
+  "https://example.test/robots.txt": {
+    "status": 200,
+    "headers": { "Content-Type": "text/plain" },
+    "body": "User-agent: *\nDisallow: /admin\nAllow: /public\nSitemap: https://example.test/sitemap.xml\n"
+  }
+}
