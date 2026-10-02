@@ -83,6 +83,16 @@ GitHub cache ref isolation applies. This avoids writing a cache for every PR and
 keeps Linux/macOS/compiler artifacts separate. Any future registry-only/no-target
 switch should compare cold/warm timings on the same runner and compiler first.
 
+A local macOS arm64 comparison (same source and compiler, Clippy followed by all
+Rust tests, 2026-10-02) measured **8.01s warm target**, **16.14s registry-only**
+(fresh target directory), and **20.01s no-cache** (fresh target and Cargo home).
+These local figures exclude GitHub cache transfer/runner queue and are not hosted
+speedup claims. They show that dropping target/registry reuse adds real compilation
+and download work; the PR's cold Ubuntu run supplies the portability baseline.
+Incremental helper build measured **3.87s**, Swift production build **0.71s**.
+The existing hosted app build/packaging step was only **6–8s**. No skip mode or
+Swift artifact cache is justified by those measurements.
+
 `build-core.sh` is deliberately retained in both testing and packaging. Cargo's
 incremental freshness check is cheap and prevents packaging a stale helper. There
 is no skip-build switch. Repeated commands alone are not evidence of costly

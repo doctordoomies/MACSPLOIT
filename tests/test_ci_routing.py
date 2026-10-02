@@ -69,6 +69,8 @@ class RoutingTests(unittest.TestCase):
         for event in ['schedule', 'workflow_dispatch', 'unknown']:
             self.assertEqual(router.from_event(event, {}, ''), router.everything())
         self.assertEqual(router.from_event('push', {}, 'refs/heads/release/public-launch'), router.everything())
+        for event in (None, [], 'invalid'):
+            self.assertEqual(router.from_event('push', event, 'refs/heads/main'), router.everything())
 
     def test_real_git_events_rename_delete_modes_and_missing_base(self):
         with tempfile.TemporaryDirectory() as directory:

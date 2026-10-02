@@ -64,6 +64,8 @@ def git(*args):
 
 
 def from_event(event_name, event, ref):
+    if not isinstance(event, dict) or not isinstance(ref, str):
+        return everything()
     if event_name in ('workflow_dispatch', 'schedule') or ref.startswith('refs/heads/release/'):
         return everything()
     try:
