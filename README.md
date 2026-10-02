@@ -21,7 +21,7 @@
 
 ## Overview
 
-MACSPLOIT is a native macOS security workbench that turns separate reconnaissance tools into **one persistent, scope-aware asset and evidence system**. Discover subdomains, resolve addresses, identify services, probe websites, and crawl URLs. Inspect the relationships and the provider output behind each observation in the same workspace.
+MACSPLOIT is a native macOS security workbench that turns separate reconnaissance tools into **one persistent, scope-aware asset and evidence system**. Discover subdomains, resolve addresses, identify services, probe websites, crawl URLs, and inspect HTTP security metadata. Inspect the relationships and the provider output behind each observation in the same workspace.
 
 **Provider output is not the product.** A directory of Subfinder results, Nmap XML, HTTPX JSON, screenshots, and notes still leaves the analyst to reconstruct what belongs together. MACSPLOIT gives structured discoveries a shared model:
 
@@ -41,7 +41,7 @@ The app runs locally, with no telemetry or hosted assessment backend. Real provi
 
 ## Workflows
 
-Three Recon modes are available today. Each uses the same core orchestration, evidence, and persistence system.
+Four analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system.
 
 ### Domain Recon
 
@@ -68,11 +68,22 @@ flowchart LR
 
 Katana runs in standard, non-headless mode: depth **2**, a **20-second** crawl budget, a **5-second** request timeout, and bounded response/output sizes. Automatic form filling, authentication flows, and JavaScript crawling are not enabled. The parser accepts valid same-host URLs and drops duplicates and external-host results.
 
+### Web Analysis
+
+Select an explicitly in-scope HTTP(S) URL and run the built-in **Native HTTP Analysis** provider. It does not require Katana or another external HTTP-analysis executable.
+
+```mermaid
+flowchart LR
+    U["Selected HTTP(S) URL"] -->|Native HTTP Analysis| H["Headers · cookie flags · CORS · redirects · robots.txt"]
+```
+
+The provider is `ACTIVE_LOW_IMPACT` and deliberately bounded. It accepts only HTTP/HTTPS targets, rejects credential-bearing URLs, keeps TLS validation enabled, caps response bodies at **256 KiB**, follows redirects itself, and scope-checks every redirect hop before continuing. Cookie **security attributes** are retained; cookie values are not persisted. The result enriches the Website asset through observations and hashed evidence rather than inventing asset types for individual headers or cookies.
+
 ### Synthetic Recon
 
 Exercise the complete orchestration path using invented subdomains, documentation IP addresses, ports, and services. No scanner installation, DNS, or network requests are needed. [Try the offline walkthrough below.](#quick-start)
 
-All three workflows feed the **asset graph, evidence, observations, and durable events**, persisted in the local workspace and presented in SwiftUI. See [Recon Chains](docs/recon-chain.md) for stage behavior and failure handling.
+All four modes feed the **asset graph, evidence, observations, and durable events**, persisted in the local workspace and presented in SwiftUI. See [Recon Chains](docs/recon-chain.md) for stage behavior and failure handling.
 
 ## Assets with a history
 
@@ -101,10 +112,11 @@ example.test
             └─ HTTPX → https://192.0.2.42:443 → technology observations
 
 Explicitly add/select https://192.0.2.42:443 as an in-scope URL target:
-  └─ Web Recon / Katana → https://192.0.2.42:443/swagger.json
+  ├─ Web Recon / Katana → https://192.0.2.42:443/swagger.json
+  └─ Web Analysis / Native HTTP → headers · cookie flags · CORS · redirects · robots.txt
 ```
 
-HTTPX currently builds probe URLs from IP-based service identities. A path such as `/swagger.json` is only discovered if the crawl actually returns it. Domain relationships and each run's evidence remain in the workspace; starting Web Recon is an analyst action, not an automatic cross-chain handoff.
+HTTPX currently builds probe URLs from IP-based service identities. A path such as `/swagger.json` is only discovered if the crawl actually returns it. Domain relationships and each run's evidence remain in the workspace; starting Web Recon or Web Analysis is an analyst action, not an automatic cross-chain handoff.
 
 ## Providers
 
@@ -116,8 +128,9 @@ HTTPX currently builds probe URLs from IP-based service identities. A path such 
 | **Nmap** | Port/service discovery | External | `ACTIVE` | Ports and services; `exposes` / `serves` links |
 | **HTTPX** | HTTP probing and basic technology detection | External | `ACTIVE_LOW_IMPACT` | Websites and technologies |
 | **Katana** | Bounded same-host crawling | External | `ACTIVE_LOW_IMPACT` | URLs; `has_endpoint` links |
+| **Native HTTP Analysis** | HTTP/security metadata analysis | Built in | `ACTIVE_LOW_IMPACT` | Website observations; headers, cookie flags, CORS, redirects, robots evidence |
 
-The app surfaces provider availability, version, and risk. Stages select capabilities through an internal provider contract; SwiftUI never parses scanner output. Native HTTP Analysis is **planned on `main`**. [Provider details](docs/providers.md) · [Installation](#external-providers)
+The app surfaces provider availability, version, and risk. Stages select capabilities through an internal provider contract; SwiftUI never parses scanner output. Native HTTP Analysis is built in and runs independently of Katana. [Provider details](docs/providers.md) · [Installation](#external-providers)
 
 ## Evidence and provenance
 
@@ -145,7 +158,7 @@ flowchart TD
     CORE --> DB[(Per-workspace SQLite)]
     CORE --> FILES[Local evidence files]
     CORE --> PROVIDERS[Provider registry]
-    PROVIDERS --> N[Native DNS]
+    PROVIDERS --> N[Built-in native providers<br/>DNS · HTTP Analysis]
     PROVIDERS --> X[Supervised external tools]
     PROVIDERS --> S[Offline synthetic provider]
 ```
@@ -231,12 +244,13 @@ Workspace databases and evidence default to `~/Library/Application Support/MACSP
 
 ### External providers
 
-Install only the tools needed for the workflows you intend to run. MACSPLOIT detects providers but **does not silently install them**. Synthetic Recon and Native DNS require nothing extra.
+Install only the tools needed for the workflows you intend to run. MACSPLOIT detects providers but **does not silently install them**. Synthetic Recon, Native DNS, and Native HTTP Analysis require nothing extra.
 
 | Workflow | Optional installation commands | Homebrew formula reference |
 | --- | --- | --- |
 | Domain Recon | `brew install subfinder nmap httpx` | [Subfinder](https://formulae.brew.sh/formula/subfinder) · [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
 | Web Recon | `brew install katana` | [Katana](https://formulae.brew.sh/formula/katana) |
+| Web Analysis | None — built in | Native provider |
 
 HTTPX here is **ProjectDiscovery's CLI**, not the Python HTTP client. Formula availability and OS support follow Homebrew's current support policy. For executable discovery and explicit path overrides, see [providers](docs/providers.md).
 
@@ -250,8 +264,9 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | Synthetic Recon | **STABLE** | Full offline demonstration |
 | Domain Recon providers | **BETA** | Subfinder → DNS → Nmap → HTTPX |
 | Web Recon | **BETA** | Bounded Katana crawling |
+| Native HTTP Analysis | **BETA** | Built-in headers, cookie flags, CORS, redirects, and robots analysis |
 | Technology detection | **BETA** | Basic HTTPX fingerprints |
-| Native HTTP and JavaScript analysis | **PLANNED** | Deeper web analysis |
+| JavaScript analysis | **PLANNED** | Deeper web analysis |
 | Content discovery and historical URLs | **PLANNED** | Explicit ffuf stage; historical URL collection |
 | API discovery and screenshots | **PLANNED** | Web reconnaissance expansion |
 | TLS, vulnerability assessment, findings | **PLANNED** | Conservative detection and evidence-backed correlation |
@@ -261,7 +276,7 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | Source/secret analysis, cloud/containers | **FUTURE** | Outside the current implementation |
 | Authorized lab, hardware, wireless | **FUTURE** | Separate from normal reconnaissance |
 
-The next documented work is **native HTTP analyzers → JavaScript analysis and historical URLs**, with content discovery kept explicit. The broader sequence continues through **vulnerability assessment → OSINT → reporting → provider SDK**. These are development directions, not release dates. See the [full roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md).
+The next documented breadth step is **Phase 2C — explicit, bounded Content Discovery**, followed by historical URL intelligence and JavaScript analysis. The broader sequence then continues through **vulnerability assessment → OSINT → reporting → provider SDK**. These are development directions, not release dates. See the [full roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md).
 
 ## Contributing
 
