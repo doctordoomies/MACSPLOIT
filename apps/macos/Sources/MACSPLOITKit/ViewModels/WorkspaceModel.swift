@@ -40,8 +40,7 @@ public final class WorkspaceModel: ObservableObject {
 
     public func boot() async {
         do {
-            let hello = try await client.hello()
-            guard hello.offlineOnly else { throw CoreFailure(code: "ProtocolMismatch", message: "This app requires the offline Phase 0 core.") }
+            _ = try await client.hello()
             workspaces = try await client.listWorkspaces()
             providerStatuses = (try? await client.listProviders()) ?? []
             isConnected = true; connectionError = nil
@@ -96,14 +95,53 @@ public final class WorkspaceModel: ObservableObject {
     }
 
     public func addTarget() async {
-        guard let id = selectedWorkspaceId else { return }
+        let value = targetInput
+        if await addTarget(value: value) {
+            targetInput = ""
+        }
+    }
+
+    @discardableResult
+    public func addTarget(value: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
         isBusy = true; defer { isBusy = false }
         do {
-            let target = try await client.addTarget(workspace: id, value: targetInput)
-            guard selectedWorkspaceId == id else { return }
-            selectedTargetId = target.id; lastTargetType = target.targetType; targetInput = ""
+            let target = try await client.addTarget(workspace: id, value: value)
+            guard selectedWorkspaceId == id else { return false }
+            selectedTargetId = target.id
+            lastTargetType = target.targetType
             try await refresh()
-        } catch { errorMessage = error.localizedDescription }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    public func updateScope(scopeText: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        let entries = scopeText
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        isBusy = true; defer { isBusy = false }
+        do {
+            let workspace = try await client.updateWorkspaceScope(workspace: id, scope: entries)
+            guard selectedWorkspaceId == id else { return false }
+            if let index = workspaces.firstIndex(where: { $0.id == id }) {
+                workspaces[index] = workspace
+            }
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    public func refreshProviders() async {
+        guard isConnected else { return }
+        providerStatuses = (try? await client.listProviders()) ?? providerStatuses
     }
 
     public func runRecon(kind: String = "synthetic") async {
