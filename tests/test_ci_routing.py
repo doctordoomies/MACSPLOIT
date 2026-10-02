@@ -23,7 +23,7 @@ gate = load('check_ci_gate')
 
 class RoutingTests(unittest.TestCase):
     def test_docs_no_build_or_language_scan_for_pr_and_main(self):
-        for path in ['README.md', 'docs/architecture.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/hero.png']:
+        for path in ['README.md', 'docs/architecture.md', 'CONTRIBUTING.md', 'LICENSE', 'assets/hero.png', 'core/README.md', 'apps/macos/README.md']:
             for mode in ('pr', 'push'):
                 result = router.classify([path], mode)
                 self.assertTrue(result['policy'])
@@ -51,6 +51,13 @@ class RoutingTests(unittest.TestCase):
                      '.github/workflows/ci.yml', '.github/workflows/codeql.yml', '.github/actions/test/action.yml',
                      'scripts/test.sh', 'scripts/test-swift.sh', 'scripts/classify_ci_changes.py', 'scripts/check_ci_gate.py', 'tests/test_ci_routing.py']:
             self.assertEqual(router.classify([path]), router.everything(), path)
+
+    def test_language_sources_in_other_component_trees_still_scan(self):
+        self.assertTrue(router.classify(['core/build_helper.py'])['python'])
+        result = router.classify(['core/bridge.swift'])
+        self.assertTrue(result['rust'] and result['swift'] and result['full'])
+        result = router.classify(['apps/macos/native.rs'])
+        self.assertTrue(result['rust'] and result['swift'] and result['full'])
 
     def test_policy_and_python(self):
         for path in ['scripts/check_repository.py', 'scripts/check_identities.py', 'scripts/reviewed-automation-commits.json',

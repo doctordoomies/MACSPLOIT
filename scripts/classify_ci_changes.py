@@ -15,7 +15,8 @@ import sys
 
 KEYS = ('policy', 'rust', 'swift', 'python', 'actions', 'full', 'docs')
 DOC_FILES = {'README.md', 'AGENTS.md', 'CHANGELOG.md', 'CONTRIBUTING.md',
-             'CODE_OF_CONDUCT.md', 'SUPPORT.md', 'SECURITY.md', 'NOTICE', 'LICENSE'}
+             'CODE_OF_CONDUCT.md', 'SUPPORT.md', 'SECURITY.md', 'NOTICE', 'LICENSE',
+             'core/README.md', 'apps/macos/README.md'}
 POLICY_DATA = {'scripts/reviewed-assets.json', 'scripts/reviewed-automation-commits.json',
                'scripts/release-policy.json', '.gitignore'}
 
@@ -44,6 +45,10 @@ def classify(paths, mode='pr', unsafe_paths=()):
             path.startswith('assets/') and p.suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp'}
         ) or path in {'.github/PULL_REQUEST_TEMPLATE.md', '.github/ISSUE_TEMPLATE/README.md'}:
             continue
+        # A source file in a new location must not lose its language scan.
+        for suffix, language in (('.rs', 'rust'), ('.swift', 'swift'), ('.py', 'python')):
+            if p.suffix == suffix:
+                result[language] = True
         if path.startswith(('core/', '.cargo/')) or path in {'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml', 'scripts/build-core.sh'}:
             result['rust'] = True
         elif path.startswith('apps/macos/') or path in {'scripts/build-macos.sh', 'scripts/swift-command.sh', 'scripts/run.sh'}:
