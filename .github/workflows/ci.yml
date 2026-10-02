@@ -10,222 +10,189 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      full: ${{ steps.paths.outputs.full }}
+      policy: ${{ steps.paths.outputs.policy }}
       rust: ${{ steps.paths.outputs.rust }}
       swift: ${{ steps.paths.outputs.swift }}
+      python: ${{ steps.paths.outputs.python }}
+      actions: ${{ steps.paths.outputs.actions }}
+      full: ${{ steps.paths.outputs.full }}
+      docs: ${{ steps.paths.outputs.docs }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - name: Classify changed paths
-        id: paths
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Pushes to main/release branches and manual runs get the complete
-          # integration suite. Pull requests use path-aware checks.
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-            echo "swift=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.event.pull_request.head.sha }}"
-          changed="$(git diff --name-only "$base" "$head")"
-          printf '%s\n' "$changed"
-
-          rust=false
-          swift=false
-
-          if grep -Eq '^(core/|Cargo\.toml$|Cargo\.lock$|scripts/build-core\.sh$)' <<<"$changed"; then
-            rust=true
-          fi
-
-          if grep -Eq '^(apps/macos/|scripts/swift-command\.sh$|scripts/build-macos\.sh$)' <<<"$changed"; then
-            swift=true
-          fi
-
-          # Integration or CI orchestration changes deliberately exercise both
-          # code paths once.
-          if grep -Eq '^(scripts/test\.sh$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
-            rust=true
-            swift=true
-          fi
-
-          echo "full=false" >> "$GITHUB_OUTPUT"
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
-          echo "swift=$swift" >> "$GITHUB_OUTPUT"
+          persist-credentials: false
+      - id: paths
+        run: python3 scripts/classify_ci_changes.py
 
   policy:
     name: Repository policy
     needs: changes
-    if: needs.changes.outputs.full != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout full history
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - name: Policy unit tests
-        run: |
-          python3 -m unittest tests.test_repository_policy tests.test_identity_policy -v
-
-      - name: Full-history repository audit
+          persist-credentials: false
+      - name: Policy and routing tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Full-history repository and identity audits
         run: |
           python3 scripts/check_repository.py --all-history
           python3 scripts/check_identities.py
 
   rust:
-    name: Rust checks
+    name: Rust checks (Linux)
     needs: changes
-    if: needs.changes.outputs.full != 'true' && needs.changes.outputs.rust == 'true'
-    runs-on: macos-15
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compiler identity
+        id: compiler
+        shell: bash
+        run: echo "id=$(rustc -vV | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
-
-      - name: Rust format check
-        run: cargo fmt --all -- --check
-
-      - name: Rust clippy
+          key: cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.id }}-${{ hashFiles('Cargo.lock') }}
+      - name: Rust format, Clippy, and complete offline suite
         run: |
-          rustup component add clippy
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
-
-      - name: Rust tests
-        run: cargo test --locked --workspace
+          cargo test --locked --workspace
+      # PRs only read caches. Save only successful trusted main builds.
+      - name: Save Cargo cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   swift:
     name: Swift checks
     needs: changes
-    if: needs.changes.outputs.full != 'true' && needs.changes.outputs.swift == 'true'
+    if: needs.changes.outputs.swift == 'true' && needs.changes.outputs.full != 'true'
     runs-on: macos-15
+    timeout-minutes: 25
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compiler identity
+        id: compiler
+        shell: bash
+        run: echo "id=$(rustc -vV | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
-
-      - name: Build core helper
-        run: ./scripts/build-core.sh
-
-      - name: Swift tests (offline providers)
-        env:
-          MACSPLOIT_CORE_BINARY: ${{ github.workspace }}/target/debug/macsploit-core
-          MACSPLOIT_SUBFINDER: ${{ github.workspace }}/fixtures/fake-subfinder.sh
-          MACSPLOIT_DNS_FAKE: api.example.test=192.0.2.10;dev.example.test=192.0.2.11;auth.example.test=192.0.2.12
-          MACSPLOIT_NMAP: ${{ github.workspace }}/fixtures/fake-nmap.sh
-          MACSPLOIT_HTTPX: ${{ github.workspace }}/fixtures/fake-httpx.sh
-        run: ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing
-
-      - name: Build macOS app (ad-hoc signed)
+          key: cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.id }}-${{ hashFiles('Cargo.lock') }}
+      - name: Swift tests with offline core bridge
+        run: ./scripts/test-swift.sh
+      - name: Build and verify signed app
         run: ./scripts/build-macos.sh
+      # PRs only read caches. Save only successful trusted main builds.
+      - name: Save Cargo cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   full:
-    name: Full integration suite
+    name: Full integration suite (macOS)
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: macos-15
+    timeout-minutes: 35
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
-      - name: Checkout full history
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+          persist-credentials: false
+      - name: Compiler identity
+        id: compiler
+        shell: bash
+        run: echo "id=$(rustc -vV | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: macos-cargo-${{ hashFiles('Cargo.lock') }}
-
-      - name: Show toolchain versions
+          key: cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.id }}-${{ hashFiles('Cargo.lock') }}
+      - name: Rust formatting and Clippy on macOS
         run: |
-          rustc --version
-          cargo --version
-          swift --version
-
-      - name: Rust format check
-        run: cargo fmt --all -- --check
-
-      - name: Rust clippy
-        run: |
-          rustup component add clippy
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
-
-      - name: Full test suite (offline)
+      - name: Complete offline suite and audits
         run: ./scripts/test.sh
-
-      - name: Build macOS app (ad-hoc signed)
+      - name: Build and verify signed app
         run: ./scripts/build-macos.sh
+      # PRs only read caches. Save only successful trusted main builds.
+      - name: Save Cargo cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   required:
-    # Keep the legacy required-check name so existing branch protection does not
-    # need to change. This job is only a result gate; expensive work lives above.
     name: Build & test (macOS)
     if: always()
-    runs-on: ubuntu-latest
     needs: [changes, policy, rust, swift, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Verify required jobs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          check_result() {
-            name="$1"
-            result="$2"
-            case "$result" in
-              success|skipped) ;;
-              *)
-                echo "::error::$name finished with result: $result"
-                return 1
-                ;;
-            esac
-          }
-
-          check_result "change detection" "${{ needs.changes.result }}"
-          check_result "repository policy" "${{ needs.policy.result }}"
-          check_result "Rust checks" "${{ needs.rust.result }}"
-          check_result "Swift checks" "${{ needs.swift.result }}"
-          check_result "full integration suite" "${{ needs.full.result }}"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce expected results
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/check_ci_gate.py ci
