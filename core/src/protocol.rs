@@ -202,6 +202,37 @@ mod tests {
         assert_eq!(response.error.unwrap().code, "WorkspaceNotFound");
     }
     #[test]
+    fn protocol_updates_workspace_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            crate::database::Store::open(temp.path()).unwrap(),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let workspace = engine
+            .store
+            .create_workspace("Scope test", &["example.test".into()])
+            .unwrap();
+
+        let response = handle(
+            &engine,
+            Request {
+                protocol_version: 1,
+                request_id: "scope-update".into(),
+                command: Command::UpdateWorkspaceScope {
+                    workspace_id: workspace.id,
+                    scope: vec!["example.com".into(), "*.example.com".into()],
+                },
+            },
+        );
+        assert!(response.error.is_none());
+        assert_eq!(
+            engine.store.workspace(workspace.id).unwrap().scope,
+            vec!["*.example.com".to_string(), "example.com".to_string()]
+        );
+    }
+
+    #[test]
     fn wire_rejects_invalid_uuid_and_unknown_method() {
         assert!(serde_json::from_value::<Request>(json!({"protocol_version":1,"request_id":"test","method":"snapshot","params":{"workspace_id":"../outside"}})).is_err());
         assert!(serde_json::from_value::<Request>(
