@@ -19,8 +19,21 @@ separate; step durations need not sum to wall time):
 | Same feature run, caches | Swift restore 9s; Rust restore 11s |
 | [README merge on main](https://github.com/doctordoomies/MACSPLOIT/actions/runs/36951095145) | macOS queue 7s + execution 82s; Cargo restore 21s; full suite 41s; app packaging/build 6s |
 
-These are observed baselines, not guarantees. Updated measurements and any
-remaining validation limits are recorded in the optimization PR.
+These are observed baselines, not guarantees.
+
+### First hosted validation
+
+[Optimization PR CI](https://github.com/doctordoomies/MACSPLOIT/actions/runs/36953272213)
+verified the unmodified full Rust suite, format, and Clippy on Ubuntu: **2s queue +
+72s execution** with a cold v2 cache, compared with **202s + 51s** on the prior
+macOS Rust job. The corresponding full macOS job also passed: **7s queue + 123s
+execution**, including the complete Rust/Swift/policy suite and signed app build.
+This broad workflow-change PR deliberately runs more than a Rust-only or docs-only
+PR. These single-run observations are not a controlled runner-speed benchmark.
+
+A docs-only PR after merge/cutover is still required for hosted end-to-end timing;
+local routing tests prove its intended skips. See the optimization PR for final
+advanced analyzer timings and concurrency results.
 
 ## Routing
 
