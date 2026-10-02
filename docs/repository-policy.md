@@ -77,18 +77,25 @@ Owner-authored commits must match one of these exact pairs:
   `doctor <160264866+doctordoomies@users.noreply.github.com>` and committer is
   `GitHub <noreply@github.com>`.
 
-Only `dependabot/*` branches (local or origin) receive the trusted automation exception:
+Dependabot receives a narrow trusted automation exception:
 
-- Author: `dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>`.
-- Committer: that same Dependabot identity, or `GitHub <noreply@github.com>`.
+- On local/origin `dependabot/*` branches, the exact Dependabot author identity is
+  allowed with either the exact Dependabot committer identity or
+  `GitHub <noreply@github.com>`.
+- If a reviewed Dependabot commit is retained in human-branch history after a merge,
+  that exact commit SHA must be pinned in
+  `scripts/reviewed-automation-commits.json` with a non-empty review reason.
+  Only the pinned SHA plus the exact Dependabot/GitHub identity pair is accepted.
 
-No name-only, email-domain, arbitrary bot, other human, or other GitHub-committer
-exception exists. Git metadata alone does not authenticate a bot; during launch
-verify the dependency commits' GitHub accounts and signatures through the API.
-Do not rewrite trusted automation commits into human identities. Unexpected human
-metadata blocks launch and requires review, not automatic history rewriting.
+No name-only, email-domain, arbitrary bot, other human, wildcard Dependabot-on-main,
+or other GitHub-committer exception exists. Git metadata alone does not authenticate
+a bot; review the GitHub PR/account/signature context before adding a SHA to the
+manifest. Replacing the SHA requires a new review. Do not rewrite trusted automation
+commits into human identities. Unexpected human metadata blocks launch and requires
+review, not automatic history rewriting.
 
-This narrow branch exception does not authorize moving bot commits onto human
-branches. Integrate dependency changes using a canonical human-authored commit
-after review, or obtain a separately reviewed policy extension. CI audits branch
-refs; ephemeral GitHub PR test-merge refs are not published branch history.
+Prefer squash-merging future Dependabot PRs into a canonical owner-authored commit
+so bot commits do not normally enter human-branch history. The reviewed-automation
+manifest is for exceptional retained commits, not a general automation bypass. CI
+audits branch refs; ephemeral GitHub PR test-merge refs are not published branch
+history.
