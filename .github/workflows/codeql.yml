@@ -86,6 +86,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Record native runner and Swift toolchain before tracing
+        id: native
+        run: |
+          case "$RUNNER_ARCH" in
+            ARM64) echo 'arch=arm64' >> "$GITHUB_OUTPUT" ;;
+            X64) echo 'arch=x86_64' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'Unsupported runner architecture' >&2; exit 1 ;;
+          esac
+          uname -m
+          swift --version
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -94,10 +104,23 @@ jobs:
       # No compiled Swift cache: the extractor must observe every compilation.
       # --product includes MACSPLOITKit through the executable's dependency.
       - name: Build all production Swift for extraction
+        env:
+          SWIFT_ARCH: ${{ steps.native.outputs.arch }}
+        run: ./scripts/swift-command.sh build --product MACSPLOIT --arch "$SWIFT_ARCH"
+      - name: Verify all production Swift sources were extracted
         run: |
-          uname -m
-          swift --version
-          ./scripts/swift-command.sh build --product MACSPLOIT
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          root = Path("apps/macos/Sources")
+          expected = list(root.rglob("*.swift"))
+          archive = Path(os.environ["CODEQL_EXTRACTOR_SWIFT_SOURCE_ARCHIVE_DIR"])
+          archived = [p.as_posix() for p in archive.rglob("*.swift")]
+          missing = [p for p in expected if not any(a.endswith("/" + p.as_posix()) for a in archived)]
+          if not expected or missing:
+              raise SystemExit("Incomplete production Swift extraction: " + str(missing))
+          print(f"Verified extraction of all {len(expected)} production Swift files in MACSPLOIT and MACSPLOITKit")
+          PYTHON
       - name: Analyze
         uses: github/codeql-action/analyze@v4
         with:

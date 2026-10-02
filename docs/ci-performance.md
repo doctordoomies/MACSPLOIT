@@ -78,8 +78,11 @@ changed by this PR.
 Swift CodeQL initializes its extractor **before** running
 `./scripts/swift-command.sh build --product MACSPLOIT`. That product depends on
 MACSPLOITKit, covering both production targets without running tests or compiling
-Rust. SwiftPM builds the runner's native architecture; `uname -m` and Swift version
-are recorded. No architecture is hard-coded. There is no restored Swift build
+Rust. SwiftPM receives one `--arch`, derived from GitHub's `RUNNER_ARCH` (ARM64 → arm64,
+X64 → x86_64; unknown values fail). Runner and Swift version are recorded before
+tracing. This matters because CodeQL tracing enters a Rosetta shell on the observed
+ARM64 runner, where a later `uname -m` reports x86_64. A source-archive check fails
+if either production target's Swift files are missing from extraction. There is no restored Swift build
 cache that could hide compilation from CodeQL. The regular Swift build also has
 no cache: this package has no external Swift dependencies, and adding transfer and
 cache invalidation overhead is not justified by current measurements.
