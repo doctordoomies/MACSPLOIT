@@ -14,9 +14,10 @@ actor ModelAPI: CoreAPI {
         let event = CoreEvent(id: "new", workspaceId: "workspace", timestamp: "now", eventType: "TargetAdded", sequence: 13, payload: .object(["value": .string("example.test")]))
         subsequent = Snapshot(workspace: current.workspace, targets: [], assets: [], relationships: [], observations: [], chains: [], stages: [], tasks: [], providerRuns: [], evidence: [], events: [event], lastSequence: 13)
     }
-    func hello() async throws -> CoreHello { CoreHello(coreVersion: "0.1.0", protocolVersion: 1, offlineOnly: true) }
+    func hello() async throws -> CoreHello { CoreHello(coreVersion: "0.1.0", protocolVersion: 1, offlineOnly: false) }
     func listWorkspaces() async throws -> [Workspace] { [current.workspace] }
     func createWorkspace(name: String, scope: [String]) async throws -> Workspace { current.workspace }
+    func updateWorkspaceScope(workspace: String, scope: [String]) async throws -> Workspace { current.workspace }
     func addTarget(workspace: String, value: String) async throws -> Target {
         throw CoreFailure(code: "InvalidTarget", message: "Synthetic test rejection.")
     }
@@ -51,6 +52,14 @@ actor ModelAPI: CoreAPI {
         #expect(cursor == 12)
         #expect(observed.snapshot?.lastSequence == 13)
         #expect(observed.snapshot?.events.first?.id == "new")
+    }
+
+    @Test func testScopeUpdateActionClearsBusyState() async {
+        let model = WorkspaceModel(client: ModelAPI())
+        await model.boot()
+        let ok = await model.updateScope(scopeText: "example.test\n*.example.test")
+        #expect(ok)
+        #expect(!model.isBusy)
     }
 
     @Test func testActionErrorPreservesInputAndClearsBusyState() async {
