@@ -7,6 +7,16 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Content Discovery (Phase 2C):** an external `ffuf` provider (ACTIVE) and a
+  `Content Discovery` chain for bounded path discovery over an explicitly selected
+  in-scope HTTP(S) URL with a user-chosen wordlist. The wordlist is validated in the
+  core (≤ 500 entries, ≤ 1 MiB, ≤ 512-byte lines; `#` comments/blanks ignored) and
+  passed as a typed `start_chain` option; ffuf runs a fixed, bounded profile (top
+  status codes, 10 threads, 10 req/s, 5 s timeout, no redirects, no recursion).
+  Accepted results become same-host `URL` assets with `has_endpoint` links; 404s
+  create no asset; raw output is hashed evidence and the persisted command redacts the
+  local wordlist path to its file name. Never runs as part of another chain. Offline
+  fake-tool coverage.
 - **Recon usability:** added editable workspace scope, a built-in `DNS Recon`
   workflow for in-scope Domain/Hostname targets, provider refresh/install guidance,
   URL-target assistance for web workflows, and live-capable UI/core messaging. Missing

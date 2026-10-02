@@ -19,8 +19,9 @@ Failure replaces `result` with `error: {"code": "...", "message": "..."}`.
 Swift checks version and request ID and decodes typed results. Error codes include
 InvalidTarget, InvalidWorkspace, WorkspaceNotFound, ScopeViolation, DatabaseError,
 MigrationFailure, ProviderFailure, ProviderMissing, ProviderTimeout,
-ProviderUnsupported, EvidenceIntegrityError, BudgetExceeded, CoreBusy, InvalidState,
-InvalidRequest, ProtocolMismatch, and transport CoreUnavailable. Invalid/oversized requests without a decodable ID return an
+ProviderUnsupported, WordlistMissing, WordlistTooLarge, EvidenceIntegrityError,
+BudgetExceeded, CoreBusy, InvalidState, InvalidRequest, ProtocolMismatch, and
+transport CoreUnavailable. Invalid/oversized requests without a decodable ID return an
 empty request ID; an oversized frame closes the helper session.
 
 | Method | Parameters | Result |
@@ -32,7 +33,7 @@ empty request ID; an oversized frame closes the helper session.
 | add_target | workspace_id, value | Classified stored target |
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
-| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `web_recon`, or `web_analysis`) | Pending chain; execution occurs on worker |
+| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
 | list_providers | none | Provider metadata plus live installation status (state/version) |

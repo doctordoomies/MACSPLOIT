@@ -18,8 +18,9 @@ cannot prove that arbitrary content contains no secret.
 
 - Providers registered: the offline synthetic provider; Subfinder (passive external);
   native DNS (built-in, ACTIVE_LOW_IMPACT); Nmap (ACTIVE external); HTTPX (ACTIVE_LOW_IMPACT
-  external); Katana (ACTIVE_LOW_IMPACT external); and native HTTP analysis (built-in,
-  ACTIVE_LOW_IMPACT). The application has no telemetry, tool installer, or privilege
+  external); Katana (ACTIVE_LOW_IMPACT external); native HTTP analysis (built-in,
+  ACTIVE_LOW_IMPACT); and ffuf content discovery (ACTIVE external). The application has
+  no telemetry, tool installer, or privilege
   request. External tools run only when the analyst launches a chain and only if the
   tool is already installed. Native DNS uses the host's own system resolver config
   (never a hardcoded public resolver); there are no third-party DNS/passive-DNS API
@@ -31,7 +32,16 @@ cannot prove that arbitrary content contains no secret.
   leaves TLS validation enabled (never disabled). It records cookie security **flags
   only — never cookie values** — and does not fuzz, submit forms, authenticate, or
   send payloads.
-- Nmap is the only ACTIVE provider. It uses a conservative, unprivileged profile
+- Content discovery (ffuf, ACTIVE) runs only from its own explicit chain, never
+  automatically. The analyst selects a local wordlist; the **core** validates it
+  (UTF-8, ≤ 1 MiB, ≤ 500 usable entries, ≤ 512-byte lines; binary/oversized/empty
+  rejected, never silently truncated). The ffuf profile is bounded and deterministic
+  (top status codes, ≤ 10 threads, ≤ 10 req/s, 5 s per request, **no redirect
+  following, no recursion**, no extension/vhost/header/parameter fuzzing, no auth, no
+  evasion). Discoveries are same-host only (no cross-host scope expansion). The
+  persisted command **redacts the local wordlist path to its file name** so a private
+  filesystem path is not stored in evidence.
+- Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and
   no root**. Scope is re-checked per IP immediately before scanning: a resolved IP
