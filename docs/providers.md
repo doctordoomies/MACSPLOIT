@@ -29,7 +29,7 @@ through the `list_providers` protocol method.
 
 ## SyntheticDiscoveryProvider
 
-The only implementation is `synthetic`, version `1.0.0`, risk PASSIVE. It accepts
+The synthetic provider is version `1.0.0`, risk PASSIVE. It accepts
 `example.test` and produces invented JSON without DNS, sockets, external requests,
 subprocesses, or installed tools. Resolution and service stages consume scoped
 assets discovered earlier in the current chain. All addresses are documentation

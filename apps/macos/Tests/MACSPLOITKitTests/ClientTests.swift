@@ -41,7 +41,7 @@ actor ReplyTransport: CoreTransport {
     }
 
     @Test func testProtocolAndRequestIdentityMismatchAreRejected() async throws {
-        let payload = #"{"result":{"core_version":"0.1.0","protocol_version":1,"offline_only":true}}"#
+        let payload = #"{"result":{"core_version":"0.1.0","protocol_version":1,"offline_only":false}}"#
         for transport in [ReplyTransport(payload, version: 99), ReplyTransport(payload, mismatchedId: true)] {
             do { _ = try await CoreClient(transport: transport).hello(); Issue.record("Expected protocol rejection") }
             catch let error as CoreFailure { #expect(error.code == "ProtocolMismatch") }

@@ -41,7 +41,18 @@ The app runs locally, with no telemetry or hosted assessment backend. Real provi
 
 ## Workflows
 
-Four analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system.
+Five recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision.
+
+### DNS Recon
+
+For a real authorized domain or hostname, **DNS Recon works out of the box** with no external scanner installation.
+
+```mermaid
+flowchart LR
+    D["Domain / Hostname"] -->|Native DNS| I[IPAddress]
+```
+
+The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT.
 
 ### Domain Recon
 
@@ -83,7 +94,7 @@ The provider is `ACTIVE_LOW_IMPACT` and deliberately bounded. It accepts only HT
 
 Exercise the complete orchestration path using invented subdomains, documentation IP addresses, ports, and services. No scanner installation, DNS, or network requests are needed. [Try the offline walkthrough below.](#quick-start)
 
-All four modes feed the **asset graph, evidence, observations, and durable events**, persisted in the local workspace and presented in SwiftUI. See [Recon Chains](docs/recon-chain.md) for stage behavior and failure handling.
+All five modes feed the **asset graph, evidence, observations, and durable events**, persisted in the local workspace and presented in SwiftUI. See [Recon Chains](docs/recon-chain.md) for stage behavior and failure handling.
 
 ## Assets with a history
 
@@ -194,6 +205,18 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 
 ## Quick start
 
+### Run a real built-in workflow
+
+1. Create or select a workspace.
+2. Use **Edit Scope** and add only the domain/host/IP ranges you own or are authorized to assess.
+3. Add the domain as a target.
+4. Open **Recon → DNS Recon** and run it. No external CLI is required.
+5. For **Web Analysis**, add a full HTTP(S) URL target (the UI can create an HTTPS URL target from a selected domain) and run the built-in analyzer.
+
+Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT shows the missing tool and installation command instead of leaving the workflow unexplained.
+
+
+
 ### Try MACSPLOIT without touching the network
 
 [Build and launch the app](#build), then use **Synthetic Recon**. No external providers are required for this walkthrough.
@@ -244,10 +267,11 @@ Workspace databases and evidence default to `~/Library/Application Support/MACSP
 
 ### External providers
 
-Install only the tools needed for the workflows you intend to run. MACSPLOIT detects providers but **does not silently install them**. Synthetic Recon, Native DNS, and Native HTTP Analysis require nothing extra.
+Install only the tools needed for the workflows you intend to run. MACSPLOIT detects providers but **does not silently install them**. Synthetic Recon, **DNS Recon**, and Native HTTP Analysis require nothing extra. The Recon screen shows missing external providers, their Homebrew command, and a provider refresh control.
 
 | Workflow | Optional installation commands | Homebrew formula reference |
 | --- | --- | --- |
+| DNS Recon | None — built in | Native DNS resolver |
 | Domain Recon | `brew install subfinder nmap httpx` | [Subfinder](https://formulae.brew.sh/formula/subfinder) · [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
 | Web Recon | `brew install katana` | [Katana](https://formulae.brew.sh/formula/katana) |
 | Web Analysis | None — built in | Native provider |
@@ -262,6 +286,7 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | --- | --- | --- |
 | Workspaces, scope, asset model, evidence, events | **STABLE** | Implemented persistent foundation |
 | Synthetic Recon | **STABLE** | Full offline demonstration |
+| DNS Recon | **BETA** | Built-in A/AAAA resolution for an in-scope Domain/Hostname |
 | Domain Recon providers | **BETA** | Subfinder → DNS → Nmap → HTTPX |
 | Web Recon | **BETA** | Bounded Katana crawling |
 | Native HTTP Analysis | **BETA** | Built-in headers, cookie flags, CORS, redirects, and robots analysis |

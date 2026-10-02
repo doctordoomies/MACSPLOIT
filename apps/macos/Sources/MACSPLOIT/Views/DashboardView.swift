@@ -6,7 +6,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                PageHeading(title: model.snapshot?.workspace.name ?? "Dashboard", subtitle: "A persistent workspace for the first synthetic investigation.")
+                PageHeading(title: model.snapshot?.workspace.name ?? "Dashboard", subtitle: "A persistent, scope-aware workspace for authorized reconnaissance and evidence.")
                 HStack(spacing: 16) {
                     metric("Targets", model.snapshot?.targets.count ?? 0, "scope")
                     metric("Assets", model.snapshot?.assets.count ?? 0, "square.stack.3d.up")
@@ -15,8 +15,8 @@ struct DashboardView: View {
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Start with example.test", systemImage: "play.circle").font(.headline)
-                        Text("Add the synthetic target above, open Recon, and run Synthetic Recon. Discoveries, relationships, and evidence flow from Rust into this workspace.")
+                        Label("Start a recon workflow", systemImage: "play.circle").font(.headline)
+                        Text("Synthetic Recon is the offline demo. DNS Recon and Web Analysis are built in for real in-scope targets; Domain Recon and Web Recon use optional external providers.")
                             .foregroundStyle(.secondary)
                         Button("Open Recon") { model.section = .recon }
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -32,7 +32,7 @@ struct DashboardView: View {
                         HStack { Text(chain.name); Spacer(); StatusBadge(status: chain.status) }.padding(12)
                     }
                 }
-                Text("All discoveries in Phase 0 are invented. There are no scanners, DNS lookups, or external requests.")
+                Text("Live providers run only when you explicitly launch a recon workflow. Scope is enforced again by the Rust core before dispatch.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(26)
         }
@@ -50,9 +50,9 @@ struct TargetsView: View {
     @ObservedObject var model: WorkspaceModel
     var body: some View {
         VStack(alignment: .leading) {
-            PageHeading(title: "Targets", subtitle: "Classified and normalized by Rust. Synthetic Recon currently accepts example.test.").padding([.top, .horizontal], 24)
+            PageHeading(title: "Targets", subtitle: "Classified and normalized by Rust. Add domains for DNS/Domain Recon or full HTTP(S) URLs for Web Recon and Web Analysis.").padding([.top, .horizontal], 24)
             if model.snapshot?.targets.isEmpty != false {
-                EmptyMessage(title: "Add your first target", detail: "Enter example.test in the target bar to begin.", symbol: "scope")
+                EmptyMessage(title: "Add your first target", detail: "Enter an authorized domain or HTTP(S) URL above. For the offline demo, use example.test.", symbol: "scope")
             } else {
                 Table(model.snapshot?.targets ?? [], selection: $model.selectedTargetId) {
                     TableColumn("Type", value: \.targetType).width(100)

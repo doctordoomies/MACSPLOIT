@@ -1,16 +1,36 @@
 # Recon Chain execution
 
-Status: **IMPLEMENTED** four chain presets — offline **Synthetic Recon**; the real
-**Domain Recon** (Subfinder → DNS → Nmap → HTTPX); **Web Recon** (Katana crawl); and
-**Web Analysis** (native HTTP analysis).
+Status: **IMPLEMENTED** five chain presets — offline **Synthetic Recon**; built-in
+**DNS Recon**; the full **Domain Recon** (Subfinder → DNS → Nmap → HTTPX);
+**Web Recon** (Katana crawl); and **Web Analysis** (native HTTP analysis).
 
 A chain requests provider capabilities and feeds scoped discoveries into later
 stages. It is not a shell sequence of installed tools. A stage may pin an exact
 provider so a capability offered by more than one provider is unambiguous. The
 stage plans are fixed presets; a general dependency-graph scheduler remains planned.
 `start_chain` selects the preset by a `chain` argument (`synthetic` by default, or
-`domain_recon`, `web_recon`, `web_analysis`); the analyst chooses and launches a
-chain explicitly — adding a target never starts one.
+`dns_recon`, `domain_recon`, `web_recon`, `web_analysis`); the analyst chooses
+and launches a chain explicitly — adding a target never starts one. Workspace scope
+can be edited after creation, but the Rust core still authorizes the target at chain
+creation and re-checks scoped assets before provider dispatch.
+
+## DNS Recon
+
+A built-in live workflow for an explicitly in-scope Domain or Hostname. It gives a
+fresh installation a useful real reconnaissance path without requiring an external
+CLI:
+
+```text
+Domain / Hostname
+  → Native DNS Resolver (A + AAAA)
+  → IPAddress assets + resolves_to relationships
+  → Evidence
+```
+
+Stages: Target Validation → DNS Resolution (`native_dns`) → Persistence →
+Completion. Risk is ACTIVE_LOW_IMPACT. Production resolution uses the host's system
+resolver configuration; automated coverage injects `StaticDnsResolver` so CI never
+performs live DNS. No external provider is installed or invoked.
 
 ## Web Analysis (Phase 2B)
 
@@ -59,10 +79,10 @@ records. Repeat runs keep node/edge IDs and add provenance, run records, and
 evidence. Passive out-of-scope discoveries remain visible with `in_scope=false`
 but are excluded from downstream dispatch. An unscoped root cannot start.
 
-## Domain Recon (Phase 1A + 1B + 1C)
+## Domain Recon (Phase 1A–1D)
 
-The real chain runs Subfinder, native DNS resolution, then Nmap against an in-scope
-domain. Its stages are:
+The full chain runs Subfinder, native DNS resolution, Nmap, and HTTPX against
+authorized in-scope discoveries from a Domain target. Its stages are:
 
 1. Target Validation — require a Domain target inside workspace scope.
 2. Subfinder Discovery — SUBDOMAIN_DISCOVERY, pinned to `subfinder`, via the
@@ -71,17 +91,19 @@ domain. Its stages are:
    Subdomain/Hostname/Domain assets into IPs (ACTIVE_LOW_IMPACT).
 4. Port + Service Discovery — PORT_DISCOVERY, pinned to `nmap`, scanning the
    in-scope IP assets for open ports and services (ACTIVE).
-5. Persistence — assets, relationships, observations, and evidence are committed.
-6. Completion — persist final status.
+5. HTTP Probing — HTTP_PROBING, pinned to `httpx`, probing discovered in-scope
+   web services into Website/Technology assets (ACTIVE_LOW_IMPACT).
+6. Persistence — assets, relationships, observations, and evidence are committed.
+7. Completion — persist final status.
 
-HTTP probing is intentionally absent; Domain Recon maps a Domain → Subdomains → IPs
-→ Ports → Services:
+Domain Recon maps Domain → Subdomains → IPs → Ports/Services → Websites/Technology:
 
 ```text
 example.test
 └── api.example.test  → resolves_to → 192.0.2.10
                                       ├── 22/tcp  → serves → ssh
                                       └── 443/tcp → serves → https
+                                                    └── HTTPX → Website / Technology
 ```
 
 Each asset is traceable to its target, provider run, provider version, timestamp,
@@ -125,7 +147,7 @@ marks pending/running work FAILED with `Interrupted`; it never automatically
 restarts it. Completed graph, evidence, provenance, events, and history survive
 restart in the automated tests.
 
-**PLANNED:** HTTPX provider, per-host and request limits, dependency scheduling,
-explicit retry policy, DNS freshness/caching, and HTTP/redirect scope rechecks. **FUTURE:** a separately
+**PLANNED:** per-host and request limits, dependency scheduling, explicit retry
+policy, and DNS freshness/caching. **FUTURE:** a separately
 managed core service that continues while the UI application is fully quit. The
 helper is app-owned.

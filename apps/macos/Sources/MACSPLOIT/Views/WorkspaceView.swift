@@ -4,6 +4,7 @@ import MACSPLOITKit
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
     @State private var creatingWorkspace = false
+    @State private var editingScope = false
 
     var body: some View {
         NavigationSplitView {
@@ -24,7 +25,7 @@ struct WorkspaceView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("MACSPLOIT").font(.headline).tracking(1.5)
-                    Text("PHASE 0 · OFFLINE").font(.caption2).foregroundStyle(.secondary)
+                    Text("PUBLIC BETA · LOCAL WORKBENCH").font(.caption2).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding()
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 205)
@@ -55,8 +56,8 @@ struct WorkspaceView: View {
                     VStack(spacing: 18) {
                         Image(systemName: "square.stack.3d.up").font(.system(size: 44, weight: .light)).foregroundStyle(.secondary)
                         Text("One workspace. Every discovery.").font(.title2.weight(.semibold))
-                        Text("No workspace selected. Create a workspace to start the offline synthetic workflow.")
-                            .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 460)
+                        Text("No workspace selected. Create one with explicit authorized scope, then add targets and choose a recon workflow.")
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 500)
                         Button("Create Workspace") { creatingWorkspace = true }
                             .buttonStyle(.borderedProminent).disabled(!model.isConnected)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -67,7 +68,7 @@ struct WorkspaceView: View {
                     Text(model.isConnected ? "Rust core connected" : "Rust core unavailable")
                     Spacer()
                     if let sequence = model.snapshot?.lastSequence { Text("Event \(sequence) · persisted in SQLite") }
-                    Text("Synthetic data only").foregroundStyle(.secondary)
+                    Text("Network activity only when you launch a live provider").foregroundStyle(.secondary)
                 }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.vertical, 9)
             }
         }
@@ -79,11 +80,17 @@ struct WorkspaceView: View {
                 }.frame(width: 235).disabled(model.workspaces.isEmpty || model.isBusy)
             }
             ToolbarItem {
+                Button { editingScope = true } label: { Label("Edit Scope", systemImage: "scope") }
+                    .help("Edit Workspace Scope")
+                    .disabled(model.snapshot == nil || model.isBusy || !model.isConnected)
+            }
+            ToolbarItem {
                 Button { creatingWorkspace = true } label: { Label("Create Workspace", systemImage: "plus") }
                     .help("Create Workspace").keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!model.isConnected)
             }
         }
         .sheet(isPresented: $creatingWorkspace) { CreateWorkspaceView(model: model) }
+        .sheet(isPresented: $editingScope) { ScopeEditorView(model: model) }
         .alert("MACSPLOIT", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
@@ -95,16 +102,23 @@ private struct CreateWorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var scope = "example.test\n*.example.test\n192.0.2.0/24"
+    @State private var scope = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Create Workspace").font(.title2.weight(.semibold))
             Text("A separate SQLite workspace with explicit assessment scope.").foregroundStyle(.secondary)
             TextField("Workspace name", text: $name).textFieldStyle(.roundedBorder)
-            Text("Scope · one domain, wildcard, IP, or CIDR per line").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Scope · one domain, wildcard, IP, or CIDR per line").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Use Offline Demo Scope") {
+                    scope = "example.test\n*.example.test\n192.0.2.0/24"
+                }
+                .controlSize(.small)
+            }
             TextEditor(text: $scope).font(.system(.body, design: .monospaced)).frame(height: 105).padding(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Text("The suggested scope contains only the synthetic example.test domain and documentation addresses. No network requests will run.")
+            Text("Enter only systems you own or are explicitly authorized to assess. Leave scope empty to create the workspace with live recon blocked, or use the offline demo scope for Synthetic Recon.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -114,6 +128,60 @@ private struct CreateWorkspaceView: View {
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy)
             }
         }.padding(26).frame(width: 500)
+    }
+}
+
+private struct ScopeEditorView: View {
+    @ObservedObject var model: WorkspaceModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var scope: String
+
+    init(model: WorkspaceModel) {
+        self.model = model
+        _scope = State(initialValue: model.snapshot?.workspace.scope.joined(separator: "\n") ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit Workspace Scope").font(.title2.weight(.semibold))
+            Text("Live recon is denied unless the selected target is covered by this scope. Changes apply to future provider dispatch; existing evidence is not deleted.")
+                .foregroundStyle(.secondary)
+
+            Text("One domain, wildcard, IP, or CIDR per line")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $scope)
+                .font(.system(.body, design: .monospaced))
+                .frame(height: 180)
+                .padding(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+
+            HStack {
+                Button("Use Offline Demo Scope") {
+                    scope = "example.test\n*.example.test\n192.0.2.0/24"
+                }
+                .controlSize(.small)
+
+                Spacer()
+
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+
+                Button("Save Scope") {
+                    Task {
+                        if await model.updateScope(scopeText: scope) {
+                            dismiss()
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isBusy)
+            }
+        }
+        .padding(26)
+        .frame(width: 560)
     }
 }
 

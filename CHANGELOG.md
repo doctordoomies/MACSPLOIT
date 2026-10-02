@@ -7,6 +7,11 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Recon usability:** added editable workspace scope, a built-in `DNS Recon`
+  workflow for in-scope Domain/Hostname targets, provider refresh/install guidance,
+  URL-target assistance for web workflows, and live-capable UI/core messaging. Missing
+  external providers are now explained instead of making the Run control appear
+  mysteriously unavailable. Scope enforcement remains authoritative in the Rust core.
 - **Native HTTP Analysis (Phase 2B):** a built-in `native_http` provider (no external
   tool) and a `Web Analysis` chain that analyze an explicitly selected in-scope
   HTTP(S) URL — response + security headers, cookie security flags (never values),

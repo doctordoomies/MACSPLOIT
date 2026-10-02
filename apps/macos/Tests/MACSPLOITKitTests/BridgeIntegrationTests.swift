@@ -12,7 +12,7 @@ import Testing
         let client = CoreClient(transport: transport)
         defer { transport.shutdown() }
         let hello = try await client.hello()
-        #expect(hello.offlineOnly)
+        #expect(!hello.offlineOnly)
         let workspace = try await client.createWorkspace(name: "Swift bridge test", scope: ["example.test", "*.example.test", "192.0.2.0/24"])
         let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
         #expect(target.targetType == "Domain")
@@ -47,6 +47,51 @@ import Testing
         let reopened = CoreClient(transport: reopenedTransport)
         let persisted = try await reopened.snapshot(workspace: workspace.id)
         #expect(persisted == result)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_DNS_FAKE"] != nil))
+    func testEditableScopeAndNativeDnsReconThroughBridge() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-dns-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+
+        let workspace = try await client.createWorkspace(name: "DNS bridge test", scope: [])
+        #expect(workspace.scope.isEmpty)
+
+        let scoped = try await client.updateWorkspaceScope(
+            workspace: workspace.id,
+            scope: ["api.example.test", "192.0.2.0/24"]
+        )
+        #expect(scoped.scope.contains("api.example.test"))
+        #expect(scoped.scope.contains("192.0.2.0/24"))
+
+        let target = try await client.addTarget(workspace: workspace.id, value: "api.example.test")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "dns_recon")
+
+        let deadline = Date().addingTimeInterval(15)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" {
+                completed = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.chains.first(where: { $0.id == run.id })?.name == "DNS Recon")
+        #expect(result.assets.contains {
+            $0.assetType == "IPAddress" && $0.canonicalIdentity == "192.0.2.10"
+        })
+        #expect(result.providerRuns.contains { $0.providerId == "native_dns" })
+        #expect(result.evidence.contains { $0.target == "api.example.test" })
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil

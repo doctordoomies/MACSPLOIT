@@ -14,6 +14,7 @@ today, not aspirations. Statuses:
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Workspaces | STABLE | Isolated per-workspace SQLite under Application Support |
+| Workspace scope editing | BETA | Replace normalized domain/wildcard/IP/CIDR scope after creation; audited and persisted |
 | Target classification | STABLE | Domain/URL/IP/CIDR/email/username/hostname, IDNA |
 | Scope enforcement | STABLE | Exact/wildcard/CIDR, IPv4/IPv6, per-asset for active providers |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
@@ -21,6 +22,7 @@ today, not aspirations. Statuses:
 | Activity / events | STABLE | Durable, replayable |
 | Persistence | STABLE | Survives restart; migrations versioned |
 | Synthetic Recon (offline demo) | STABLE | Full pipeline with invented data, no network |
+| DNS Recon | BETA | Built-in A/AAAA workflow for an explicitly in-scope Domain/Hostname; no external CLI |
 
 ## Providers (recon pipeline)
 
