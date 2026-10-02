@@ -518,7 +518,10 @@ mod tests {
         );
 
         let reopened = Store::open(directory.path()).unwrap();
-        assert_eq!(reopened.workspace(workspace.id).unwrap().scope, updated.scope);
+        assert_eq!(
+            reopened.workspace(workspace.id).unwrap().scope,
+            updated.scope
+        );
     }
 
     #[test]
