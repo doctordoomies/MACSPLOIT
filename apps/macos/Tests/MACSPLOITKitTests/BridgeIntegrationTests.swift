@@ -203,4 +203,47 @@ import Testing
         #expect(evidence.rawJson.contains("strict-transport-security"))
         #expect(!evidence.rawJson.contains("TOPSECRET")) // cookie value never persisted
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_FFUF"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_FFUF_WORDLIST"] != nil))
+    func testContentDiscoveryRunsFfufThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let wordlist = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_FFUF_WORDLIST"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-contentdisc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        let providers = try await client.listProviders()
+        let ffuf = try #require(providers.first { $0.id == "ffuf" })
+        #expect(ffuf.installation.isInstalled)
+        #expect(ffuf.riskClass == "ACTIVE")
+
+        let workspace = try await client.createWorkspace(name: "Content discovery bridge test", scope: ["example.test", "*.example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "https://example.test/")
+        let run = try await client.startChain(
+            workspace: workspace.id, target: target.id, chain: "content_discovery",
+            options: .object(["wordlist_path": .string(wordlist)])
+        )
+        let deadline = Date().addingTimeInterval(15)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" { completed = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.chains.first?.name == "Content Discovery")
+        let discovered = result.assets.filter { $0.assetType == "URL" && $0.canonicalIdentity != "https://example.test/" }
+        #expect(discovered.count == 4) // admin/login/api/secret; 404 excluded
+        #expect(result.relationships.filter { $0.relationshipType == "has_endpoint" }.count == 4)
+        #expect(result.providerRuns.first?.providerId == "ffuf")
+        #expect(result.evidence.count == 1)
+        let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
+        #expect(!evidence.rawJson.contains(wordlist)) // full local wordlist path redacted
+    }
 }

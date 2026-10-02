@@ -8,6 +8,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
     case domain = "Domain Recon"
     case web = "Web Recon"
     case webAnalysis = "Web Analysis"
+    case contentDiscovery = "Content Discovery"
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
         case .domain: return "domain_recon"
         case .web: return "web_recon"
         case .webAnalysis: return "web_analysis"
+        case .contentDiscovery: return "content_discovery"
         }
     }
 
@@ -33,6 +35,8 @@ private enum ReconMode: String, CaseIterable, Identifiable {
             return "Bounded same-host crawling from an explicitly selected in-scope HTTP(S) URL."
         case .webAnalysis:
             return "Built-in HTTP analysis of an in-scope URL: headers, cookies, CORS, redirects, robots."
+        case .contentDiscovery:
+            return "Bounded path discovery (ffuf) over an in-scope URL with a wordlist you choose."
         }
     }
 
@@ -41,6 +45,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
         case .synthetic: return "PASSIVE · SYNTHETIC"
         case .dns, .web, .webAnalysis: return "ACTIVE · LOW"
         case .domain: return "MIXED · DOMAIN"
+        case .contentDiscovery: return "ACTIVE"
         }
     }
 }
@@ -57,6 +62,7 @@ struct ReconView: View {
     private var nmapReady: Bool { model.nmap?.installation.isAvailable ?? false }
     private var httpxReady: Bool { model.httpx?.installation.isAvailable ?? false }
     private var katanaReady: Bool { model.katana?.installation.isAvailable ?? false }
+    private var ffufReady: Bool { model.ffuf?.installation.isAvailable ?? false }
 
     private var selectedTargetIsCompatible: Bool {
         guard let target = selectedTarget else { return false }
@@ -67,7 +73,7 @@ struct ReconView: View {
             return ["Domain", "Hostname"].contains(target.targetType)
         case .domain:
             return target.targetType == "Domain"
-        case .web, .webAnalysis:
+        case .web, .webAnalysis, .contentDiscovery:
             return target.targetType == "URL"
         }
     }
@@ -77,6 +83,7 @@ struct ReconView: View {
             && !model.isBusy
             && model.snapshot?.chains.contains(where: \.isRunning) != true
             && selectedTargetIsCompatible
+            && (mode != .contentDiscovery || (ffufReady && model.selectedWordlistPath != nil))
     }
 
     private var providerSetupIssue: String? {
@@ -90,6 +97,8 @@ struct ReconView: View {
             return "Domain Recon needs these external providers before it can complete:\n\n" + missing.joined(separator: "\n") + "\n\nInstall them, then click Refresh Providers."
         case .web:
             return katanaReady ? nil : "Web Recon needs Katana. Install it with:\n\nbrew install katana\n\nThen click Refresh Providers."
+        case .contentDiscovery:
+            return ffufReady ? nil : "Content Discovery needs ffuf. Install it with:\n\nbrew install ffuf\n\nThen click Refresh Providers."
         case .synthetic, .dns, .webAnalysis:
             return nil
         }
@@ -114,6 +123,8 @@ struct ReconView: View {
                     webProviderPanel
                 } else if mode == .webAnalysis {
                     webAnalysisProviderPanel
+                } else if mode == .contentDiscovery {
+                    contentDiscoveryProviderPanel
                 }
 
                 HStack(spacing: 14) {
@@ -229,7 +240,54 @@ struct ReconView: View {
             model.errorMessage = providerSetupIssue
             return
         }
-        Task { await model.runRecon(kind: mode.chainKind) }
+        if mode == .contentDiscovery {
+            Task { await model.runContentDiscovery() }
+        } else {
+            Task { await model.runRecon(kind: mode.chainKind) }
+        }
+    }
+
+    private func chooseWordlist() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a wordlist for Content Discovery (≤ 500 entries, ≤ 1 MiB)."
+        if panel.runModal() == .OK, let url = panel.url {
+            model.chooseWordlist(url.path)
+        }
+    }
+
+    @ViewBuilder private var contentDiscoveryProviderPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            providerHeader("Content Discovery is active fuzzing — run it only against authorized targets")
+            Divider()
+            providerRow(
+                title: "ffuf",
+                detail: "Bounded path discovery · ≤ 500 entries · ≤ 10 req/s · redirects off · no recursion",
+                available: ffufReady,
+                status: model.ffuf?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE", warn: true
+            )
+            Divider()
+            HStack(spacing: 12) {
+                Image(systemName: model.selectedWordlistPath == nil ? "doc.badge.plus" : "doc.text")
+                    .foregroundStyle(model.selectedWordlistPath == nil ? Color.orange : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Wordlist").font(.body.weight(.medium))
+                    Text((model.selectedWordlistPath as NSString?)?.lastPathComponent ?? "None selected")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(model.selectedWordlistPath == nil ? Color.orange : Color.secondary)
+                    if let n = model.wordlistEstimatedRequests {
+                        Text("Estimated maximum requests: \(n)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button("Choose Wordlist…", action: chooseWordlist)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder private var dnsProviderPanel: some View {
@@ -412,6 +470,10 @@ struct ReconView: View {
                 .font(.callout)
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
+        } else if mode == .contentDiscovery && model.selectedWordlistPath == nil {
+            Text("Choose a wordlist before running Content Discovery.")
+                .font(.callout)
+                .foregroundStyle(.orange)
         } else if let target = selectedTarget, target.normalizedValue == "example.test", mode != .synthetic {
             Text("example.test is the offline demo domain. This mode performs live network activity; use a real target that you own or are explicitly authorized to assess.")
                 .font(.callout)
@@ -424,7 +486,7 @@ struct ReconView: View {
     }
 
     private var matchesWebMode: Bool {
-        mode == .web || mode == .webAnalysis
+        mode == .web || mode == .webAnalysis || mode == .contentDiscovery
     }
 
     private var emptyTargetHint: String {
@@ -435,7 +497,7 @@ struct ReconView: View {
             return "Add an in-scope domain or hostname using the target bar above."
         case .domain:
             return "Add an in-scope domain using the target bar above."
-        case .web, .webAnalysis:
+        case .web, .webAnalysis, .contentDiscovery:
             return "Add an in-scope HTTP(S) URL such as https://your-domain.example/ using the target bar above."
         }
     }
@@ -452,6 +514,8 @@ struct ReconView: View {
             return "Web Recon requires an HTTP(S) URL target; the selected target is \(target.targetType)."
         case .webAnalysis:
             return "Web Analysis requires an HTTP(S) URL target; the selected target is \(target.targetType)."
+        case .contentDiscovery:
+            return "Content Discovery requires an HTTP(S) URL target; the selected target is \(target.targetType)."
         }
     }
 

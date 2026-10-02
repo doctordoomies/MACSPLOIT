@@ -144,14 +144,39 @@ public final class WorkspaceModel: ObservableObject {
         providerStatuses = (try? await client.listProviders()) ?? providerStatuses
     }
 
-    public func runRecon(kind: String = "synthetic") async {
+    public func runRecon(kind: String = "synthetic", options: JSONValue = .object([:])) async {
         guard let id = selectedWorkspaceId, let target = selectedTargetId else { return }
         isBusy = true; defer { isBusy = false }
         do {
-            let chain = try await client.startChain(workspace: id, target: target, chain: kind)
+            let chain = try await client.startChain(workspace: id, target: target, chain: kind, options: options)
             guard selectedWorkspaceId == id else { return }
             selectedChainId = chain.id; section = .recon; try await refresh()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Selected content-discovery wordlist (local path) and a conservative estimate
+    /// of the maximum requests (usable, non-comment lines).
+    @Published public var selectedWordlistPath: String?
+    @Published public private(set) var wordlistEstimatedRequests: Int?
+
+    public func chooseWordlist(_ path: String?) {
+        selectedWordlistPath = path
+        guard let path, let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            wordlistEstimatedRequests = nil
+            return
+        }
+        wordlistEstimatedRequests = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+            .count
+    }
+
+    public func runContentDiscovery() async {
+        guard let path = selectedWordlistPath else {
+            errorMessage = "Choose a wordlist before running Content Discovery."
+            return
+        }
+        await runRecon(kind: "content_discovery", options: .object(["wordlist_path": .string(path)]))
     }
 
     public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }
@@ -161,6 +186,7 @@ public final class WorkspaceModel: ObservableObject {
     public var httpx: ProviderStatus? { provider("httpx") }
     public var katana: ProviderStatus? { provider("katana") }
     public var nativeHttp: ProviderStatus? { provider("native_http") }
+    public var ffuf: ProviderStatus? { provider("ffuf") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }
