@@ -269,7 +269,46 @@ Next Phase 2 work: historical URL intelligence (gau/waybackurls), then JavaScrip
 analysis. Content discovery remains an explicit active stage rather than something
 silently folded into crawling.
 
-**FUTURE:** approved installation/update tooling (Tool Manager), dependency and
+**FUTURE:** approved installation/update tooling, dependency and
 license metadata, version compatibility policy, and a public provider SDK. No
 `provider.toml` contract or installer is frozen now. Never silently install a tool
 or interpolate target input into a shell.
+
+
+## Tool Manager / Provider Center (BETA)
+
+Open **Tool Manager** in the sidebar to inspect every registered provider, even
+without a selected workspace. The Rust core must be connected to load or refresh
+status. The view renders `ProviderRegistry` / `list_providers` generically; future
+providers such as ffuf or user-scanner appear once registered, without dedicated
+Swift cards. This does not implement those providers or change their roadmap.
+
+Each card shows provider identity, description, capabilities, target types, risk,
+offline/network behavior, built-in/external status, and installation diagnostics.
+Built In, Installed, Missing, Unsupported, and Error remain distinct. Installed
+external tools expose the core-resolved executable path and detected version;
+unrecognized version output is explicitly **Version unknown**. Version probes
+that fail or time out report Error. No minimum-version policy is introduced here;
+Unsupported is supported by the schema/UI for providers that enforce one.
+
+Refresh uses the existing bounded local version probes. It does not run a recon
+chain or reconnect the core. Duplicate refreshes are disabled; a failed request
+retains the previous list and displays an error. A previous result can become
+stale until the next successful refresh. Availability is information, not target
+authorization; scope enforcement still governs dispatch.
+
+External providers own static setup commands and HTTPS help links. **MACSPLOIT
+never silently installs providers.** Copy Install Command only writes the displayed
+string to the clipboard. The user may choose to run it separately. There is no
+installer, updater, package/dependency manager, or remote marketplace. Built-ins
+need no installation and show no executable path. Executable discovery remains
+entirely in Rust; Swift does not search PATH or fetch remote metadata.
+
+### Compatible protocol v1 additions
+
+`installation` may now include an optional `path` for `INSTALLED`. `ProviderStatus`
+may include optional `setup` with `install_command`, `homepage`, and `documentation`.
+Old v1 payloads without these fields still decode; existing consumers ignore new
+fields. Setup is a defaultable provider trait method, so new providers can supply
+help beside their definitions. Built-ins omit setup. The executable discovery
+source (override/PATH/etc.) is not separately attributed in this version.

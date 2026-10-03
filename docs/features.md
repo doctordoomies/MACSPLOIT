@@ -70,7 +70,7 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Tool Manager (status/version/path/help) | PLANNED | Provider status is shown today; no installer |
+| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, and copy-only setup help; no installer |
 | Provider/plugin SDK | EXPERIMENTAL | Internal trait documented; no stable public ABI pre-1.0 |
 | Reporting exports | PLANNED | |
 | Workspace delete/export | PLANNED | Data location documented today |

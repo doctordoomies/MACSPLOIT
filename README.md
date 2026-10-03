@@ -310,7 +310,8 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | API discovery and screenshots | **PLANNED** | Web reconnaissance expansion |
 | TLS, vulnerability assessment, findings | **PLANNED** | Conservative detection and evidence-backed correlation |
 | OSINT | **PLANNED** | Username, email, phone, and domain research |
-| Reporting and Tool Manager | **PLANNED** | Exports and provider management |
+| Tool Manager | **BETA** | Provider status, version, path, and copy-only setup help |
+| Reporting | **PLANNED** | Exports |
 | Provider SDK | **EXPERIMENTAL** | Documented internal trait; no stable public plugin ABI |
 | Source/secret analysis, cloud/containers | **FUTURE** | Outside the current implementation |
 | Authorized lab, hardware, wireless | **FUTURE** | Separate from normal reconnaissance |

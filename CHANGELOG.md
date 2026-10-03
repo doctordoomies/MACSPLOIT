@@ -17,6 +17,13 @@ may include breaking changes).
   create no asset; raw output is hashed evidence and the persisted command redacts the
   local wordlist path to its file name. Never runs as part of another chain. Offline
   fake-tool coverage.
+- **Tool Manager / Provider Center:** global native provider inventory with filters,
+  version/path diagnostics, explicit installation states, and static copy-only setup
+  help. Refresh retains prior results on failure and prevents duplicate requests.
+  Protocol v1 adds optional executable paths and provider-owned setup metadata.
+  Synthetic now correctly reports Built In; failed version probes report Error.
+  No provider installation, updates, or scans are triggered by this interface.
+
 - **Recon usability:** added editable workspace scope, a built-in `DNS Recon`
   workflow for in-scope Domain/Hostname targets, provider refresh/install guidance,
   URL-target assistance for web workflows, and live-capable UI/core messaging. Missing

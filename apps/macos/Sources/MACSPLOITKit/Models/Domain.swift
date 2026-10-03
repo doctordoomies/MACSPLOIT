@@ -109,7 +109,8 @@ public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String
 }
 public struct ProviderInstallation: Codable, Sendable, Equatable {
-    public let state: String            // INSTALLED / MISSING / UNSUPPORTED_VERSION / EXECUTION_ERROR
+    public let state: String
+    public let path: String?
     public let version: String?
     public let message: String?
     /// Available to run: an external tool that is installed, or a built-in provider.
@@ -131,6 +132,7 @@ public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
     public let capabilities: [String], supportedTargetTypes: [String], riskClass: String
     public let offline: Bool
     public let installation: ProviderInstallation
+    public let setup: ProviderSetup?
 }
 public struct CoreHello: Codable, Sendable {
     public let coreVersion: String, protocolVersion: Int, offlineOnly: Bool

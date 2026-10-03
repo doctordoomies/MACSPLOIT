@@ -3,6 +3,7 @@ import Combine
 
 public enum WorkspaceSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", evidence = "Evidence", activity = "Activity"
+    case toolManager = "Tool Manager"
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
@@ -12,6 +13,7 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .recon: return "point.3.connected.trianglepath.dotted"
         case .evidence: return "doc.text.magnifyingglass"
         case .activity: return "waveform.path"
+        case .toolManager: return "wrench.and.screwdriver"
         }
     }
 }
@@ -19,6 +21,8 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
 @MainActor
 public final class WorkspaceModel: ObservableObject {
     @Published public private(set) var workspaces: [Workspace] = []
+    @Published public private(set) var isRefreshingProviders = false
+    @Published public private(set) var providerRefreshError: String?
     @Published public private(set) var providerStatuses: [ProviderStatus] = []
     @Published public private(set) var snapshot: Snapshot?
     @Published public private(set) var selectedWorkspaceId: String?
@@ -42,8 +46,8 @@ public final class WorkspaceModel: ObservableObject {
         do {
             _ = try await client.hello()
             workspaces = try await client.listWorkspaces()
-            providerStatuses = (try? await client.listProviders()) ?? []
             isConnected = true; connectionError = nil
+            await refreshProviders()
             let previous = selectedWorkspaceId
             if let id = previous, workspaces.contains(where: { $0.id == id }) { await selectWorkspace(id) }
             else if let workspace = workspaces.last { await selectWorkspace(workspace.id) }
@@ -140,8 +144,12 @@ public final class WorkspaceModel: ObservableObject {
     }
 
     public func refreshProviders() async {
-        guard isConnected else { return }
-        providerStatuses = (try? await client.listProviders()) ?? providerStatuses
+        guard isConnected, !isRefreshingProviders else { return }
+        isRefreshingProviders = true
+        providerRefreshError = nil
+        defer { isRefreshingProviders = false }
+        do { providerStatuses = try await client.listProviders() }
+        catch { providerRefreshError = "Could not refresh providers: \(error.localizedDescription)" }
     }
 
     public func runRecon(kind: String = "synthetic", options: JSONValue = .object([:])) async {
