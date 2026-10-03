@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 public enum JSONValue: Codable, Sendable, Equatable {
     case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
@@ -65,26 +66,30 @@ public struct Target: Codable, Identifiable, Sendable, Equatable {
     }
 
     public static func isLocalOrPrivateHost(_ host: String) -> Bool {
+        let host = host.lowercased()
         if host == "localhost" || host.hasSuffix(".localhost") { return true }
-        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        if octets.count == 4, let parsed = try? octets.map({ seg -> Int in
-            guard let n = Int(seg), (0...255).contains(n) else { throw LocalHostParseError.invalid }
-            return n
-        }) {
-            switch (parsed[0], parsed[1]) {
-            case (127, _), (10, _), (192, 168), (169, 254): return true
-            case (172, 16...31): return true
+
+        // IP-range checks apply only to strings that actually parse as IP literals, so an
+        // ordinary hostname (e.g. "fdexample.com", "fe80example.test") is never matched by
+        // a string prefix. Parsing is via Foundation's Network framework (no dependency).
+        if let v4 = IPv4Address(host) {
+            let b = [UInt8](v4.rawValue) // 4 bytes
+            switch (b[0], b[1]) {
+            case (127, _), (10, _), (192, 168), (169, 254): return true // loopback/private/link-local
+            case (172, 16...31): return true                            // 172.16.0.0/12
             default: return false
             }
         }
-        if host == "::1" { return true }
-        // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-        if host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        if let v6 = IPv6Address(host) {
+            let b = [UInt8](v6.rawValue) // 16 bytes
+            if b[0...14].allSatisfy({ $0 == 0 }) && b[15] == 1 { return true } // ::1 loopback
+            if b[0] == 0xfe && (b[1] & 0xc0) == 0x80 { return true }           // fe80::/10 link-local
+            if (b[0] & 0xfe) == 0xfc { return true }                           // fc00::/7 unique-local
+            return false
+        }
         return false
     }
 }
-
-private enum LocalHostParseError: Error { case invalid }
 public struct Asset: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetType: String, canonicalIdentity: String, displayValue: String, firstSeen: String, lastSeen: String
     public let metadata: JSONValue

@@ -35,6 +35,26 @@ import Testing
         }
     }
 
+    // Regression: ordinary DNS hostnames whose string begins with fc/fd/fe80 must not be
+    // classified as IPv6 local/private — IP-range logic only applies to real IP literals.
+    @Test func doesNotMisclassifyHostnamesWithIpv6LikePrefixes() {
+        for host in ["fdexample.com", "fccompany.test", "fe80example.test",
+                     "fc.example.test", "fdd.test", "fe.test"] {
+            #expect(!Target.isLocalOrPrivateHost(host), "expected public: \(host)")
+        }
+        // Real IPv6 unique-local / link-local literals still classify as local.
+        for host in ["fd00::1", "fc00::1", "fe80::1", "::1"] {
+            #expect(Target.isLocalOrPrivateHost(host), "expected local: \(host)")
+        }
+    }
+
+    // Malformed / non-IP colon-containing strings must not overmatch.
+    @Test func doesNotOvermatchMalformedOrPublicColonStrings() {
+        for host in ["fc00::zz", "1:2:3", "::gggg", "2001:db8::1", "fe80:::1"] {
+            #expect(!Target.isLocalOrPrivateHost(host), "expected not-local: \(host)")
+        }
+    }
+
     @Test func localUrlTargetsReportLocalByClassification() {
         #expect(target("URL", "http://localhost:3000/").isLocalOrPrivateHost)
         #expect(target("URL", "http://[::1]:8080/").isLocalOrPrivateHost)
