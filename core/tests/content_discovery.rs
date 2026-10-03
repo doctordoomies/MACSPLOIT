@@ -155,6 +155,65 @@ fn content_discovery_runs_ffuf_end_to_end_and_persists() {
 }
 
 #[test]
+fn content_discovery_runs_against_an_explicitly_scoped_localhost_target() {
+    // ffuf path discovery over a locally running app, authorized by an explicit
+    // `localhost` scope entry. Custom port is preserved and evidence stays redacted.
+    let temp = tempfile::tempdir().unwrap();
+    let engine = Engine::open_with(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        tools_with_ffuf(),
+        Arc::new(StaticDnsResolver::new()),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Local App", &["localhost".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "http://localhost:3000/")
+        .unwrap();
+
+    engine
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::ContentDiscovery,
+            wordlist_option(),
+        )
+        .unwrap();
+    let snapshot = wait(&engine, workspace.id);
+
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
+    let urls: Vec<_> = snapshot
+        .assets
+        .iter()
+        .filter(|a| {
+            a.asset_type == AssetType::URL && a.canonical_identity != "http://localhost:3000/"
+        })
+        .map(|a| a.canonical_identity.as_str())
+        .collect();
+    assert_eq!(urls.len(), 4, "got {urls:?}");
+    for expected in [
+        "http://localhost:3000/admin",
+        "http://localhost:3000/login",
+        "http://localhost:3000/api",
+        "http://localhost:3000/secret",
+    ] {
+        assert!(urls.contains(&expected), "missing {expected}");
+    }
+
+    // Wordlist path is still redacted to its file name for a local target.
+    let raw = engine
+        .store
+        .read_evidence(workspace.id, snapshot.evidence[0].id)
+        .unwrap();
+    assert!(raw.contains("content-discovery-small.txt"));
+    assert!(!raw.contains("/fixtures/content-discovery-small.txt"));
+}
+
+#[test]
 fn content_discovery_requires_a_wordlist() {
     let (_temp, engine, workspace, target) = engine(tools_with_ffuf());
     let error = engine
