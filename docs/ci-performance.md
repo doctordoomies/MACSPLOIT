@@ -73,6 +73,47 @@ A failed router, missing output, cancellation, or unexpected skip fails the gate
 The CodeQL equivalent is **Security analysis**. No branch-protection setting is
 changed by this PR.
 
+### Routing invariants and regression contract
+
+Issue #30 hardens the scripts without changing workflow YAML, permissions, caches,
+required check names, or product behavior:
+
+- `policy=true` on every route. Full fallback enables every language and full
+  integration, with `docs=false`. Combining paths never removes required coverage.
+- Rust/Swift test and source directories include future files, not a filename
+  allowlist. Content Discovery/provider-status tests and Tool Manager presentation
+  and UI tests have explicit regression examples. Migrations and app resources
+  retain their component validation. A source extension in another component
+  retains both component and language coverage; unknown locations run everything.
+- Fixtures (including ffuf shell/text fixtures), providers, Markdown schemas,
+  workflow/actions configuration, and routing/shared test scripts force full
+  coverage. Docs exemption is based on recognized paths, never `.md` alone.
+- Every exempt documentation/artwork path, including GitHub PR/issue-template
+  Markdown, must be a regular non-executable file in both Git trees. Executable,
+  symlink, and gitlink modes force full coverage, including on deletion.
+- Non-canonical paths, control/bidi characters, invalid UTF-8, malformed event
+  data, unexpected PR refs, invalid SHA lengths, and missing/non-boolean push
+  `forced` fields fall back to full. Only literal `forced=false` permits a narrow
+  main-push route. Git uses argument arrays, no external diff/textconv, and NUL
+  delimiters; rename source and destination both count. Manual/release/scheduled
+  verification remains full, independent of changed paths.
+- Both gates require the exact dependency-job set and all seven routing outputs
+  as literal `"true"`/`"false"` strings. Inconsistent docs/language or mixed/full
+  combinations fail. Missing/extra jobs or outputs fail clearly. Adding a new
+  output/job therefore requires a deliberate gate contract update.
+- Each selected job must report `success`; each excluded job must report exactly
+  `skipped`. An excluded job reporting success, failure, or cancellation is also
+  refused: it indicates workflow/router disagreement. `changes` must succeed.
+  In full CI, the standalone Swift job is intentionally skipped because the full
+  macOS suite runs Swift; the CodeQL Swift analyzer is still independently required
+  when `swift=true`. GitHub dependency failures cannot silently pass either gate.
+
+Tests exercise direct classification, both gate CLIs, and isolated local Git
+repositories: additions, deletions, renames to documentation, mode/type changes,
+malformed names, multi-commit and divergent pushes. They need no network. The
+newline-separated local CLI cannot represent a filename containing a newline;
+workflow routing always uses Git's NUL-delimited data instead.
+
 ## Build and cache decisions
 
 Swift CodeQL initializes its extractor **before** running
