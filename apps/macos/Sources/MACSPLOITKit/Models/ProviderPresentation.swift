@@ -35,7 +35,13 @@ public enum ProviderFilter: String, CaseIterable, Identifiable {
 }
 
 public func providerLabel(_ value: String) -> String {
-    value.replacingOccurrences(of: "_", with: " ").capitalized
+    let words = value
+        .replacingOccurrences(of: "([A-Z]+)([A-Z][a-z])", with: "$1 $2", options: .regularExpression)
+        .replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
+        .replacingOccurrences(of: "_", with: " ")
+        .split(separator: " ")
+    let acronyms: Set<String> = ["DNS", "HTTP", "HTTPS", "IP", "URL", "CIDR", "OSINT", "JS"]
+    return words.map { acronyms.contains($0.uppercased()) ? $0.uppercased() : $0.capitalized }.joined(separator: " ")
 }
 
 public extension ProviderInstallation {

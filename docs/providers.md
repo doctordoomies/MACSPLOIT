@@ -279,9 +279,11 @@ or interpolate target input into a shell.
 
 Open **Tool Manager** in the sidebar to inspect every registered provider, even
 without a selected workspace. The Rust core must be connected to load or refresh
-status. The view renders `ProviderRegistry` / `list_providers` generically; future
-providers such as ffuf or user-scanner appear once registered, without dedicated
-Swift cards. This does not implement those providers or change their roadmap.
+status. The view renders `ProviderRegistry` / `list_providers` generically; new
+providers appear once registered, without dedicated Swift cards. The ffuf provider
+merged separately during this work already appears through the same view; future
+providers such as user-scanner need no special rendering. This does not implement
+new providers or change their roadmap.
 
 Each card shows provider identity, description, capabilities, target types, risk,
 offline/network behavior, built-in/external status, and installation diagnostics.

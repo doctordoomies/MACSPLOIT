@@ -14,7 +14,7 @@ fn tools(root: &Path, body: &str) -> ToolConfig {
     fs::write(&executable, body).unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
     let mut tools = ToolConfig::default();
-    for name in ["subfinder", "nmap", "httpx", "katana"] {
+    for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
         tools.overrides.insert(name.into(), executable.clone());
     }
     tools
@@ -42,7 +42,7 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
     assert!(response.error.is_none());
     assert_eq!(response.protocol_version, 1);
     let statuses: Vec<ProviderStatus> = serde_json::from_value(response.result.unwrap()).unwrap();
-    assert_eq!(statuses.len(), 7);
+    assert_eq!(statuses.len(), 8);
     let mut built_in = 0;
     for status in statuses {
         match status.installation {
@@ -90,7 +90,7 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
         }
     }
     let mut config = ToolConfig::default();
-    for name in ["subfinder", "nmap", "httpx", "katana"] {
+    for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
         config
             .overrides
             .insert(name.into(), temp.path().join("missing"));

@@ -27,7 +27,7 @@ private actor ProviderAPI: CoreAPI {
         if let subsequent { current = subsequent; self.subsequent = nil; return current.events }
         return []
     }
-    func startChain(workspace: String, target: String, chain: String) async throws -> ChainRun { throw CoreFailure(code: "TestOnly", message: "Unused test operation.") }
+    func startChain(workspace: String, target: String, chain: String, options: JSONValue) async throws -> ChainRun { throw CoreFailure(code: "TestOnly", message: "Unused test operation.") }
     func cancelChain(workspace: String, chain: String) async throws {}
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent { EvidenceContent(evidenceId: evidence, rawJson: "{}") }
     private(set) var calls = 0
@@ -78,6 +78,8 @@ private func providerFixture(state: String, expanded: Bool = true) throws -> Pro
             #expect(provider.installation.versionLabel == "Version unknown")
         }
         #expect(providerLabel("SUBDOMAIN_DISCOVERY") == "Subdomain Discovery")
+        #expect(providerLabel("IPAddress") == "IP Address")
+        #expect(providerLabel("DNS_RESOLUTION") == "DNS Resolution")
     }
     @Test func expandedAndLegacyDecodingAndCopyOnlyHelp() throws {
         let provider = try providerFixture(state: "INSTALLED")

@@ -1627,6 +1627,14 @@ impl FfufProvider {
 }
 
 impl Provider for FfufProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install ffuf".into()),
+            homepage: Some("https://github.com/ffuf/ffuf".into()),
+            documentation: Some("https://github.com/ffuf/ffuf#usage".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "ffuf".into(),
@@ -1655,12 +1663,20 @@ impl Provider for FfufProvider {
             FFUF_STDERR_CAP,
             FFUF_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
