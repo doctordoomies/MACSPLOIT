@@ -6,6 +6,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
     case synthetic = "Synthetic Recon"
     case dns = "DNS Recon"
     case domain = "Domain Recon"
+    case ip = "IP Recon"
     case web = "Web Recon"
     case webAnalysis = "Web Analysis"
     case contentDiscovery = "Content Discovery"
@@ -17,6 +18,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
         case .synthetic: return "synthetic"
         case .dns: return "dns_recon"
         case .domain: return "domain_recon"
+        case .ip: return "ip_recon"
         case .web: return "web_recon"
         case .webAnalysis: return "web_analysis"
         case .contentDiscovery: return "content_discovery"
@@ -31,6 +33,8 @@ private enum ReconMode: String, CaseIterable, Identifiable {
             return "Built-in A/AAAA resolution for an in-scope domain or hostname. No external tool required."
         case .domain:
             return "Subdomains → DNS → ports/services → HTTP probing for an in-scope domain."
+        case .ip:
+            return "Ports/services → HTTP probing for one explicitly selected in-scope IP. No DNS required."
         case .web:
             return "Bounded same-host crawling from an explicitly selected in-scope HTTP(S) URL."
         case .webAnalysis:
@@ -45,6 +49,7 @@ private enum ReconMode: String, CaseIterable, Identifiable {
         case .synthetic: return "PASSIVE · SYNTHETIC"
         case .dns, .web, .webAnalysis: return "ACTIVE · LOW"
         case .domain: return "MIXED · DOMAIN"
+        case .ip: return "MIXED · IP"
         case .contentDiscovery: return "ACTIVE"
         }
     }
@@ -80,6 +85,8 @@ struct ReconView: View {
             return ["Domain", "Hostname"].contains(target.targetType)
         case .domain:
             return target.targetType == "Domain"
+        case .ip:
+            return target.targetType == "IPAddress"
         case .web, .webAnalysis, .contentDiscovery:
             return target.targetType == "URL"
         }
@@ -102,6 +109,12 @@ struct ReconView: View {
             if !httpxReady { missing.append("HTTPX (brew install httpx)") }
             guard !missing.isEmpty else { return nil }
             return "Domain Recon needs these external providers before it can complete:\n\n" + missing.joined(separator: "\n") + "\n\nInstall them, then click Refresh Providers."
+        case .ip:
+            var missing: [String] = []
+            if !nmapReady { missing.append("Nmap (brew install nmap)") }
+            if !httpxReady { missing.append("HTTPX (brew install httpx)") }
+            guard !missing.isEmpty else { return nil }
+            return "IP Recon needs these external providers before it can complete:\n\n" + missing.joined(separator: "\n") + "\n\nInstall them, then click Refresh Providers."
         case .web:
             return katanaReady ? nil : "Web Recon needs Katana. Install it with:\n\nbrew install katana\n\nThen click Refresh Providers."
         case .contentDiscovery:
@@ -126,6 +139,8 @@ struct ReconView: View {
                     dnsProviderPanel
                 } else if mode == .domain {
                     domainProviderPanel
+                } else if mode == .ip {
+                    ipProviderPanel
                 } else if mode == .web {
                     webProviderPanel
                 } else if mode == .webAnalysis {
@@ -364,6 +379,33 @@ struct ReconView: View {
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder private var ipProviderPanel: some View {
+        VStack(spacing: 10) {
+            providerHeader("IP Recon reuses the Nmap and HTTPX providers for one selected IP")
+            Divider()
+            providerRow(
+                title: "Nmap",
+                detail: "Port + Service Discovery",
+                available: nmapReady,
+                status: model.nmap?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE",
+                warn: true,
+                installCommand: "brew install nmap"
+            )
+            Divider()
+            providerRow(
+                title: "HTTPX",
+                detail: "HTTP Probing",
+                available: httpxReady,
+                status: model.httpx?.installation.summary ?? "Provider status unavailable",
+                risk: "ACTIVE · LOW",
+                installCommand: "brew install httpx"
+            )
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     @ViewBuilder private var webProviderPanel: some View {
         VStack(spacing: 10) {
             providerHeader("Web Recon uses Katana")
@@ -512,6 +554,8 @@ struct ReconView: View {
             return "Add an in-scope domain or hostname using the target bar above."
         case .domain:
             return "Add an in-scope domain using the target bar above."
+        case .ip:
+            return "Add an explicitly authorized IPv4 or IPv6 address using the target bar above."
         case .web, .webAnalysis, .contentDiscovery:
             return "Add an in-scope HTTP(S) URL using the target bar above — public (https://your-domain.example/) or a locally running app (http://localhost:3000). No public DNS is required."
         }
@@ -525,6 +569,8 @@ struct ReconView: View {
             return "DNS Recon requires a Domain or Hostname target; the selected target is \(target.targetType)."
         case .domain:
             return "Domain Recon requires a Domain target; the selected target is \(target.targetType)."
+        case .ip:
+            return "IP Recon requires an IPAddress target; the selected target is \(target.targetType)."
         case .web:
             return "Web Recon requires an HTTP(S) URL target; the selected target is \(target.targetType)."
         case .webAnalysis:

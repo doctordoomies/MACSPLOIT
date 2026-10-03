@@ -92,4 +92,14 @@ actor ReplyTransport: CoreTransport {
         let options = params["options"] as! [String: Any]
         #expect(options["wordlist_path"] as? String == "/tmp/list.txt")
     }
+
+    @Test func testStartChainEncodesIpReconChain() async throws {
+        let reply = ReplyTransport(#"{"result":{"id":"c","workspace_id":"w","target_id":"t","name":"IP Recon","status":"PENDING","created_at":"now","updated_at":"now","error_code":null}}"#)
+        _ = try await CoreClient(transport: reply).startChain(workspace: "w", target: "t", chain: "ip_recon")
+        let data = await reply.requests[0]
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(object["method"] as? String == "start_chain")
+        let params = object["params"] as! [String: Any]
+        #expect(params["chain"] as? String == "ip_recon")
+    }
 }
