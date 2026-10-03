@@ -152,6 +152,7 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 - Phase 2C Content Discovery with bounded ffuf and analyst-selected wordlists
 - Path-aware CI and repository security checks
 - Local/private web-target support across Web Analysis, Web Recon, and Content Discovery (PR #31 / Issue #20)
+- Direct IP Recon for explicitly scoped IPv4/IPv6 targets (PR #35 / Issue #33)
 - CI routing + merge-gate hardening with authoritative Advanced CodeQL uploads (PR #32 / Issue #30)
 
 ## Newly completed during this roadmap review
@@ -166,7 +167,7 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 
 ## Important gaps discovered during the product review
 
-- no first-class direct-IP recon workflow;
+- Milestone 1 owner testing exposed provider-setup, authorization-flow, and responsive Recon UI usability gaps tracked by Issue #36;
 - bug bounty program context is not modeled;
 - there is no Findings system yet;
 - OSINT target types exist, but OSINT providers are not implemented;
@@ -213,7 +214,9 @@ dependencies such as requiring public DNS first.
 ## 1.1 Localhost and private targets
 
 **Issue #20 — DONE via PR #31.** Local/private web-target support is merged and verified.
-Direct IP Recon (1.2) is the active Milestone 1 implementation item; Milestone 1 is not yet complete.
+Direct IP Recon (1.2) is also complete via PR #35. Milestone 1 remains active because the
+owner-discovered UX stabilization pass (1.3) and the real-target acceptance matrix (1.4)
+are still outstanding.
 
 Support first-class, explicitly scoped web targets such as:
 
@@ -238,8 +241,8 @@ Requirements:
 
 ## 1.2 Direct IP Recon
 
-**Issue #33 — implemented in an open PR (MERGE GATE; not yet merged).** Milestone 1
-remains ACTIVE; the real-target acceptance matrix (1.3) is still outstanding.
+**Issue #33 — DONE via PR #35.** Direct IP Recon is merged to `main`, Issue #33 is
+closed, and post-merge CI + authoritative Advanced CodeQL are green.
 
 Add an explicit workflow for a selected, in-scope IP address:
 
@@ -264,9 +267,34 @@ Requirements:
 not automatically enabled by this milestone; that receives its own later design so a
 scope range cannot accidentally become a mass-scan instruction.
 
-## 1.3 Real-target acceptance matrix
+## 1.3 UX stabilization
 
-Add/maintain an acceptance matrix covering at minimum:
+**Issue #36 — ACTIVE.** Owner testing after Direct IP Recon exposed usability gaps that
+must be fixed before the acceptance matrix continues.
+
+Required outcomes:
+
+- Homebrew is optional and may be recommended when available, but MACSPLOIT must not
+  present Homebrew as a requirement for compatible external providers.
+- Existing compatible provider executables discovered through supported paths / PATH /
+  explicit overrides remain first-class.
+- The Rust scope boundary remains authoritative, but an out-of-scope target can be
+  intentionally authorized from the Recon workflow through an explicit confirmation.
+- `Authorize & Run` adds only the narrowest exact target scope entry required, persists
+  it, re-checks core authorization, and then launches the selected workflow.
+- Every live Run surface keeps a visible reminder that the operator must own or have
+  explicit permission to assess the target.
+- Recon is redesigned into a responsive workbench surface so controls are not obscured
+  by the sidebar and workflow selection remains usable across supported window sizes.
+- First-run setup/onboarding, including the broader authorization agreement, is a
+  separate owner design discussion and is not silently added to this stabilization pass.
+
+Do not weaken scope semantics, add broad CIDR scanning, auto-install Homebrew/providers,
+or begin Milestone 2 work as part of this issue.
+
+## 1.4 Real-target acceptance matrix
+
+After Issue #36 lands and receives owner UI acceptance, add/maintain an acceptance matrix covering at minimum:
 
 - domain;
 - hostname;
@@ -958,7 +986,9 @@ After the agent finishes:
 | --- | --- |
 | PR #26 / Issue #24 — Tool Manager | Milestone 0 — DONE |
 | Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
-| Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — MERGE GATE (PR open) |
+| Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
+| Issue #36 — UX stabilization | Milestone 1.3 — ACTIVE |
+| Real-target acceptance matrix | Milestone 1.4 — NEXT after Issue #36 |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
@@ -980,7 +1010,7 @@ M0  Consolidate current beta
     Tool Manager DONE + CodeQL cutover
             ↓
 M1  Real-target usability
-    localhost/private + Direct IP Recon
+    localhost/private + Direct IP Recon + UX stabilization + acceptance
             ↓
 M2  Bug bounty workbench + Findings foundation
             ↓
@@ -1017,11 +1047,11 @@ formal release gate around Core 1.0.
 
 Do **not** start Historical URL Intelligence yet.
 
-M0 is complete; Milestone 1.1 (localhost/local/private targets) is merged (PR #31). The next
-execution sequence is:
+M0 is complete; Milestone 1.1 is merged via PR #31 and Milestone 1.2 Direct IP Recon is
+merged via PR #35 with green post-merge CI and Advanced CodeQL. The next execution sequence is:
 
-1. land Direct IP Recon (Issue #33 / PR #35 — Milestone 1.2, currently at the merge gate);
-2. complete the Milestone 1.3 real-target acceptance matrix;
+1. complete Issue #36 — Milestone 1.3 UX Stabilization;
+2. complete the Milestone 1.4 real-target acceptance matrix;
 3. owner full-product walkthrough and fix any acceptance bugs;
 4. reach the Milestone 1 exit condition;
 5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
