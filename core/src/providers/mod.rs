@@ -2740,8 +2740,11 @@ mod tests {
 
     #[test]
     fn nmap_xml_parser_does_not_expand_entities() {
-        // roxmltree is non-validating and does not expand external/DTD entities.
-        // A billion-laughs-style document must not blow up or expand into a service.
+        // Only a *simple* DOCTYPE (no internal subset) is stripped. A DOCTYPE that
+        // carries an internal subset — the entity-definition / billion-laughs vector —
+        // is left intact, and the DTD-rejecting parser then refuses the document, so a
+        // custom entity like &x; is never expanded. The guarantee is deterministic:
+        // such input fails to parse.
         let xml = concat!(
             "<?xml version=\"1.0\"?>",
             "<!DOCTYPE nmaprun [ <!ENTITY x \"aaaaaaaaaa\"> ]>",
@@ -2749,11 +2752,11 @@ mod tests {
             "<ports><port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/>",
             "<service name=\"&x;\"/></port></ports></host></nmaprun>",
         );
-        // Either the parser rejects the DTD/entity, or it does not expand it; either
-        // way there is no entity expansion and no panic.
-        if let Ok(discoveries) = NmapProvider.parse(&nmap_exec(xml)) {
-            assert!(discoveries.iter().all(|d| !d.value.contains("aaaaaaaaaa")));
-        }
+        let result = NmapProvider.parse(&nmap_exec(xml));
+        assert!(
+            result.is_err(),
+            "internal-subset DTD must be rejected, not expanded"
+        );
     }
 
     #[test]
