@@ -7,6 +7,17 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Local & private web targets (Milestone 1.1):** `localhost`, loopback
+  (`127.0.0.0/8`, `::1`), explicitly scoped private IPs/CIDRs, `.localhost`, and
+  `/etc/hosts` dev names are now first-class for the web workflows — Web Analysis, Web
+  Recon, and Content Discovery run directly against a locally running app with custom
+  ports and IPv6 URL syntax, with no public DNS and no Domain target required. Local or
+  private status never implies authorization: the target host must be in explicit
+  workspace scope, which the Rust core enforces. Cross-host redirects and crawl/ffuf
+  discoveries remain fail-closed (distinct `localhost` / `127.0.0.1` / `::1` identities;
+  no automatic scope widening; cloud-metadata hosts are never auto-probed). Adds a
+  non-authoritative "LOCAL TARGET" UI indicator, local scope quick-fill and guidance,
+  and offline tests across classification, scope, and all three web providers.
 - **Content Discovery (Phase 2C):** an external `ffuf` provider (ACTIVE) and a
   `Content Discovery` chain for bounded path discovery over an explicitly selected
   in-scope HTTP(S) URL with a user-chosen wordlist. The wordlist is validated in the

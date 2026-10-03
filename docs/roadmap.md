@@ -212,7 +212,8 @@ dependencies such as requiring public DNS first.
 
 ## 1.1 Localhost and private targets
 
-**Existing issue: #20**
+**Existing issue: #20 — implemented in an open PR (not yet merged).** Direct IP Recon (1.2)
+remains the next Milestone 1 implementation item; Milestone 1 is not yet complete.
 
 Support first-class, explicitly scoped web targets such as:
 

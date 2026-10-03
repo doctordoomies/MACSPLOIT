@@ -41,6 +41,24 @@ cannot prove that arbitrary content contains no secret.
   evasion). Discoveries are same-host only (no cross-host scope expansion). The
   persisted command **redacts the local wordlist path to its file name** so a private
   filesystem path is not stored in evidence.
+- Local and private web targets (e.g. `http://localhost:3000`, `http://127.0.0.1:8080`,
+  `http://[::1]:8080`, `http://192.168.1.50:8000`, `http://app.localhost:5173`, or an
+  `/etc/hosts` dev name) are first-class for the web workflows, but **local/private status
+  is never authorization**. The analyst must place the host in explicit workspace scope;
+  the Rust core enforces it exactly as for public targets, and the SwiftUI layer is not the
+  boundary. `localhost`, `127.0.0.1`, and `::1` are treated as **distinct authorization
+  identities** (one does not imply another), and an exact `localhost` entry does not widen
+  to `*.localhost` or to subdomain labels — a single-label wildcard suffix is rejected by
+  scope normalization, so local wildcards must be authorized as explicit hosts. Same-host
+  filtering for crawling (Katana) and content discovery (ffuf) is by **hostname and is
+  port-agnostic** (another port on the same hostname is in-host; a different host identity
+  is dropped), matching public behavior; cross-host redirects, crawl results, and ffuf
+  results remain fail-closed and are only followed/recorded when the destination is itself
+  in scope. Discovery never widens authorization, so link-local/cloud-metadata hosts such
+  as `169.254.169.254` are never automatically added or probed from an authorized page. No
+  `/etc/hosts` is parsed by MACSPLOIT; local names resolve through the normal system stack.
+  TLS validation stays enabled for local HTTPS (a self-signed `https://localhost` surfaces a
+  clear TLS failure rather than being silently trusted).
 - Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

@@ -13,6 +13,14 @@ stage plans are fixed presets; a general dependency-graph scheduler remains plan
 `dns_recon`, `domain_recon`, `web_recon`, `web_analysis`, `content_discovery`); the
 analyst chooses and launches a chain explicitly — adding a target never starts one.
 
+The three web chains (**Web Recon**, **Web Analysis**, **Content Discovery**) accept an
+explicitly scoped local or private URL target — `http://localhost:3000`,
+`http://127.0.0.1:8080`, `http://[::1]:8080`, a private IP/CIDR host, or an `/etc/hosts`
+dev name — with custom ports and no public-DNS prerequisite. Local/private status is not
+authorization: the host must be in workspace scope, enforced by the core. Same-host
+filtering is by hostname (port-agnostic); cross-host redirects and off-host crawl/ffuf
+results stay fail-closed, and `localhost` / `127.0.0.1` / `::1` are distinct identities.
+
 ## Content Discovery (Phase 2C)
 
 An explicit, bounded path-discovery chain over an in-scope HTTP(S) URL using ffuf

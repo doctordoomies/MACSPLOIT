@@ -41,7 +41,7 @@ The app runs locally, with no telemetry or hosted assessment backend. Real provi
 
 ## Workflows
 
-Five recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision.
+Five recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision. The web modes (Web Analysis, Web Recon, Content Discovery) work equally against public sites and explicitly scoped local/private targets such as `http://localhost:3000` — see [Test a local application](#test-a-local-application).
 
 ### DNS Recon
 
@@ -228,6 +228,43 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT shows the missing tool and installation command instead of leaving the workflow unexplained.
 
 
+
+### Test a local application
+
+MACSPLOIT does not require a site to be publicly deployed or publicly resolvable. Run an
+authorized app locally and assess it directly — no public DNS, no fake domain, and no
+Domain target first.
+
+```text
+npm run dev            # or: docker compose up  → publishes 127.0.0.1:8080
+# app now listening on localhost:3000
+```
+
+```text
+Workspace scope   localhost          # or 127.0.0.1 / ::1 / a private IP or CIDR / a dev hostname
+Target            http://localhost:3000
+```
+
+1. Create a workspace and, with **Edit Scope**, authorize the local host (the **Use Local
+   App Scope** button fills in `localhost`, `127.0.0.1`, `::1`). Authorizing a host is a
+   deliberate action — being local or private never authorizes a target by itself.
+2. Add a local URL target such as `http://localhost:3000`, `http://127.0.0.1:8080`, or
+   `http://[::1]:8080`. Custom ports and IPv6 URL syntax are supported; a **LOCAL TARGET**
+   tag appears (classification only — not a safety or authorization claim).
+3. Run **Web Analysis** (built in), **Web Recon** (needs Katana), or **Content Discovery**
+   (needs ffuf + a selected wordlist). Each produces the same assets, relationships, and
+   evidence as for a public target.
+
+Custom development names mapped in `/etc/hosts` (for example `127.0.0.1 target-company.test`)
+work through normal system resolution — authorize `target-company.test` in scope and use
+`http://target-company.test:3000`. A Docker Compose service published on `127.0.0.1:8080`
+is just the target `http://127.0.0.1:8080`; MACSPLOIT does not manage containers.
+
+Safety is unchanged for local targets: scope is enforced by the Rust core; `localhost`,
+`127.0.0.1`, and `::1` are distinct authorization identities; cross-host redirects and
+off-host crawl/ffuf results are fail-closed; TLS validation stays on (a self-signed
+`https://localhost` currently surfaces a clear TLS failure — use plain HTTP locally for
+now); and cloud-metadata hosts such as `169.254.169.254` are never auto-added or probed.
 
 ### Try MACSPLOIT without touching the network
 
