@@ -104,15 +104,21 @@ impl ToolConfig {
 }
 
 fn usable_executable(path: &Path) -> Option<PathBuf> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    // Reject symlinks: the resolved target could point outside expected roots.
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return None;
+    // Resolve the full symlink chain to a canonical path before accepting it. Homebrew
+    // links CLI tools under /opt/homebrew/bin and /usr/local/bin as symlinks into the
+    // Cellar, so rejecting symlinks outright would report brew-installed providers as
+    // missing. canonicalize fails closed on a broken link, a symlink loop, or any
+    // missing component, and never executes a shell. We then require the resolved
+    // target to be a regular, executable file and return that canonical path.
+    let resolved = std::fs::canonicalize(path).ok()?;
+    let metadata = std::fs::metadata(&resolved).ok()?;
+    if !metadata.is_file() {
+        return None; // e.g. a symlink that points at a directory
     }
     if metadata.permissions().mode() & 0o111 == 0 {
-        return None;
+        return None; // resolved target is not executable
     }
-    Some(path.to_path_buf())
+    Some(resolved)
 }
 
 /// Installation state of an external provider tool, surfaced to the UI.
@@ -291,11 +297,101 @@ mod tests {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut config = ToolConfig::default();
         config.overrides.insert("faketool".into(), script.clone());
-        assert_eq!(config.locate("faketool"), Some(script));
+        // locate returns the canonical path (temp dirs may sit under symlinked roots).
+        assert_eq!(
+            config.locate("faketool"),
+            Some(script.canonicalize().unwrap())
+        );
         assert_eq!(
             ToolConfig::default().locate("definitely-not-a-real-tool-xyz"),
             None
         );
+    }
+
+    fn write_exec(path: &Path) {
+        std::fs::write(path, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn locate_accepts_regular_executable_on_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let tool = bin.join("macsploit-faketool-xyz");
+        write_exec(&tool);
+        let mut config = ToolConfig::default();
+        config.extra_paths.push(bin);
+        assert_eq!(
+            config.locate("macsploit-faketool-xyz"),
+            Some(tool.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn locate_resolves_homebrew_style_symlink_to_cellar() {
+        // tmp/Cellar/nmap/7.99/bin/nmap  +  tmp/bin/nmap -> ../Cellar/nmap/7.99/bin/nmap
+        let dir = tempfile::tempdir().unwrap();
+        let cellar_bin = dir.path().join("Cellar/faketool/7.99/bin");
+        std::fs::create_dir_all(&cellar_bin).unwrap();
+        let real = cellar_bin.join("macsploit-cellartool-xyz");
+        write_exec(&real);
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let link = bin.join("macsploit-cellartool-xyz");
+        std::os::unix::fs::symlink(
+            "../Cellar/faketool/7.99/bin/macsploit-cellartool-xyz",
+            &link,
+        )
+        .unwrap();
+
+        let mut config = ToolConfig::default();
+        config.extra_paths.push(bin);
+        // Discovery succeeds via the symlink and returns the resolved real executable.
+        assert_eq!(
+            config.locate("macsploit-cellartool-xyz"),
+            Some(real.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn usable_executable_rejects_broken_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("nmap");
+        std::os::unix::fs::symlink(dir.path().join("missing-target"), &link).unwrap();
+        assert_eq!(usable_executable(&link), None);
+    }
+
+    #[test]
+    fn usable_executable_rejects_symlink_to_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("somedir");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = dir.path().join("nmap");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(usable_executable(&link), None);
+    }
+
+    #[test]
+    fn usable_executable_rejects_symlink_to_non_executable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("plain.txt");
+        std::fs::write(&target, "data").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let link = dir.path().join("nmap");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(usable_executable(&link), None);
+    }
+
+    #[test]
+    fn usable_executable_rejects_symlink_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::os::unix::fs::symlink(&b, &a).unwrap();
+        std::os::unix::fs::symlink(&a, &b).unwrap();
+        // canonicalize fails with ELOOP, so the candidate is rejected.
+        assert_eq!(usable_executable(&a), None);
     }
 
     #[test]
