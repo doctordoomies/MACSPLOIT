@@ -1,17 +1,41 @@
 # Recon Chain execution
 
-Status: **IMPLEMENTED** six chain presets — offline **Synthetic Recon**; built-in
+Status: **IMPLEMENTED** seven chain presets — offline **Synthetic Recon**; built-in
 **DNS Recon**; the full **Domain Recon** (Subfinder → DNS → Nmap → HTTPX);
-**Web Recon** (Katana crawl); **Web Analysis** (native HTTP analysis); and
-**Content Discovery** (bounded ffuf path discovery).
+**IP Recon** (Nmap → HTTPX from one selected IP); **Web Recon** (Katana crawl);
+**Web Analysis** (native HTTP analysis); and **Content Discovery** (bounded ffuf path
+discovery).
 
 A chain requests provider capabilities and feeds scoped discoveries into later
 stages. It is not a shell sequence of installed tools. A stage may pin an exact
 provider so a capability offered by more than one provider is unambiguous. The
 stage plans are fixed presets; a general dependency-graph scheduler remains planned.
 `start_chain` selects the preset by a `chain` argument (`synthetic` by default, or
-`dns_recon`, `domain_recon`, `web_recon`, `web_analysis`, `content_discovery`); the
-analyst chooses and launches a chain explicitly — adding a target never starts one.
+`dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`,
+`content_discovery`); the analyst chooses and launches a chain explicitly — adding a
+target never starts one.
+
+## IP Recon (Milestone 1.2)
+
+An explicit active workflow that begins from one selected, in-scope **IPAddress** target
+and reuses the existing Nmap and HTTPX providers — no domain, DNS, or Subfinder step:
+
+```text
+Target Validation
+  → Port + Service Discovery (Nmap, ACTIVE)
+  → HTTP Probing (HTTPX, ACTIVE_LOW_IMPACT)
+  → Persistence → Completion
+```
+
+Only an `IPAddress` target is accepted (Domain/Hostname/URL/CIDR → `InvalidTarget`). A
+CIDR is a scope construct, not a target: an exact IP or a containing CIDR authorizes the
+run, but the chain never expands a CIDR into a sweep and hands Nmap only the selected IP
+asset (plus this chain's own discoveries), filtered to scope. IPv4 and IPv6 are both
+supported (`-6` is added for an IPv6 batch); IPv6 service probe URLs are bracketed. The
+normalized graph is identical to Domain Recon's tail: `IPAddress → exposes → Port →
+serves → Service`, then `has_endpoint → Website → uses_technology → Technology`. The
+conservative Nmap profile is unchanged, and the chain stops at HTTP probing — no crawling,
+content discovery, native HTTP analysis, or vulnerability scanning follows automatically.
 
 The three web chains (**Web Recon**, **Web Analysis**, **Content Discovery**) accept an
 explicitly scoped local or private URL target — `http://localhost:3000`,

@@ -33,7 +33,7 @@ empty request ID; an oversized frame closes the helper session.
 | add_target | workspace_id, value | Classified stored target |
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
-| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
+| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
 | list_providers | none | Provider metadata plus live installation status (state/version) |
@@ -51,7 +51,9 @@ enforce the stored scope independently of the SwiftUI state.
 
 The `offline_only` hello field is retained in protocol v1 for wire compatibility.
 It is now `false`: Synthetic Recon remains offline, while DNS Recon, Domain Recon,
-Web Recon, and Web Analysis can perform explicitly launched network activity.
+IP Recon, Web Recon, Web Analysis, and Content Discovery can perform explicitly
+launched network activity. Adding `ip_recon` is a backward-compatible extension of the
+existing `chain` string enum and does not change the protocol version.
 
 
 ### Provider Center status additions (v1 compatible)

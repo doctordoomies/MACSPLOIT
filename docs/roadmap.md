@@ -238,7 +238,8 @@ Requirements:
 
 ## 1.2 Direct IP Recon
 
-**Current implementation issue: #33.**
+**Issue #33 — implemented in an open PR (MERGE GATE; not yet merged).** Milestone 1
+remains ACTIVE; the real-target acceptance matrix (1.3) is still outstanding.
 
 Add an explicit workflow for a selected, in-scope IP address:
 

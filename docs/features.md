@@ -18,6 +18,7 @@ today, not aspirations. Statuses:
 | Target classification | STABLE | Domain/URL/IP/CIDR/email/username/hostname, IDNA |
 | Scope enforcement | STABLE | Exact/wildcard/CIDR, IPv4/IPv6, per-asset for active providers |
 | Local & private web targets | BETA | `localhost`/loopback/`::1`/private IP/CIDR/`.localhost`/`/etc/hosts` names as first-class web targets with custom ports; no public DNS; scope still authoritative; `localhost`≠`127.0.0.1`≠`::1` |
+| Direct IP Recon | BETA | Explicit in-scope IPv4/IPv6 → Nmap → HTTPX; no DNS prerequisite; one selected IP only (no CIDR expansion); IPv6 probe URLs bracketed |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
 | Evidence | STABLE | Raw provider output preserved, SHA-256 verified |
 | Activity / events | STABLE | Durable, replayable |

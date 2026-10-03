@@ -190,7 +190,13 @@ deterministic XML) injected via `MACSPLOIT_NMAP` — no real scanning.
 Status: **IMPLEMENTED** (Phase 1D). HTTPX performs low-impact HTTP/HTTPS probing of
 in-scope web services discovered by Nmap and produces Website and Technology assets.
 It runs shell-free through the centralized supervisor with bounded output, timeout,
-cancellation, JSONL parsing, evidence capture, and scope enforcement.
+cancellation, JSONL parsing, evidence capture, and scope enforcement. Probe-URL hosts
+are IP-aware: an IPv6 service literal is bracketed (`http://[2001:db8::10]:443`) so the
+URL is valid, and the Website is linked back to its owning IP asset for both families.
+
+Nmap and HTTPX also power **IP Recon** (Milestone 1.2): the same two providers run from a
+single explicitly selected in-scope IP target (no DNS step), with the same conservative
+Nmap profile and the same asset/evidence model. See [recon-chain](recon-chain.md).
 
 ## KatanaProvider
 
