@@ -42,7 +42,49 @@ public struct Workspace: Codable, Identifiable, Sendable, Equatable {
 public struct Target: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, originalValue: String, normalizedValue: String, targetType: String, createdAt: String
     public let assetId: String?
+
+    /// The scope-relevant host for this target: the URL host (brackets stripped) for a
+    /// URL, or the normalized value for an IP/hostname/domain. `nil` for other types.
+    public var scopeHost: String? {
+        switch targetType {
+        case "URL":
+            guard let url = URL(string: normalizedValue), let host = url.host else { return nil }
+            return host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        case "IPAddress", "Hostname", "Domain":
+            return normalizedValue.lowercased()
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this target's host is local/private *by classification only*. This is
+    /// informational for the UI; it never implies the target is authorized, safe, or
+    /// offline. Authorization is always the explicit workspace scope enforced by the core.
+    public var isLocalOrPrivateHost: Bool {
+        scopeHost.map(Target.isLocalOrPrivateHost) ?? false
+    }
+
+    public static func isLocalOrPrivateHost(_ host: String) -> Bool {
+        if host == "localhost" || host.hasSuffix(".localhost") { return true }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        if octets.count == 4, let parsed = try? octets.map({ seg -> Int in
+            guard let n = Int(seg), (0...255).contains(n) else { throw LocalHostParseError.invalid }
+            return n
+        }) {
+            switch (parsed[0], parsed[1]) {
+            case (127, _), (10, _), (192, 168), (169, 254): return true
+            case (172, 16...31): return true
+            default: return false
+            }
+        }
+        if host == "::1" { return true }
+        // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
+        if host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        return false
+    }
 }
+
+private enum LocalHostParseError: Error { case invalid }
 public struct Asset: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetType: String, canonicalIdentity: String, displayValue: String, firstSeen: String, lastSeen: String
     public let metadata: JSONValue
