@@ -957,8 +957,8 @@ After the agent finishes:
 | Issue / PR | Roadmap placement |
 | --- | --- |
 | PR #26 / Issue #24 — Tool Manager | Milestone 0 — DONE |
-| Issue #20 — localhost/local/private targets | Milestone 1 |
-| Direct IP Recon | Milestone 1 — implementation issue to create when work begins |
+| Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
+| Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — MERGE GATE (PR open) |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
@@ -969,7 +969,7 @@ After the agent finishes:
 | Issue #21 — AI node UI | Milestone 9 |
 | Issue #9 — AI-assisted agents | Milestone 9 |
 | Issue #15 — finish security categories before AI | Governing roadmap principle |
-| Issue #17 — faster checks | Continuous engineering; effectively completed by optimized CI, pending close |
+| Issue #17 — faster checks | Completed / closed (optimized CI in place) |
 
 ---
 
@@ -1017,13 +1017,13 @@ formal release gate around Core 1.0.
 
 Do **not** start Historical URL Intelligence yet.
 
-The next execution sequence is:
+M0 is complete; Milestone 1.1 (localhost/local/private targets) is merged (PR #31). The next
+execution sequence is:
 
-1. verify the merged Tool Manager remains green on `main`;
-2. complete the CodeQL cutover;
-3. implement Issue #20 localhost/local/private targets;
-4. implement Direct IP Recon;
-5. complete the Milestone 1 real-target acceptance matrix;
-6. only then advance to the Bug Bounty + Findings milestone.
+1. land Direct IP Recon (Issue #33 / PR #35 — Milestone 1.2, currently at the merge gate);
+2. complete the Milestone 1.3 real-target acceptance matrix;
+3. owner full-product walkthrough and fix any acceptance bugs;
+4. reach the Milestone 1 exit condition;
+5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
 
 That sequence remains authoritative until this roadmap is deliberately changed.
