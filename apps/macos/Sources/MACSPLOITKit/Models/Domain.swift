@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 public enum JSONValue: Codable, Sendable, Equatable {
     case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
@@ -42,6 +43,52 @@ public struct Workspace: Codable, Identifiable, Sendable, Equatable {
 public struct Target: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, originalValue: String, normalizedValue: String, targetType: String, createdAt: String
     public let assetId: String?
+
+    /// The scope-relevant host for this target: the URL host (brackets stripped) for a
+    /// URL, or the normalized value for an IP/hostname/domain. `nil` for other types.
+    public var scopeHost: String? {
+        switch targetType {
+        case "URL":
+            guard let url = URL(string: normalizedValue), let host = url.host else { return nil }
+            return host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        case "IPAddress", "Hostname", "Domain":
+            return normalizedValue.lowercased()
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this target's host is local/private *by classification only*. This is
+    /// informational for the UI; it never implies the target is authorized, safe, or
+    /// offline. Authorization is always the explicit workspace scope enforced by the core.
+    public var isLocalOrPrivateHost: Bool {
+        scopeHost.map(Target.isLocalOrPrivateHost) ?? false
+    }
+
+    public static func isLocalOrPrivateHost(_ host: String) -> Bool {
+        let host = host.lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") { return true }
+
+        // IP-range checks apply only to strings that actually parse as IP literals, so an
+        // ordinary hostname (e.g. "fdexample.com", "fe80example.test") is never matched by
+        // a string prefix. Parsing is via Foundation's Network framework (no dependency).
+        if let v4 = IPv4Address(host) {
+            let b = [UInt8](v4.rawValue) // 4 bytes
+            switch (b[0], b[1]) {
+            case (127, _), (10, _), (192, 168), (169, 254): return true // loopback/private/link-local
+            case (172, 16...31): return true                            // 172.16.0.0/12
+            default: return false
+            }
+        }
+        if let v6 = IPv6Address(host) {
+            let b = [UInt8](v6.rawValue) // 16 bytes
+            if b[0...14].allSatisfy({ $0 == 0 }) && b[15] == 1 { return true } // ::1 loopback
+            if b[0] == 0xfe && (b[1] & 0xc0) == 0x80 { return true }           // fe80::/10 link-local
+            if (b[0] & 0xfe) == 0xfc { return true }                           // fc00::/7 unique-local
+            return false
+        }
+        return false
+    }
 }
 public struct Asset: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetType: String, canonicalIdentity: String, displayValue: String, firstSeen: String, lastSeen: String

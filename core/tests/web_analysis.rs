@@ -146,6 +146,133 @@ fn web_analysis_runs_natively_end_to_end_and_persists() {
 }
 
 #[test]
+fn web_analysis_runs_against_localhost_with_custom_port_and_follows_in_scope_redirect() {
+    // A locally running app on a custom port, authorized by an explicit `localhost`
+    // scope entry. No public DNS, no Domain target. An in-scope relative redirect is
+    // followed and the custom port is preserved end to end.
+    let temp = tempfile::tempdir().unwrap();
+    let transport = StaticWebTransport::new()
+        .with_response("http://localhost:3000/", 301, &[("Location", "/login")], "")
+        .with_response(
+            "http://localhost:3000/login",
+            200,
+            &[
+                ("Server", "devserver"),
+                ("X-Frame-Options", "DENY"),
+                ("Set-Cookie", "sid=LOCALSECRET; HttpOnly; Path=/"),
+            ],
+            "<html></html>",
+        )
+        .with_response(
+            "http://localhost:3000/robots.txt",
+            200,
+            &[],
+            "User-agent: *\nDisallow: /admin\n",
+        );
+    let engine = Engine::open_with_web(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        ToolConfig::default(),
+        Arc::new(StaticDnsResolver::new()),
+        Arc::new(transport),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Local App", &["localhost".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "http://localhost:3000/")
+        .unwrap();
+
+    engine
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebAnalysis,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let snapshot = wait(&engine, workspace.id);
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
+
+    // The Website asset is the followed, in-scope destination with its custom port.
+    assert!(snapshot
+        .assets
+        .iter()
+        .any(|a| a.asset_type == AssetType::Website
+            && a.canonical_identity == "http://localhost:3000/login"));
+
+    let raw = engine
+        .store
+        .read_evidence(workspace.id, snapshot.evidence[0].id)
+        .unwrap();
+    assert!(raw.contains("localhost:3000"));
+    assert!(raw.contains("/admin")); // robots fetched on the custom-port host
+    assert!(!raw.contains("LOCALSECRET")); // cookie value never persisted
+}
+
+#[test]
+fn web_analysis_does_not_follow_a_cross_host_local_redirect() {
+    // localhost and 127.0.0.1 are distinct authorization identities: a redirect from an
+    // authorized localhost target to an unauthorized loopback literal is recorded but
+    // never followed (fail closed), even though both are "local".
+    let temp = tempfile::tempdir().unwrap();
+    let transport = StaticWebTransport::new()
+        .with_response(
+            "http://localhost:3000/",
+            302,
+            &[("Location", "http://127.0.0.1:9000/")],
+            "",
+        )
+        .with_response("http://localhost:3000/robots.txt", 404, &[], "");
+    let engine = Engine::open_with_web(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        ToolConfig::default(),
+        Arc::new(StaticDnsResolver::new()),
+        Arc::new(transport),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Local App", &["localhost".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "http://localhost:3000/")
+        .unwrap();
+
+    engine
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebAnalysis,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let snapshot = wait(&engine, workspace.id);
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
+
+    // Website identity stays on the authorized host; the cross-host hop is not followed.
+    assert!(snapshot
+        .assets
+        .iter()
+        .any(|a| a.asset_type == AssetType::Website
+            && a.canonical_identity == "http://localhost:3000/"));
+    assert!(!snapshot
+        .assets
+        .iter()
+        .any(|a| a.canonical_identity.contains("127.0.0.1")));
+    let raw = engine
+        .store
+        .read_evidence(workspace.id, snapshot.evidence[0].id)
+        .unwrap();
+    assert!(raw.contains("out-of-scope host not followed"));
+}
+
+#[test]
 fn web_analysis_requires_in_scope_url() {
     let temp = tempfile::tempdir().unwrap();
     let engine = Engine::open_with_web(

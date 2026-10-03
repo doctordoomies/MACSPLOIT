@@ -2756,6 +2756,45 @@ mod tests {
     }
 
     #[test]
+    fn katana_parses_local_targets_preserving_port_and_same_host_semantics() {
+        // Same-host is defined by hostname (port-agnostic), matching public behavior:
+        // a loopback literal is a *different* host from `localhost` and is dropped, but
+        // another port on the same hostname is kept. No public DNS is involved.
+        let jsonl = concat!(
+            r#"{"request":{"method":"GET","endpoint":"http://localhost:3000/login"}}"#,
+            "\n",
+            r#"{"request":{"method":"GET","endpoint":"http://localhost:4000/other"}}"#,
+            "\n",
+            r#"{"request":{"method":"GET","endpoint":"http://127.0.0.1:3000/x"}}"#,
+            "\n",
+            r#"{"request":{"method":"GET","endpoint":"http://localhost:3000/login"}}"#,
+            "\n",
+        );
+        let execution = Execution {
+            target: "http://localhost:3000/".into(),
+            capability: Capability::WebCrawling,
+            command: vec!["katana".into()],
+            stdout: jsonl.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            exit_status: Some(0),
+            pid: None,
+            timed_out: false,
+            started_at: crate::now(),
+            ended_at: crate::now(),
+        };
+        let values: Vec<_> = KatanaProvider
+            .parse(&execution)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.value)
+            .collect();
+        assert!(values.contains(&"http://localhost:3000/login".to_string()));
+        assert!(values.contains(&"http://localhost:4000/other".to_string())); // same hostname, other port
+        assert!(!values.iter().any(|v| v.contains("127.0.0.1"))); // distinct host identity dropped
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
     fn katana_missing_executable_reports_missing() {
         let mut tools = ToolConfig::default();
         tools
@@ -3072,6 +3111,31 @@ mod tests {
             discoveries[1].metadata["redirect_location"],
             json!("https://example.test/api/")
         );
+    }
+
+    #[test]
+    fn ffuf_parses_local_base_preserves_port_and_drops_offhost() {
+        let json = r#"{"results":[
+            {"url":"http://localhost:3000/admin","status":200,"length":10,"redirectlocation":""},
+            {"url":"http://localhost:3000/secret","status":403,"length":20,"redirectlocation":""},
+            {"url":"http://127.0.0.1:3000/x","status":200,"length":5,"redirectlocation":""},
+            {"url":"http://localhost:3000/missing","status":404,"length":0,"redirectlocation":""}
+        ]}"#;
+        let discoveries = FfufProvider
+            .parse(&ffuf_exec("http://localhost:3000/", json))
+            .unwrap();
+        let values: Vec<_> = discoveries.iter().map(|d| d.value.as_str()).collect();
+        // Custom port preserved; 404 and the distinct loopback host dropped.
+        assert_eq!(
+            values,
+            vec![
+                "http://localhost:3000/admin",
+                "http://localhost:3000/secret"
+            ]
+        );
+        assert!(discoveries
+            .iter()
+            .all(|d| d.source.as_deref() == Some("http://localhost:3000/")));
     }
 
     #[test]

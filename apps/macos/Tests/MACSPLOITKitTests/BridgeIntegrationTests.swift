@@ -205,6 +205,39 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_WEB_FIXTURE"] != nil))
+    func testWebAnalysisRunsAgainstLocalhostThroughBridgeOffline() async throws {
+        // An explicitly scoped localhost URL target runs Web Analysis with no public DNS
+        // and no Domain target; the custom port is preserved end to end.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-localweb-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        let workspace = try await client.createWorkspace(name: "Local web bridge test", scope: ["localhost"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "http://localhost:3000/")
+        #expect(target.targetType == "URL")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "web_analysis")
+        let deadline = Date().addingTimeInterval(15)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" { completed = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.assets.contains { $0.assetType == "Website" && $0.canonicalIdentity == "http://localhost:3000/" })
+        #expect(result.providerRuns.first?.providerId == "native_http")
+        let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
+        #expect(evidence.rawJson.contains("localhost:3000"))
+        #expect(!evidence.rawJson.contains("LOCALSECRET")) // cookie value never persisted
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_FFUF"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_FFUF_WORDLIST"] != nil))
     func testContentDiscoveryRunsFfufThroughBridgeOffline() async throws {

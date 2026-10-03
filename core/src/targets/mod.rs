@@ -186,4 +186,67 @@ mod tests {
             "https://example.test/a?x=1"
         );
     }
+
+    #[test]
+    fn classifies_local_and_private_targets() {
+        // Bare scope-style entries: localhost is a single-label Hostname; loopback and
+        // private literals (v4/v6) are IPAddresses; dotted dev names are Domains.
+        for (input, kind, normalized) in [
+            ("localhost", TargetType::Hostname, "localhost"),
+            ("LOCALHOST", TargetType::Hostname, "localhost"),
+            ("127.0.0.1", TargetType::IPAddress, "127.0.0.1"),
+            ("::1", TargetType::IPAddress, "::1"),
+            ("192.168.1.50", TargetType::IPAddress, "192.168.1.50"),
+            ("10.0.0.5", TargetType::IPAddress, "10.0.0.5"),
+            ("app.localhost", TargetType::Domain, "app.localhost"),
+            (
+                "target-company.test",
+                TargetType::Domain,
+                "target-company.test",
+            ),
+            ("127.0.0.0/8", TargetType::CIDR, "127.0.0.0/8"),
+            ("192.168.1.0/24", TargetType::CIDR, "192.168.1.0/24"),
+            ("10.0.0.0/8", TargetType::CIDR, "10.0.0.0/8"),
+        ] {
+            assert_eq!(
+                classify(input).unwrap(),
+                (kind, normalized.into()),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_web_urls_normalize_host_port_and_ipv6_brackets() {
+        // Custom ports are preserved, host case is lowered, IPv6 literals keep their
+        // brackets, and a default port is dropped — all without public DNS.
+        for (input, normalized) in [
+            ("http://localhost:3000", "http://localhost:3000/"),
+            ("http://LOCALHOST:3000", "http://localhost:3000/"),
+            ("http://127.0.0.1:8080", "http://127.0.0.1:8080/"),
+            ("http://[::1]:8080", "http://[::1]:8080/"),
+            ("http://[::1]:8080/", "http://[::1]:8080/"),
+            ("http://app.localhost:5173", "http://app.localhost:5173/"),
+            (
+                "http://target-company.test:3000/x?q=1",
+                "http://target-company.test:3000/x?q=1",
+            ),
+            ("http://localhost:80", "http://localhost/"),
+            ("http://192.168.1.50:8000", "http://192.168.1.50:8000/"),
+        ] {
+            assert_eq!(
+                classify(input).unwrap(),
+                (TargetType::URL, normalized.into())
+            );
+            assert_eq!(web_url(input).unwrap(), normalized, "{input}");
+        }
+    }
+
+    #[test]
+    fn credential_bearing_local_urls_are_rejected() {
+        // Loopback status is not a shortcut around the credential-URL rule.
+        let credential_url = ["http://", "user:pass", "@localhost:3000/"].concat();
+        assert!(classify(&credential_url).is_err());
+        assert!(web_url(&credential_url).is_err());
+    }
 }
