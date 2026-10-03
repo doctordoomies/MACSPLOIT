@@ -936,7 +936,7 @@ impl Engine {
             crate::process::Installation::BuiltIn => {
                 format!("core {}", env!("CARGO_PKG_VERSION"))
             }
-            crate::process::Installation::Installed { version } => version,
+            crate::process::Installation::Installed { version, .. } => version,
             crate::process::Installation::Missing => {
                 return Err(CoreError::new(
                     "ProviderMissing",

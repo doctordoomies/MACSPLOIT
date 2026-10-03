@@ -123,6 +123,8 @@ pub enum Installation {
     BuiltIn,
     Installed {
         version: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
     },
     Missing,
     UnsupportedVersion {
