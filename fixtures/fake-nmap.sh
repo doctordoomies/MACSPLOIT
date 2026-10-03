@@ -29,6 +29,9 @@ for arg in "$@"; do
 done
 
 printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+# Mirror real nmap output, which emits a DOCTYPE and an XSL stylesheet PI.
+printf '%s\n' '<!DOCTYPE nmaprun>'
+printf '%s\n' '<?xml-stylesheet href="file:///usr/local/share/nmap/nmap.xsl" type="text/xsl"?>'
 printf '%s\n' '<nmaprun scanner="nmap" args="fake">'
 for ip in $targets; do
     case "$ip" in

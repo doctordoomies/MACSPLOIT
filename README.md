@@ -41,7 +41,7 @@ The app runs locally, with no telemetry or hosted assessment backend. Real provi
 
 ## Workflows
 
-Five recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision. The web modes (Web Analysis, Web Recon, Content Discovery) work equally against public sites and explicitly scoped local/private targets such as `http://localhost:3000` — see [Test a local application](#test-a-local-application).
+Seven recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision. The web modes (Web Analysis, Web Recon, Content Discovery) work equally against public sites and explicitly scoped local/private targets such as `http://localhost:3000` — see [Test a local application](#test-a-local-application).
 
 ### DNS Recon
 
@@ -67,6 +67,18 @@ flowchart LR
 ```
 
 Subfinder, Nmap, and ProjectDiscovery HTTPX must be installed. DNS is built in. Nmap uses an unprivileged TCP-connect profile with service detection and the top 100 ports; no NSE scripts or root access. A hostname being in scope does **not** authorize scanning every IP it resolves to.
+
+### IP Recon
+
+Start from one explicitly authorized IPv4 or IPv6 address — no domain, no DNS step. The chain reuses the same Nmap and HTTPX providers as Domain Recon.
+
+```mermaid
+flowchart LR
+    A[IPAddress] -->|Nmap| P[Port / Service]
+    P -->|HTTPX| W[Website / Technology]
+```
+
+Requires Nmap and HTTPX. Scope stays authoritative: an exact IP or a containing CIDR authorizes the run, but a CIDR is **never** expanded into a sweep — only the one selected IP is scanned, and unrelated workspace IPs are not. The Nmap profile is the same conservative TCP-connect scan; IPv6 adds `-6` and IPv6 probe URLs are bracketed (`http://[2001:db8::10]:443`). IP Recon stops at HTTP probing — no crawling, fuzzing, or vulnerability scanning follows automatically.
 
 ### Web Recon
 
@@ -322,6 +334,7 @@ Install only the tools needed for the workflows you intend to run. MACSPLOIT det
 | --- | --- | --- |
 | DNS Recon | None — built in | Native DNS resolver |
 | Domain Recon | `brew install subfinder nmap httpx` | [Subfinder](https://formulae.brew.sh/formula/subfinder) · [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
+| IP Recon | `brew install nmap httpx` | [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
 | Web Recon | `brew install katana` | [Katana](https://formulae.brew.sh/formula/katana) |
 | Web Analysis | None — built in | Native provider |
 | Content Discovery | `brew install ffuf` | [ffuf](https://formulae.brew.sh/formula/ffuf) |
@@ -338,6 +351,7 @@ Build a useful baseline across workbench categories, then deepen provider covera
 | Synthetic Recon | **STABLE** | Full offline demonstration |
 | DNS Recon | **BETA** | Built-in A/AAAA resolution for an in-scope Domain/Hostname |
 | Domain Recon providers | **BETA** | Subfinder → DNS → Nmap → HTTPX |
+| IP Recon | **BETA** | One in-scope IPv4/IPv6 → Nmap → HTTPX; no DNS; no CIDR expansion |
 | Web Recon | **BETA** | Bounded Katana crawling |
 | Native HTTP Analysis | **BETA** | Built-in headers, cookie flags, CORS, redirects, and robots analysis |
 | Content Discovery | **BETA** | Bounded ffuf path discovery with a user-selected wordlist |

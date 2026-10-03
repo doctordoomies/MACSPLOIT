@@ -736,6 +736,26 @@ impl Provider for NativeDnsProvider {
 
 pub struct NmapProvider;
 
+/// Remove a single leading `<!DOCTYPE ...>` declaration that has no internal subset
+/// (`[ ... ]`). Real nmap emits exactly `<!DOCTYPE nmaprun>`, which a non-validating,
+/// DTD-rejecting parser would otherwise refuse. A DOCTYPE containing an internal
+/// subset (the entity-expansion / billion-laughs vector) is deliberately left intact
+/// so the parser still rejects it; entity expansion therefore stays disabled.
+fn strip_simple_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(start) = xml.find("<!DOCTYPE") {
+        if let Some(rel_end) = xml[start..].find('>') {
+            let decl = &xml[start..start + rel_end + 1];
+            if !decl.contains('[') {
+                let mut out = String::with_capacity(xml.len());
+                out.push_str(&xml[..start]);
+                out.push_str(&xml[start + rel_end + 1..]);
+                return std::borrow::Cow::Owned(out);
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(xml)
+}
+
 /// Separator placed between multiple nmap XML documents in one evidence blob
 /// (one document per address family). The parser splits on it.
 const NMAP_XML_DELIM: &str = "\n<!--MACSPLOIT-NMAP-DOC-->\n";
@@ -934,7 +954,13 @@ impl Provider for NmapProvider {
                 continue;
             }
             any_document = true;
-            let document = roxmltree::Document::parse(chunk)
+            // Real nmap emits a `<!DOCTYPE nmaprun>` (plus an XSL stylesheet PI and
+            // comments). Remove only a *simple* DOCTYPE with no internal subset so the
+            // document parses, while keeping entity expansion fully disabled: a DOCTYPE
+            // that carries an internal subset (`[ ... ]`, the billion-laughs / custom
+            // entity vector) is left in place and still rejected by roxmltree.
+            let sanitized = strip_simple_doctype(chunk);
+            let document = roxmltree::Document::parse(&sanitized)
                 .map_err(|_| CoreError::new("ProviderFailure", "Nmap XML output is malformed."))?;
             for host in document.descendants().filter(|n| n.has_tag_name("host")) {
                 // The reportable address is the ipv4/ipv6 address element.
@@ -1046,13 +1072,25 @@ struct HttpxRecord {
     content_length: Option<i64>,
     #[serde(default)]
     location: Option<String>,
-    #[serde(default)]
-    host: Option<String>,
+    // The owning host is derived from the normalized probe URL (bracket-aware for
+    // IPv6), so httpx's own `host` field is intentionally not consumed here.
     #[serde(default)]
     tech: Vec<String>,
 }
 
 impl HttpxProvider {
+    /// Format a host for a URL authority: an IPv6 literal is wrapped in brackets
+    /// (`2001:db8::10` -> `[2001:db8::10]`) so the resulting URL is valid; IPv4
+    /// literals and hostnames are returned unchanged. Already-bracketed input is
+    /// left as-is so normalized values are never double-bracketed.
+    fn url_host(host: &str) -> String {
+        if host.starts_with('[') || host.parse::<std::net::Ipv6Addr>().is_err() {
+            host.to_string()
+        } else {
+            format!("[{host}]")
+        }
+    }
+
     /// Build the probe URL list from discovered HTTP/HTTPS Service assets. A
     /// Service canonical identity is `<ip>/<proto>/<port>/<name>`.
     fn urls_from_services(inputs: &[Asset]) -> Vec<String> {
@@ -1070,7 +1108,7 @@ impl HttpxProvider {
             } else {
                 continue;
             };
-            let url = format!("{scheme}://{host}:{port}");
+            let url = format!("{scheme}://{}:{port}", Self::url_host(host));
             if !urls.contains(&url) {
                 urls.push(url);
             }
@@ -1234,11 +1272,12 @@ impl Provider for HttpxProvider {
                 continue;
             }
             // The website is linked to its owning host IP (a definitely-known
-            // asset). host may be "ip:port"; keep just the host for the source.
-            let host = record
-                .host
-                .as_deref()
-                .map(|h| h.rsplit_once(':').map(|(h, _)| h).unwrap_or(h).to_owned());
+            // asset). Derive the host from the normalized probe URL and strip any
+            // IPv6 brackets so it matches the bare IPAddress asset identity for both
+            // address families (record.host port/bracket formatting is unreliable).
+            let host = url::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.trim_matches(['[', ']']).to_owned()));
             let mut metadata = json!({ "tool": "httpx" });
             if let Some(code) = record.status_code {
                 metadata["status_code"] = json!(code);
@@ -2451,11 +2490,14 @@ mod tests {
         let v4 = NmapProvider::arguments(false, &["192.0.2.10".into()]);
         assert!(v4.contains(&"-sT".to_string())); // connect scan, no root
         assert!(v4.contains(&"-sV".to_string()));
+        assert!(v4.windows(2).any(|w| w == ["--top-ports", "100"]));
         assert!(v4.windows(2).any(|w| w == ["-oX", "-"]));
         assert!(!v4.contains(&"-6".to_string()));
-        assert!(!v4
-            .iter()
-            .any(|a| a == "-A" || a == "-O" || a == "--script" || a == "-sS"));
+        // No aggressive/root/NSE/UDP/evasion/timing flags creep in for any chain.
+        assert!(!v4.iter().any(|a| matches!(
+            a.as_str(),
+            "-A" | "-O" | "--script" | "-sS" | "-sU" | "-Pn" | "-T5" | "-T4" | "-D" | "-f" | "-S"
+        )));
         assert_eq!(v4.last().unwrap(), "192.0.2.10");
         let v6 = NmapProvider::arguments(true, &["2001:db8::1".into()]);
         assert!(v6.contains(&"-6".to_string()));
@@ -2482,6 +2524,29 @@ mod tests {
         assert_eq!(service.relationship, Some(RelationshipType::Serves));
         assert_eq!(service.source.as_deref(), Some("192.0.2.10/tcp/22"));
         assert_eq!(service.metadata["product"], json!("OpenSSH"));
+    }
+
+    #[test]
+    fn nmap_parses_real_world_xml_with_doctype_and_stylesheet() {
+        // Real nmap output includes an XML declaration, a DOCTYPE, an XSL stylesheet
+        // processing instruction, and comments. The parser must handle all of these.
+        let xml = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+            "<!DOCTYPE nmaprun>\n",
+            "<?xml-stylesheet href=\"file:///opt/homebrew/share/nmap/nmap.xsl\" type=\"text/xsl\"?>\n",
+            "<!-- Nmap scan -->\n",
+            "<nmaprun scanner=\"nmap\" version=\"7.991\">",
+            "<host><status state=\"up\"/><address addr=\"127.0.0.1\" addrtype=\"ipv4\"/>",
+            "<ports><port protocol=\"tcp\" portid=\"443\"><state state=\"open\"/>",
+            "<service name=\"https\" product=\"nginx\" tunnel=\"ssl\"/></port></ports></host></nmaprun>",
+        );
+        let discoveries = NmapProvider.parse(&nmap_exec(xml)).unwrap();
+        assert!(discoveries
+            .iter()
+            .any(|d| d.asset_type == AssetType::Port && d.value == "127.0.0.1/tcp/443"));
+        assert!(discoveries
+            .iter()
+            .any(|d| d.asset_type == AssetType::Service && d.value == "127.0.0.1/tcp/443/https"));
     }
 
     #[test]
@@ -2596,6 +2661,33 @@ mod tests {
     }
 
     #[test]
+    fn httpx_brackets_ipv6_service_hosts_and_leaves_ipv4_and_hostnames() {
+        // IPv6 literals must be bracketed to form valid URL authorities; IPv4 and
+        // already-bracketed/hostname inputs are unchanged (no double-bracketing).
+        assert_eq!(HttpxProvider::url_host("192.0.2.10"), "192.0.2.10");
+        assert_eq!(HttpxProvider::url_host("example.test"), "example.test");
+        assert_eq!(HttpxProvider::url_host("::1"), "[::1]");
+        assert_eq!(HttpxProvider::url_host("2001:db8::10"), "[2001:db8::10]");
+        assert_eq!(HttpxProvider::url_host("[2001:db8::10]"), "[2001:db8::10]");
+
+        // Service canonical identity host is the bare IP from Nmap; IPv6 Service
+        // identities use `/` as the field separator, never the colons in the address.
+        let inputs = vec![
+            dns_asset(AssetType::Service, "::1/tcp/8080/http"),
+            dns_asset(AssetType::Service, "2001:db8::10/tcp/443/https"),
+            dns_asset(AssetType::Service, "192.0.2.10/tcp/8080/http"),
+        ];
+        assert_eq!(
+            HttpxProvider::urls_from_services(&inputs),
+            vec![
+                "http://[::1]:8080",
+                "https://[2001:db8::10]:443",
+                "http://192.0.2.10:8080",
+            ]
+        );
+    }
+
+    #[test]
     fn httpx_parses_websites_and_technology() {
         let jsonl = concat!(
             r#"{"url":"https://192.0.2.10:443","status_code":200,"title":"Demo","webserver":"nginx","host":"192.0.2.10","tech":["nginx","React"]}"#,
@@ -2648,8 +2740,11 @@ mod tests {
 
     #[test]
     fn nmap_xml_parser_does_not_expand_entities() {
-        // roxmltree is non-validating and does not expand external/DTD entities.
-        // A billion-laughs-style document must not blow up or expand into a service.
+        // Only a *simple* DOCTYPE (no internal subset) is stripped. A DOCTYPE that
+        // carries an internal subset — the entity-definition / billion-laughs vector —
+        // is left intact, and the DTD-rejecting parser then refuses the document, so a
+        // custom entity like &x; is never expanded. The guarantee is deterministic:
+        // such input fails to parse.
         let xml = concat!(
             "<?xml version=\"1.0\"?>",
             "<!DOCTYPE nmaprun [ <!ENTITY x \"aaaaaaaaaa\"> ]>",
@@ -2657,11 +2752,11 @@ mod tests {
             "<ports><port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/>",
             "<service name=\"&x;\"/></port></ports></host></nmaprun>",
         );
-        // Either the parser rejects the DTD/entity, or it does not expand it; either
-        // way there is no entity expansion and no panic.
-        if let Ok(discoveries) = NmapProvider.parse(&nmap_exec(xml)) {
-            assert!(discoveries.iter().all(|d| !d.value.contains("aaaaaaaaaa")));
-        }
+        let result = NmapProvider.parse(&nmap_exec(xml));
+        assert!(
+            result.is_err(),
+            "internal-subset DTD must be rejected, not expanded"
+        );
     }
 
     #[test]

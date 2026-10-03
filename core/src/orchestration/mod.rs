@@ -70,6 +70,9 @@ pub enum ChainKind {
     DnsRecon,
     /// Domain-to-web-service reconnaissance (Phase 1).
     DomainRecon,
+    /// Direct service reconnaissance from one explicitly selected in-scope IP
+    /// address (Nmap -> HTTPX). No DNS/Subfinder prerequisite; no CIDR expansion.
+    IpRecon,
     /// Bounded web crawling from an explicitly selected in-scope HTTP(S) URL.
     WebRecon,
     /// Native HTTP/security analysis of an in-scope HTTP(S) URL (no external tool,
@@ -246,6 +249,32 @@ impl Store {
                             Some(Capability::DnsResolution),
                             Some("native_dns"),
                         ),
+                        (
+                            "Port + Service Discovery",
+                            Some(Capability::PortDiscovery),
+                            Some("nmap"),
+                        ),
+                        ("HTTP Probing", Some(Capability::HttpProbing), Some("httpx")),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::IpRecon => {
+                if target.target_type != TargetType::IPAddress {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        "IP Recon requires an IP address target.",
+                    ));
+                }
+                // One selected IP only. A CIDR is a scope construct, never a Direct IP
+                // Recon target, and this chain never expands a CIDR into a sweep. Nmap
+                // receives only the selected IP asset (plus this chain's own
+                // discoveries), filtered to scope by the orchestrator.
+                (
+                    "IP Recon",
+                    vec![
+                        ("Target Validation", None, None),
                         (
                             "Port + Service Discovery",
                             Some(Capability::PortDiscovery),

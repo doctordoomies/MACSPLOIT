@@ -52,7 +52,12 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
             }
             Installation::Installed { version, path } => {
                 assert_eq!(version, "2.6.6");
-                assert_eq!(path.unwrap(), temp.path().join("fake-tool"));
+                // Discovery returns the canonical executable path (temp dirs may live
+                // under a symlinked root such as macOS /var -> /private/var).
+                assert_eq!(
+                    path.unwrap(),
+                    temp.path().join("fake-tool").canonicalize().unwrap()
+                );
                 let setup = status.setup.unwrap();
                 assert_eq!(
                     setup.install_command.unwrap(),

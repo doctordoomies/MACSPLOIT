@@ -7,6 +7,16 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Direct IP Recon (Milestone 1.2):** a new `IP Recon` chain (`ip_recon`) that runs
+  Nmap → HTTPX directly from one explicitly selected, in-scope IPv4 or IPv6 address —
+  no domain, no DNS, and no Subfinder step. It reuses the existing Nmap and HTTPX
+  providers, asset graph, evidence, scope enforcement, cancellation, and provider-status
+  UI unchanged; the conservative Nmap profile is not altered. Scope stays authoritative
+  (exact IP or a containing CIDR authorizes; a CIDR is never expanded into a sweep and
+  only the selected IP is scanned — unrelated workspace IPs are not). Includes a narrow
+  HTTPX fix so IPv6 probe URLs are correctly bracketed (`http://[2001:db8::10]:443`) and
+  IPv6 Websites link back to their host IP. Adds an `IP Recon` UI mode with the Nmap/HTTPX
+  provider panel and an IPAddress-target compatibility hint. Offline fake-tool coverage.
 - **Local & private web targets (Milestone 1.1):** `localhost`, loopback
   (`127.0.0.0/8`, `::1`), explicitly scoped private IPs/CIDRs, `.localhost`, and
   `/etc/hosts` dev names are now first-class for the web workflows — Web Analysis, Web

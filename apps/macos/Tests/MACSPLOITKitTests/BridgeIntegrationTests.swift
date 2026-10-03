@@ -205,6 +205,41 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
+    func testIpReconRunsNmapAndHttpxThroughBridgeOffline() async throws {
+        // Direct IP Recon from an explicitly scoped IP target, with no domain/DNS step.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-iprecon-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        let workspace = try await client.createWorkspace(name: "IP recon bridge test", scope: ["192.0.2.10"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "192.0.2.10")
+        #expect(target.targetType == "IPAddress")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "ip_recon")
+        let deadline = Date().addingTimeInterval(20)
+        var completed = false
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == run.id })?.status == "COMPLETED" { completed = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(completed)
+        let result = try await client.snapshot(workspace: workspace.id)
+        #expect(result.chains.first?.name == "IP Recon")
+        #expect(result.assets.contains { $0.assetType == "Website" && $0.canonicalIdentity == "https://192.0.2.10/" })
+        #expect(result.providerRuns.contains { $0.providerId == "nmap" })
+        #expect(result.providerRuns.contains { $0.providerId == "httpx" })
+        #expect(result.evidence.count == 2)
+        // No subdomain/DNS work occurred (this is not Domain Recon).
+        #expect(!result.assets.contains { $0.assetType == "Subdomain" })
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_WEB_FIXTURE"] != nil))
     func testWebAnalysisRunsAgainstLocalhostThroughBridgeOffline() async throws {
         // An explicitly scoped localhost URL target runs Web Analysis with no public DNS
