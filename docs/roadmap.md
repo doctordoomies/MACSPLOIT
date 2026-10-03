@@ -151,6 +151,8 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
   - robots.txt
 - Phase 2C Content Discovery with bounded ffuf and analyst-selected wordlists
 - Path-aware CI and repository security checks
+- Local/private web-target support across Web Analysis, Web Recon, and Content Discovery (PR #31 / Issue #20)
+- CI routing + merge-gate hardening with authoritative Advanced CodeQL uploads (PR #32 / Issue #30)
 
 ## Newly completed during this roadmap review
 
@@ -165,7 +167,6 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 ## Important gaps discovered during the product review
 
 - no first-class direct-IP recon workflow;
-- localhost/private targets are not yet a fully supported and tested product path;
 - bug bounty program context is not modeled;
 - there is no Findings system yet;
 - OSINT target types exist, but OSINT providers are not implemented;
@@ -178,7 +179,7 @@ These gaps define the next roadmap order.
 
 # Milestone 0 — Consolidate the current beta
 
-**Status: ACTIVE until the merge gate is complete**
+**Status: DONE**
 
 This milestone closes the current development burst before new product work starts.
 
@@ -188,9 +189,8 @@ This milestone closes the current development burst before new product work star
 - Complete the CodeQL ownership cutover so the advanced workflow is authoritative and
   the duplicate default setup no longer runs.
 - Confirm the required CI gate still behaves correctly after the cutover.
-- Reconcile stale maintenance issues:
-  - Issue #17 ("Make Checks Faster") can be closed once the optimized CI state is
-    confirmed.
+- Reconciled maintenance issue #17 ("Make Checks Faster") after PR #32 and the final
+  authoritative Advanced CodeQL verification.
 - Do not start a new provider merely to keep an agent busy while this gate is red.
 
 ## Exit condition
@@ -205,15 +205,15 @@ This milestone closes the current development burst before new product work star
 
 # Milestone 1 — Real-target usability
 
-**Status: NEXT**
+**Status: ACTIVE**
 
 The goal is simple: common authorized targets should work directly without artificial
 dependencies such as requiring public DNS first.
 
 ## 1.1 Localhost and private targets
 
-**Existing issue: #20 — implemented in an open PR (not yet merged).** Direct IP Recon (1.2)
-remains the next Milestone 1 implementation item; Milestone 1 is not yet complete.
+**Issue #20 — DONE via PR #31.** Local/private web-target support is merged and verified.
+Direct IP Recon (1.2) is the active Milestone 1 implementation item; Milestone 1 is not yet complete.
 
 Support first-class, explicitly scoped web targets such as:
 
@@ -237,6 +237,8 @@ Requirements:
   trust design rather than a global bypass.
 
 ## 1.2 Direct IP Recon
+
+**Current implementation issue: #33.**
 
 Add an explicit workflow for a selected, in-scope IP address:
 
