@@ -142,4 +142,95 @@ mod tests {
         assert!(normalize_entry("https://example.test").is_err());
         assert!(contains(&["2001:db8::/32".into()], "2001:db8::1"));
     }
+
+    #[test]
+    fn local_and_private_scope_entries_normalize() {
+        // Local/private hosts, literals, and CIDRs are valid scope entries; a URL is not.
+        for entry in [
+            "localhost",
+            "app.localhost",
+            "target-company.test",
+            "127.0.0.1",
+            "127.0.0.0/8",
+            "::1",
+            "192.168.1.50",
+            "192.168.1.0/24",
+            "10.0.0.0/8",
+        ] {
+            assert!(normalize_entry(entry).is_ok(), "entry {entry}");
+        }
+        // A single-label wildcard suffix (e.g. *.localhost) has no dotted domain and is
+        // rejected: local wildcards must be authorized as explicit hosts instead.
+        assert!(normalize_entry("*.localhost").is_err());
+    }
+
+    #[test]
+    fn local_url_targets_match_explicit_local_scope() {
+        // localhost host + custom port.
+        assert!(contains(&["localhost".into()], "http://localhost:3000"));
+        // Loopback CIDR covers the IPv4 loopback literal with any port.
+        assert!(contains(&["127.0.0.0/8".into()], "http://127.0.0.1:8080"));
+        assert!(contains(&["127.0.0.0/8".into()], "http://127.0.0.1:9999/x"));
+        // IPv6 loopback literal (brackets stripped from the URL host) matches exactly.
+        assert!(contains(&["::1".into()], "http://[::1]:8080"));
+        assert!(contains(&["::1/128".into()], "http://[::1]:3000/"));
+        // Private CIDR boundaries.
+        assert!(contains(
+            &["192.168.1.0/24".into()],
+            "http://192.168.1.50:8000"
+        ));
+        assert!(!contains(
+            &["192.168.1.0/24".into()],
+            "http://192.168.2.50:8000"
+        ));
+        assert!(contains(&["10.0.0.0/8".into()], "http://10.0.0.5:5000"));
+        // Exact dev hostnames (via /etc/hosts at runtime); dotted names are Domains.
+        assert!(contains(
+            &["target-company.test".into()],
+            "http://target-company.test:3000"
+        ));
+    }
+
+    #[test]
+    fn local_scope_does_not_widen_or_conflate_distinct_hosts() {
+        // localhost, 127.0.0.1 and ::1 are distinct authorization identities.
+        assert!(!contains(&["localhost".into()], "http://127.0.0.1:3000"));
+        assert!(!contains(&["127.0.0.1".into()], "http://localhost:3000"));
+        assert!(!contains(&["localhost".into()], "http://[::1]:3000"));
+        // An exact localhost entry never implicitly authorizes a subdomain label.
+        assert!(!contains(
+            &["localhost".into()],
+            "http://app.localhost:5173"
+        ));
+        // A single loopback literal is not the whole range.
+        assert!(!contains(&["127.0.0.1".into()], "http://127.0.0.2:8080"));
+    }
+
+    #[test]
+    fn local_targets_follow_the_same_authorization_rules() {
+        // Local/private status is not authorization: the target must be in scope, and
+        // Active work still needs explicit approval — exactly as for public targets.
+        let scope = vec!["localhost".to_string(), "127.0.0.0/8".to_string()];
+        assert!(authorize(
+            &scope,
+            "http://localhost:3000",
+            RiskClass::ActiveLowImpact,
+            false
+        )
+        .is_ok());
+        assert!(authorize(&scope, "http://127.0.0.1:8080", RiskClass::Active, true).is_ok());
+        assert!(authorize(&scope, "http://127.0.0.1:8080", RiskClass::Active, false).is_err());
+        // Out of scope local host is denied even though it is loopback-adjacent.
+        assert_eq!(
+            authorize(
+                &scope,
+                "http://192.168.1.5:8080",
+                RiskClass::ActiveLowImpact,
+                false
+            )
+            .unwrap_err()
+            .code,
+            "ScopeViolation"
+        );
+    }
 }

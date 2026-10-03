@@ -16,5 +16,20 @@
     "status": 200,
     "headers": { "Content-Type": "text/plain" },
     "body": "User-agent: *\nDisallow: /admin\nAllow: /public\nSitemap: https://example.test/sitemap.xml\n"
+  },
+  "http://localhost:3000/": {
+    "status": 200,
+    "headers": {
+      "Server": "devserver",
+      "Content-Type": "text/html",
+      "X-Frame-Options": "DENY",
+      "Set-Cookie": "sid=LOCALSECRET; HttpOnly; Path=/"
+    },
+    "body": "<html><title>Local Dev App</title></html>"
+  },
+  "http://localhost:3000/robots.txt": {
+    "status": 200,
+    "headers": { "Content-Type": "text/plain" },
+    "body": "User-agent: *\nDisallow: /admin\n"
   }
 }

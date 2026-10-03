@@ -103,6 +103,64 @@ fn web_recon_crawls_same_host_and_persists_evidence() {
 }
 
 #[test]
+fn web_recon_crawls_an_explicitly_scoped_localhost_target() {
+    // A locally running app, authorized by an explicit `localhost` scope entry, with no
+    // public DNS and no Domain target. Custom port is preserved; distinct hosts dropped.
+    let temp = tempfile::tempdir().unwrap();
+    let mut tools = ToolConfig::default();
+    tools
+        .overrides
+        .insert("katana".into(), fixture("fake-katana-local.sh"));
+
+    let engine = Engine::open_with(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        tools,
+        Arc::new(StaticDnsResolver::new()),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Local App", &["localhost".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "http://localhost:3000/")
+        .unwrap();
+
+    engine
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebRecon,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let snapshot = wait(&engine, workspace.id);
+
+    assert_eq!(snapshot.chains[0].status, ChainStatus::Completed);
+    let urls: Vec<_> = snapshot
+        .assets
+        .iter()
+        .filter(|a| a.asset_type == AssetType::URL)
+        .map(|a| a.canonical_identity.as_str())
+        .collect();
+    assert!(urls.contains(&"http://localhost:3000/login"));
+    assert!(urls.contains(&"http://localhost:3000/dashboard"));
+    // A distinct loopback host and an off-host URL are never recorded.
+    assert!(!urls.iter().any(|u| u.contains("127.0.0.1")));
+    assert!(!urls.iter().any(|u| u.contains("evil.test")));
+    assert_eq!(
+        snapshot
+            .relationships
+            .iter()
+            .filter(|r| r.relationship_type == RelationshipType::HasEndpoint)
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn web_recon_requires_url_target() {
     let temp = tempfile::tempdir().unwrap();
     let engine = Engine::open_with(

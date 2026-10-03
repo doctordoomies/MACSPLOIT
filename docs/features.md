@@ -17,6 +17,7 @@ today, not aspirations. Statuses:
 | Workspace scope editing | BETA | Replace normalized domain/wildcard/IP/CIDR scope after creation; audited and persisted |
 | Target classification | STABLE | Domain/URL/IP/CIDR/email/username/hostname, IDNA |
 | Scope enforcement | STABLE | Exact/wildcard/CIDR, IPv4/IPv6, per-asset for active providers |
+| Local & private web targets | BETA | `localhost`/loopback/`::1`/private IP/CIDR/`.localhost`/`/etc/hosts` names as first-class web targets with custom ports; no public DNS; scope still authoritative; `localhost`≠`127.0.0.1`≠`::1` |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
 | Evidence | STABLE | Raw provider output preserved, SHA-256 verified |
 | Activity / events | STABLE | Durable, replayable |

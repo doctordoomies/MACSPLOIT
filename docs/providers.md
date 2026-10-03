@@ -24,6 +24,14 @@ full ACTIVE work (Nmap) is authorized by the analyst explicitly launching the
 chain and is still re-checked against per-asset scope before execution;
 validation/lab are rejected.
 
+The URL-based web providers (KatanaProvider, NativeHttpProvider, FfufProvider) accept an
+explicitly scoped local/private URL target (`localhost`, loopback, `::1`, a private
+IP/CIDR host, `.localhost`, or an `/etc/hosts` dev name) with custom ports and no
+public-DNS prerequisite. Scope remains the authorization boundary — local/private status
+grants nothing — and same-host handling is unchanged: hostname-based (port-agnostic) for
+crawling/content discovery, and per-hop scope-checked for native-HTTP redirects, with
+`localhost`/`127.0.0.1`/`::1` treated as distinct identities.
+
 Provider statuses (metadata plus live installation state) are exposed to the UI
 through the `list_providers` protocol method.
 

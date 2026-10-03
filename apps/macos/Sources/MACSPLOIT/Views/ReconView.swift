@@ -58,6 +58,13 @@ struct ReconView: View {
         model.snapshot?.targets.first { $0.id == model.selectedTargetId }
     }
 
+    // Whether the selected target's host is local/private by classification only. This
+    // is informational — it never implies the target is authorized, safe, or offline;
+    // authorization is always the explicit workspace scope enforced by the Rust core.
+    private var selectedTargetIsLocal: Bool {
+        selectedTarget?.isLocalOrPrivateHost ?? false
+    }
+
     private var subfinderReady: Bool { model.subfinder?.installation.isAvailable ?? false }
     private var nmapReady: Bool { model.nmap?.installation.isAvailable ?? false }
     private var httpxReady: Bool { model.httpx?.installation.isAvailable ?? false }
@@ -147,6 +154,14 @@ struct ReconView: View {
                     }
 
                     Spacer()
+                    if selectedTargetIsLocal {
+                        Text("LOCAL TARGET")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.18), in: Capsule())
+                            .help("This host is local/private by classification only. It is not authorized, safe, or offline — workspace scope still governs every run.")
+                    }
                     Text(mode.badge)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -498,7 +513,7 @@ struct ReconView: View {
         case .domain:
             return "Add an in-scope domain using the target bar above."
         case .web, .webAnalysis, .contentDiscovery:
-            return "Add an in-scope HTTP(S) URL such as https://your-domain.example/ using the target bar above."
+            return "Add an in-scope HTTP(S) URL using the target bar above — public (https://your-domain.example/) or a locally running app (http://localhost:3000). No public DNS is required."
         }
     }
 

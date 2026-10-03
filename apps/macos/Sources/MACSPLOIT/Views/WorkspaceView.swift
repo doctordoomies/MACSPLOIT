@@ -116,6 +116,10 @@ private struct CreateWorkspaceView: View {
             HStack {
                 Text("Scope · one domain, wildcard, IP, or CIDR per line").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button("Use Local App Scope") {
+                    scope = "localhost\n127.0.0.1\n::1"
+                }
+                .controlSize(.small)
                 Button("Use Offline Demo Scope") {
                     scope = "example.test\n*.example.test\n192.0.2.0/24"
                 }
@@ -123,7 +127,7 @@ private struct CreateWorkspaceView: View {
             }
             TextEditor(text: $scope).font(.system(.body, design: .monospaced)).frame(height: 105).padding(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Text("Enter only systems you own or are explicitly authorized to assess. Leave scope empty to create the workspace with live recon blocked, or use the offline demo scope for Synthetic Recon.")
+            Text("Enter only systems you own or are explicitly authorized to assess. Local apps are first-class: authorize entries such as localhost, 127.0.0.1, ::1, a private IP/CIDR, or a dev hostname, then add a local URL target (e.g. http://localhost:3000). Leave scope empty to create the workspace with live recon blocked, or use the offline demo scope for Synthetic Recon.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -152,7 +156,7 @@ private struct ScopeEditorView: View {
             Text("Live recon is denied unless the selected target is covered by this scope. Changes apply to future provider dispatch; existing evidence is not deleted.")
                 .foregroundStyle(.secondary)
 
-            Text("One domain, wildcard, IP, or CIDR per line")
+            Text("One domain, wildcard, IP, or CIDR per line. Local targets are first-class: authorize localhost, 127.0.0.1, ::1, a private IP/CIDR, or a dev hostname to assess a locally running app.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -163,6 +167,11 @@ private struct ScopeEditorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
 
             HStack {
+                Button("Use Local App Scope") {
+                    scope = "localhost\n127.0.0.1\n::1"
+                }
+                .controlSize(.small)
+
                 Button("Use Offline Demo Scope") {
                     scope = "example.test\n*.example.test\n192.0.2.0/24"
                 }
@@ -198,6 +207,7 @@ private struct TargetBar: View {
             TextField("Domain, URL, IP, CIDR, email, or @username", text: $model.targetInput)
                 .textFieldStyle(.plain).onSubmit { Task { await model.addTarget() } }
                 .accessibilityLabel("Target input")
+                .help("Public or local, e.g. https://example.test/ or http://localhost:3000 — the host must be in workspace scope to run live recon.")
             if let kind = model.lastTargetType { Text("Detected: \(kind)").font(.caption).foregroundStyle(.secondary) }
             Button("Add Target") { Task { await model.addTarget() } }
                 .disabled(model.targetInput.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy || !model.isConnected)

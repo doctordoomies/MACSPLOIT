@@ -52,7 +52,7 @@ struct TargetsView: View {
         VStack(alignment: .leading) {
             PageHeading(title: "Targets", subtitle: "Classified and normalized by Rust. Add domains for DNS/Domain Recon or full HTTP(S) URLs for Web Recon and Web Analysis.").padding([.top, .horizontal], 24)
             if model.snapshot?.targets.isEmpty != false {
-                EmptyMessage(title: "Add your first target", detail: "Enter an authorized domain or HTTP(S) URL above. For the offline demo, use example.test.", symbol: "scope")
+                EmptyMessage(title: "Add your first target", detail: "Enter an authorized domain or HTTP(S) URL above — public or local (e.g. http://localhost:3000). For the offline demo, use example.test.", symbol: "scope")
             } else {
                 Table(model.snapshot?.targets ?? [], selection: $model.selectedTargetId) {
                     TableColumn("Type", value: \.targetType).width(100)
