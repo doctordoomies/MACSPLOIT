@@ -52,3 +52,15 @@ enforce the stored scope independently of the SwiftUI state.
 The `offline_only` hello field is retained in protocol v1 for wire compatibility.
 It is now `false`: Synthetic Recon remains offline, while DNS Recon, Domain Recon,
 Web Recon, and Web Analysis can perform explicitly launched network activity.
+
+
+### Provider Center status additions (v1 compatible)
+
+`list_providers` remains global and takes no workspace parameter. Each flattened
+provider entry may include optional `setup` (`install_command`, `homepage`,
+`documentation`, all optional strings), owned by the provider definition.
+`installation` with state `INSTALLED` may include optional `path`, resolved by the
+core, alongside the existing `version`. Missing fields decode as absent. Built-in
+providers use `BUILT_IN` and omit executable paths and installation commands.
+Setup commands are static display/copy data, never executable IPC instructions.
+The other installation states and protocol version remain unchanged.

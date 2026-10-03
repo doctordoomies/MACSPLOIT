@@ -55,6 +55,16 @@ pub struct ProviderStatus {
     #[serde(flatten)]
     pub metadata: ProviderMetadata,
     pub installation: Installation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<ProviderSetup>,
+}
+
+/// Static, provider-owned help. Consumers may display/copy it, never execute it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSetup {
+    pub install_command: Option<String>,
+    pub homepage: Option<String>,
+    pub documentation: Option<String>,
 }
 
 /// Everything a provider learns from one execution. The orchestrator turns this
@@ -95,6 +105,9 @@ pub struct ProviderContext<'a> {
 
 pub trait Provider: Send + Sync {
     fn metadata(&self) -> ProviderMetadata;
+    fn setup(&self) -> Option<ProviderSetup> {
+        None
+    }
     /// Report whether the provider's backing tool is available. Offline
     /// providers are always installed.
     fn installation(&self, tools: &ToolConfig) -> Installation;
@@ -208,6 +221,7 @@ impl ProviderRegistry {
             .map(|provider| ProviderStatus {
                 metadata: provider.metadata(),
                 installation: provider.installation(tools),
+                setup: provider.setup(),
             })
             .collect()
     }
@@ -248,9 +262,7 @@ impl Provider for SyntheticDiscoveryProvider {
     }
 
     fn installation(&self, _tools: &ToolConfig) -> Installation {
-        Installation::Installed {
-            version: "1.0.0".into(),
-        }
+        Installation::BuiltIn
     }
 
     fn execute(
@@ -430,6 +442,14 @@ impl SubfinderProvider {
 }
 
 impl Provider for SubfinderProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install subfinder".into()),
+            homepage: Some("https://github.com/projectdiscovery/subfinder".into()),
+            documentation: Some("https://docs.projectdiscovery.io/tools/subfinder/overview".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "subfinder".into(),
@@ -458,13 +478,21 @@ impl Provider for SubfinderProvider {
             SUBFINDER_STDERR_CAP,
             SUBFINDER_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 // Surface an unknown version explicitly rather than claiming one.
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
@@ -737,6 +765,14 @@ impl NmapProvider {
 }
 
 impl Provider for NmapProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install nmap".into()),
+            homepage: Some("https://nmap.org".into()),
+            documentation: Some("https://nmap.org/book/man.html".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "nmap".into(),
@@ -765,12 +801,20 @@ impl Provider for NmapProvider {
             NMAP_STDERR_CAP,
             NMAP_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
@@ -1036,6 +1080,14 @@ impl HttpxProvider {
 }
 
 impl Provider for HttpxProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install httpx".into()),
+            homepage: Some("https://github.com/projectdiscovery/httpx".into()),
+            documentation: Some("https://docs.projectdiscovery.io/tools/httpx/overview".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "httpx".into(),
@@ -1064,12 +1116,20 @@ impl Provider for HttpxProvider {
             HTTPX_STDERR_CAP,
             HTTPX_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
@@ -1260,6 +1320,14 @@ impl KatanaProvider {
 }
 
 impl Provider for KatanaProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install katana".into()),
+            homepage: Some("https://github.com/projectdiscovery/katana".into()),
+            documentation: Some("https://docs.projectdiscovery.io/tools/katana/overview".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "katana".into(),
@@ -1288,12 +1356,20 @@ impl Provider for KatanaProvider {
             KATANA_STDERR_CAP,
             KATANA_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
@@ -1551,6 +1627,14 @@ impl FfufProvider {
 }
 
 impl Provider for FfufProvider {
+    fn setup(&self) -> Option<ProviderSetup> {
+        Some(ProviderSetup {
+            install_command: Some("brew install ffuf".into()),
+            homepage: Some("https://github.com/ffuf/ffuf".into()),
+            documentation: Some("https://github.com/ffuf/ffuf#usage".into()),
+        })
+    }
+
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "ffuf".into(),
@@ -1579,12 +1663,20 @@ impl Provider for FfufProvider {
             FFUF_STDERR_CAP,
             FFUF_STDERR_CAP,
         ) {
+            Ok(outcome) if outcome.timed_out || outcome.exit_status != Some(0) => {
+                Installation::ExecutionError {
+                    message: "The provider version probe failed or timed out.".into(),
+                }
+            }
             Ok(outcome) => {
                 let mut text = String::from_utf8_lossy(&outcome.stdout).into_owned();
                 text.push('\n');
                 text.push_str(&String::from_utf8_lossy(&outcome.stderr));
                 let version = process::scan_version(&text).unwrap_or_else(|| "unknown".into());
-                Installation::Installed { version }
+                Installation::Installed {
+                    version,
+                    path: Some(executable),
+                }
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,

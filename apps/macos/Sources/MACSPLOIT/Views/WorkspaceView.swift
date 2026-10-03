@@ -10,15 +10,17 @@ struct WorkspaceView: View {
         NavigationSplitView {
             List(selection: $model.section) {
                 Section("Workspace") {
-                    ForEach(WorkspaceSection.allCases) { section in
+                    ForEach(WorkspaceSection.allCases.filter { $0 != .toolManager }) { section in
                         Label(section.rawValue, systemImage: section.symbol).tag(section)
                     }
+                }
+                Section("Tools") {
+                    Label("Tool Manager", systemImage: "wrench.and.screwdriver").tag(WorkspaceSection.toolManager)
                 }
                 Section("Future") {
                     Label("Findings", systemImage: "exclamationmark.shield")
                     Label("Graph", systemImage: "point.3.filled.connected.trianglepath.dotted")
                     Label("Reports", systemImage: "doc.richtext")
-                    Label("Tool Manager", systemImage: "wrench.and.screwdriver")
                 }.foregroundStyle(.tertiary).disabled(true)
             }
             .listStyle(.sidebar)
@@ -39,7 +41,9 @@ struct WorkspaceView: View {
                         Button("Reconnect") { Task { await model.boot() } }
                     }.padding().background(Color.orange.opacity(0.08))
                 }
-                if model.snapshot != nil {
+                if model.section == .toolManager {
+                    ToolManagerView(model: model)
+                } else if model.snapshot != nil {
                     TargetBar(model: model)
                     Divider()
                     Group {
@@ -50,6 +54,7 @@ struct WorkspaceView: View {
                         case .recon: ReconView(model: model)
                         case .evidence: EvidenceView(model: model)
                         case .activity: ActivityView(model: model)
+                        case .toolManager: ToolManagerView(model: model)
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
