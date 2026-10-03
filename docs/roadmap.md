@@ -152,14 +152,15 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 - Phase 2C Content Discovery with bounded ffuf and analyst-selected wordlists
 - Path-aware CI and repository security checks
 
-## MERGE GATE
+## Newly completed during this roadmap review
 
 - **Tool Manager / Provider Center — PR #26 / Issue #24**
-  - global provider inventory
-  - status/version/path/help
-  - generic future-provider rendering
-  - copy-only setup commands
-  - no automatic installer
+  - merged to `main`;
+  - global provider inventory;
+  - status/version/path/help;
+  - generic future-provider rendering;
+  - copy-only setup commands;
+  - no automatic installer.
 
 ## Important gaps discovered during the product review
 
@@ -183,8 +184,7 @@ This milestone closes the current development burst before new product work star
 
 ## Scope
 
-- Finish review and, when green, merge **PR #26 — Tool Manager / Provider Center**.
-- Verify current `main` after the merge.
+- Verify current `main` after the Tool Manager merge.
 - Complete the CodeQL ownership cutover so the advanced workflow is authoritative and
   the duplicate default setup no longer runs.
 - Confirm the required CI gate still behaves correctly after the cutover.
@@ -195,7 +195,7 @@ This milestone closes the current development burst before new product work star
 
 ## Exit condition
 
-- Tool Manager is on `main`.
+- Tool Manager remains healthy on `main`.
 - Main CI is green.
 - Advanced CodeQL is green and duplicate default CodeQL is disabled.
 - No unresolved regression from Phase 2C or Tool Manager.
@@ -952,7 +952,7 @@ After the agent finishes:
 
 | Issue / PR | Roadmap placement |
 | --- | --- |
-| PR #26 / Issue #24 — Tool Manager | Milestone 0 |
+| PR #26 / Issue #24 — Tool Manager | Milestone 0 — DONE |
 | Issue #20 — localhost/local/private targets | Milestone 1 |
 | Direct IP Recon | Milestone 1 — implementation issue to create when work begins |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
@@ -973,7 +973,7 @@ After the agent finishes:
 
 ```text
 M0  Consolidate current beta
-    Tool Manager + CodeQL cutover
+    Tool Manager DONE + CodeQL cutover
             ↓
 M1  Real-target usability
     localhost/private + Direct IP Recon
@@ -1015,7 +1015,7 @@ Do **not** start Historical URL Intelligence yet.
 
 The next execution sequence is:
 
-1. finish and merge Tool Manager PR #26 when all review/check gates are green;
+1. verify the merged Tool Manager remains green on `main`;
 2. complete the CodeQL cutover;
 3. implement Issue #20 localhost/local/private targets;
 4. implement Direct IP Recon;
