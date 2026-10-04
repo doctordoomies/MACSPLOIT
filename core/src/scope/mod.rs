@@ -29,6 +29,26 @@ pub fn normalize_entry(input: &str) -> Result<String> {
     }
 }
 
+/// The narrowest exact scope entry that authorizes `target` (a classified target's
+/// normalized value), or `None` for a target type that cannot be authorized this way
+/// (e.g. CIDR, email, username). A URL authorizes only its exact host identity — never
+/// a sibling host, a wildcard, a resolved IP, or a CIDR. The derived host is run back
+/// through [`normalize_entry`] so it uses the same validation as any other scope entry.
+pub fn target_entry(kind: TargetType, normalized_value: &str) -> Option<String> {
+    let host = match kind {
+        TargetType::Domain | TargetType::Hostname | TargetType::IPAddress => {
+            normalized_value.to_owned()
+        }
+        TargetType::URL => url::Url::parse(normalized_value)
+            .ok()?
+            .host_str()?
+            .trim_matches(['[', ']'])
+            .to_owned(),
+        _ => return None,
+    };
+    normalize_entry(&host).ok()
+}
+
 pub fn contains(entries: &[String], target: &str) -> bool {
     let Ok((kind, value)) = classify(target) else {
         return false;
@@ -204,6 +224,40 @@ mod tests {
         ));
         // A single loopback literal is not the whole range.
         assert!(!contains(&["127.0.0.1".into()], "http://127.0.0.2:8080"));
+    }
+
+    #[test]
+    fn target_entry_derives_narrowest_exact_scope() {
+        use TargetType::*;
+        assert_eq!(
+            target_entry(Domain, "google.example").as_deref(),
+            Some("google.example")
+        );
+        assert_eq!(
+            target_entry(Hostname, "localhost").as_deref(),
+            Some("localhost")
+        );
+        assert_eq!(
+            target_entry(IPAddress, "192.0.2.25").as_deref(),
+            Some("192.0.2.25")
+        );
+        assert_eq!(
+            target_entry(IPAddress, "2001:db8::10").as_deref(),
+            Some("2001:db8::10")
+        );
+        // URL authorizes only the exact host identity (no port, no path, no scheme).
+        assert_eq!(
+            target_entry(URL, "https://app.example.test:8443/admin").as_deref(),
+            Some("app.example.test")
+        );
+        assert_eq!(
+            target_entry(URL, "http://[::1]:8080/").as_deref(),
+            Some("::1")
+        );
+        // Never a wildcard; a CIDR/other target type is not authorizable this way.
+        assert!(target_entry(Domain, "google.example").unwrap() != "*.google.example");
+        assert_eq!(target_entry(CIDR, "192.0.2.0/24"), None);
+        assert_eq!(target_entry(EmailAddress, "a@b.test"), None);
     }
 
     #[test]

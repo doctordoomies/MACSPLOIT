@@ -85,6 +85,7 @@ pub enum ChainKind {
 
 /// One preset stage: (display name, optional capability, optional pinned provider).
 type StagePlan = (&'static str, Option<Capability>, Option<&'static str>);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRun {
     pub id: Id,
@@ -1025,6 +1026,27 @@ impl Engine {
             options: &chain.options,
         };
         let execution = provider.execute(&target.normalized_value, capability, &inputs, &ctx)?;
+
+        // Emit a display-only, sanitized command for the live console. The execution
+        // argv (execution.command) is untouched and still backs the evidence envelope
+        // below; the display copy strips the executable path to its basename and redacts
+        // URL query values (and, in future, other sensitive flags) at the single
+        // boundary in `sanitize`. It is never a shell string and carries no environment.
+        let display_command = crate::sanitize::display_command(&execution.command);
+        if !display_command.is_empty() {
+            let tx = conn.transaction()?;
+            emit(
+                &tx,
+                workspace,
+                EventType::ProviderCommand,
+                json!({
+                    "provider_run_id": run,
+                    "provider": metadata.name,
+                    "command": display_command,
+                }),
+            )?;
+            tx.commit()?;
+        }
 
         // Preserve the complete provider output (stdout, stderr, command, exit,
         // timings, version) as an evidence envelope BEFORE parsing, so neither a

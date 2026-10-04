@@ -155,6 +155,17 @@ public struct Snapshot: Codable, Sendable, Equatable {
 public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String
 }
+/// Core-authoritative scope coverage for a target (read-only; no network activity).
+public struct ScopeStatus: Codable, Sendable, Equatable {
+    public let authorized: Bool
+    public let requiredScopeEntry: String?
+}
+/// Result of authorizing a target from the Recon flow.
+public struct AuthorizeResult: Codable, Sendable, Equatable {
+    public let workspace: Workspace
+    public let authorized: Bool
+    public let addedEntry: String?
+}
 public struct ProviderInstallation: Codable, Sendable, Equatable {
     public let state: String
     public let path: String?

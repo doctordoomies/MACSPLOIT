@@ -8,6 +8,7 @@ pub mod orchestration;
 pub mod process;
 pub mod protocol;
 pub mod providers;
+pub mod sanitize;
 pub mod scope;
 pub mod targets;
 pub mod web;

@@ -7,6 +7,24 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **UX stabilization (Milestone 1.3):** a responsive workbench pass with a core-backed
+  authorization flow. Recon replaces the cramped segmented picker with adaptive workflow
+  cards and a single execution panel (target, authorization state, provider readiness,
+  options, Run/Cancel, a persistent "only scan what you are authorized to assess"
+  reminder) plus a collapsible, read-only **live console** built from durable events and
+  provider runs — including a display-only sanitized command (`$ nmap -sT …`, executable
+  basename + argv, with HTTP(S) URL query values redacted to `?<redacted>`; never a shell
+  string, never executed, no environment or secrets — the exact argv stays only in the
+  hashed evidence envelope). Out-of-scope targets
+  get an explicit **Authorize & Run** confirmation that adds only the narrowest exact
+  scope entry (never a wildcard, CIDR, sibling host, or resolved IP), persists it, and
+  re-checks core authorization before launching — via two additive, read-reuse protocol
+  commands (`target_scope_status`, `authorize_target`) so Swift never reimplements scope
+  matching. The Rust core remains the authorization boundary. The dashboard is rebuilt as
+  calm modular cards from real workspace state, the sidebar no longer overlays content,
+  and the Tool Manager becomes **Provider Center** with Homebrew presented as an optional
+  recommended install method rather than a requirement. No new network behavior; offline
+  tests cover scope status, authorization, and the console model.
 - **Direct IP Recon (Milestone 1.2):** a new `IP Recon` chain (`ip_recon`) that runs
   Nmap → HTTPX directly from one explicitly selected, in-scope IPv4 or IPv6 address —
   no domain, no DNS, and no Subfinder step. It reuses the existing Nmap and HTTPX

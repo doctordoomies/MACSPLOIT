@@ -31,6 +31,8 @@ actor ModelAPI: CoreAPI {
     func cancelChain(workspace: String, chain: String) async throws {}
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent { EvidenceContent(evidenceId: evidence, rawJson: "{}") }
     func listProviders() async throws -> [ProviderStatus] { [] }
+    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus { ScopeStatus(authorized: false, requiredScopeEntry: nil) }
+    func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult { AuthorizeResult(workspace: current.workspace, authorized: true, addedEntry: nil) }
 }
 
 @MainActor

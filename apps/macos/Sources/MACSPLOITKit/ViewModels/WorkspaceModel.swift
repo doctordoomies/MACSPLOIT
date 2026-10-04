@@ -187,6 +187,54 @@ public final class WorkspaceModel: ObservableObject {
         await runRecon(kind: "content_discovery", options: .object(["wordlist_path": .string(path)]))
     }
 
+    /// Core-authoritative scope coverage for the currently selected target. Refreshed
+    /// when the selection changes and after an authorization; drives the Recon
+    /// authorization state without Swift reimplementing scope matching.
+    @Published public private(set) var scopeStatus: ScopeStatus?
+
+    public func refreshScopeStatus() async {
+        guard isConnected, let id = selectedWorkspaceId, let target = selectedTargetId else {
+            scopeStatus = nil
+            return
+        }
+        do {
+            let status = try await client.targetScopeStatus(workspace: id, target: target)
+            guard selectedWorkspaceId == id, selectedTargetId == target else { return }
+            scopeStatus = status
+        } catch { scopeStatus = nil }
+    }
+
+    /// Add only the narrowest exact scope entry for the selected target (no-op if already
+    /// covered), persist it, and refresh. Returns whether the target is now authorized.
+    @discardableResult
+    public func authorizeSelectedTarget() async -> Bool {
+        guard let id = selectedWorkspaceId, let target = selectedTargetId else { return false }
+        isBusy = true; defer { isBusy = false }
+        do {
+            let result = try await client.authorizeTarget(workspace: id, target: target)
+            guard selectedWorkspaceId == id else { return false }
+            if let index = workspaces.firstIndex(where: { $0.id == id }) { workspaces[index] = result.workspace }
+            try await refresh()
+            await refreshScopeStatus()
+            return result.authorized
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    /// Authorize if needed, then launch the workflow — the "Authorize & Run" sequence.
+    /// Scope is persisted and re-checked by the core before any provider starts.
+    public func authorizeAndRun(kind: String, options: JSONValue = .object([:])) async {
+        if scopeStatus?.authorized != true {
+            guard await authorizeSelectedTarget() else { return }
+        }
+        await runRecon(kind: kind, options: options)
+    }
+
+    /// Console lines for the selected chain, derived from durable snapshot state.
+    public var consoleLines: [ConsoleLine] {
+        guard let snapshot, let chain = selectedChainId else { return [] }
+        return reconConsoleLines(snapshot: snapshot, chainId: chain)
+    }
+
     public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }
     public var subfinder: ProviderStatus? { provider("subfinder") }
     public var nativeDns: ProviderStatus? { provider("native_dns") }

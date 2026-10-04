@@ -13,6 +13,9 @@ pub enum EventType {
     ChainStageStarted,
     ChainStageCompleted,
     ProviderStarted,
+    /// Display-only sanitized command (executable basename + argument array) for the
+    /// live console. Never a shell string; carries no environment or secrets.
+    ProviderCommand,
     ProviderCompleted,
     EvidenceCreated,
     TaskStatusChanged,

@@ -61,6 +61,18 @@ pub enum Command {
         evidence_id: Id,
     },
     ListProviders {},
+    /// Read-only: is the target covered by workspace scope, and what exact entry would
+    /// authorize it. No scope mutation, no network activity.
+    TargetScopeStatus {
+        workspace_id: Id,
+        target_id: Id,
+    },
+    /// Add only the narrowest exact scope entry needed to authorize the target (no-op if
+    /// already covered), persist it, and re-check authorization. No network activity.
+    AuthorizeTarget {
+        workspace_id: Id,
+        target_id: Id,
+    },
 }
 
 impl Command {
@@ -77,6 +89,8 @@ impl Command {
             Self::CancelChain { .. } => "cancel_chain",
             Self::ReadEvidence { .. } => "read_evidence",
             Self::ListProviders { .. } => "list_providers",
+            Self::TargetScopeStatus { .. } => "target_scope_status",
+            Self::AuthorizeTarget { .. } => "authorize_target",
         }
     }
 }
@@ -161,6 +175,14 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 json!({"evidence_id":evidence_id,"raw_json":engine.store.read_evidence(workspace_id,evidence_id)?})
             }
             Command::ListProviders {} => serde_json::to_value(engine.providers())?,
+            Command::TargetScopeStatus {
+                workspace_id,
+                target_id,
+            } => serde_json::to_value(engine.store.target_scope_status(workspace_id, target_id)?)?,
+            Command::AuthorizeTarget {
+                workspace_id,
+                target_id,
+            } => serde_json::to_value(engine.store.authorize_target(workspace_id, target_id)?)?,
         })
     })();
     match result {

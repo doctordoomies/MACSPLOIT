@@ -50,6 +50,10 @@ private actor ProviderAPI: CoreAPI {
         if fail { throw CoreFailure(code: "ProbeFailure", message: "Synthetic status failure") }
         return [try providerFixture(state: "INSTALLED")]
     }
+    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus { ScopeStatus(authorized: true, requiredScopeEntry: nil) }
+    func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
+        AuthorizeResult(workspace: Workspace(id: "w", name: "W", createdAt: "now", updatedAt: "now", scope: []), authorized: true, addedEntry: nil)
+    }
 }
 
 

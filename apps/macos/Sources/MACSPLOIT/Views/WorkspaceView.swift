@@ -7,7 +7,7 @@ struct WorkspaceView: View {
     @State private var editingScope = false
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $model.section) {
                 Section("Workspace") {
                     ForEach(WorkspaceSection.allCases.filter { $0 != .toolManager }) { section in
@@ -15,7 +15,7 @@ struct WorkspaceView: View {
                     }
                 }
                 Section("Tools") {
-                    Label("Tool Manager", systemImage: "wrench.and.screwdriver").tag(WorkspaceSection.toolManager)
+                    Label("Provider Center", systemImage: "wrench.and.screwdriver").tag(WorkspaceSection.toolManager)
                 }
                 Section("Future") {
                     Label("Findings", systemImage: "exclamationmark.shield")
@@ -94,6 +94,7 @@ struct WorkspaceView: View {
                     .help("Create Workspace").keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!model.isConnected)
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $creatingWorkspace) { CreateWorkspaceView(model: model) }
         .sheet(isPresented: $editingScope) { ScopeEditorView(model: model) }
         .alert("MACSPLOIT", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {

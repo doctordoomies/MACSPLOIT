@@ -35,6 +35,14 @@ crawling/content discovery, and per-hop scope-checked for native-HTTP redirects,
 Provider statuses (metadata plus live installation state) are exposed to the UI
 through the `list_providers` protocol method.
 
+MACSPLOIT needs a **compatible provider executable** — it does not depend on Homebrew.
+Executable discovery resolves a candidate (including a Homebrew Cellar symlink) to a real,
+executable regular file on PATH, `/opt/homebrew/bin`, `/usr/local/bin`, or an explicit
+`MACSPLOIT_<TOOL>` override. Homebrew is presented in Provider Center and Recon only as an
+optional recommended install method on macOS; an executable installed by any other method
+and made available on PATH (or via an override) is fully supported. MACSPLOIT never
+installs or updates providers and never runs a package manager.
+
 ## SyntheticDiscoveryProvider
 
 The synthetic provider is version `1.0.0`, risk PASSIVE. It accepts
