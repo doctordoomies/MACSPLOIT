@@ -996,6 +996,12 @@ Before assigning Claude, Codex, or another coding agent:
 6. assign a branch + PR scope;
 7. state "do not merge".
 
+Before making any change, the agent must establish a verified, reproducible
+baseline on a clean checkout and attach baseline/post-change logs to the PR, per
+[baseline-verification.md](baseline-verification.md). A change applied on top of
+an uncharacterized failing suite is unverifiable and must not be claimed as
+verified; upstream breakage is marked BLOCKED_UPSTREAM with evidence instead.
+
 After the agent finishes:
 
 1. inspect the diff;
