@@ -93,6 +93,28 @@ actor ReplyTransport: CoreTransport {
         #expect(options["wordlist_path"] as? String == "/tmp/list.txt")
     }
 
+    @Test func testTargetScopeStatusDecodesAndEncodes() async throws {
+        let reply = ReplyTransport(#"{"result":{"authorized":false,"required_scope_entry":"app.example.test"}}"#)
+        let status = try await CoreClient(transport: reply).targetScopeStatus(workspace: "w", target: "t")
+        #expect(status.authorized == false)
+        #expect(status.requiredScopeEntry == "app.example.test")
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(object["method"] as? String == "target_scope_status")
+        let params = object["params"] as! [String: String]
+        #expect(params["workspace_id"] == "w")
+        #expect(params["target_id"] == "t")
+    }
+
+    @Test func testAuthorizeTargetDecodesAddedEntry() async throws {
+        let reply = ReplyTransport(#"{"result":{"authorized":true,"added_entry":"192.0.2.25","workspace":{"id":"w","name":"W","created_at":"now","updated_at":"now","scope":["192.0.2.25"]}}}"#)
+        let result = try await CoreClient(transport: reply).authorizeTarget(workspace: "w", target: "t")
+        #expect(result.authorized)
+        #expect(result.addedEntry == "192.0.2.25")
+        #expect(result.workspace.scope == ["192.0.2.25"])
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(object["method"] as? String == "authorize_target")
+    }
+
     @Test func testStartChainEncodesIpReconChain() async throws {
         let reply = ReplyTransport(#"{"result":{"id":"c","workspace_id":"w","target_id":"t","name":"IP Recon","status":"PENDING","created_at":"now","updated_at":"now","error_code":null}}"#)
         _ = try await CoreClient(transport: reply).startChain(workspace: "w", target: "t", chain: "ip_recon")
