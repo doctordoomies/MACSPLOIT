@@ -80,7 +80,9 @@ private struct ProviderCard: View {
             Text(provider.description).font(.callout).foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Label(provider.installation.isBuiltIn ? "Built in" : "External", systemImage: provider.installation.isBuiltIn ? "shippingbox" : "terminal")
-                Label(provider.offline ? "Offline" : "Network provider", systemImage: provider.offline ? "network.slash" : "network")
+                // `offline` is provider behavior (performs no network activity), not host
+                // connectivity. Avoid a standalone "Offline" that reads as a global status.
+                Label(provider.offline ? "No network activity" : "Network provider", systemImage: provider.offline ? "network.slash" : "network")
                 Text(provider.riskClass == "ACTIVE_LOW_IMPACT" ? "Active · Low Impact" : providerLabel(provider.riskClass))
                     .help(provider.riskClass)
             }.font(.caption)

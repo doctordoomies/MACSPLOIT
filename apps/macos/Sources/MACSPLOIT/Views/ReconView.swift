@@ -42,7 +42,7 @@ enum ReconMode: String, CaseIterable, Identifiable {
 
     var purpose: String {
         switch self {
-        case .synthetic: return "Offline demo using invented discoveries. No network."
+        case .synthetic: return "Synthetic demo using invented discoveries. Performs no network activity."
         case .dns: return "Built-in A/AAAA resolution for a domain or hostname."
         case .domain: return "Subdomains → DNS → ports/services → HTTP probing."
         case .ip: return "Ports/services → HTTP probing for one selected IP. No DNS required."
@@ -286,7 +286,7 @@ struct ReconView: View {
     @ViewBuilder private var authorizationRow: some View {
         HStack(spacing: 12) {
             Text("Authorization").font(.callout.weight(.medium)).frame(width: 90, alignment: .leading)
-            AuthorizationBadge(authorized: authorized, offline: !mode.isLive)
+            AuthorizationBadge(authorized: authorized, noNetwork: !mode.isLive)
             Spacer()
         }
     }
@@ -362,7 +362,7 @@ struct ReconView: View {
     @ViewBuilder private var providerPanel: some View {
         switch mode {
         case .synthetic:
-            Text("Offline demo — no external providers and no network activity.")
+            Text("Synthetic demo — no external providers and no network activity.")
                 .font(.caption).foregroundStyle(.secondary)
         case .dns:
             providerList([ProviderRowData(name: "Native DNS Resolver", detail: "A + AAAA resolution (system resolver)", available: model.nativeDns?.installation.isAvailable ?? true, status: model.nativeDns?.installation.summary ?? "Built in", risk: "ACTIVE · LOW", warn: false)])

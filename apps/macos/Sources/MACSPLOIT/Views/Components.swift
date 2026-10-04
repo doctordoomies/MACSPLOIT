@@ -47,15 +47,17 @@ struct MetricTile: View {
 /// Risk/activity indicator shared by recon cards and panels.
 struct RiskBadge: View {
     let risk: String
+    // The badge describes the WORKFLOW's behavior, never the machine's connectivity.
+    // Synthetic Recon performs no network activity; it does not mean the Mac is offline.
     private var text: String {
         switch risk {
-        case "PASSIVE · SYNTHETIC": return "OFFLINE"
+        case "PASSIVE · SYNTHETIC": return "SYNTHETIC"
         case "ACTIVE · LOW": return "ACTIVE · LOW"
         default: return risk
         }
     }
     private var color: Color {
-        if risk.contains("OFFLINE") || risk.contains("SYNTHETIC") { return .secondary }
+        if risk.contains("SYNTHETIC") { return .secondary }
         if risk == "ACTIVE" { return .orange }
         return .cyan
     }
@@ -70,10 +72,13 @@ struct RiskBadge: View {
 /// Authorization state dot + label, driven only by core scope status.
 struct AuthorizationBadge: View {
     let authorized: Bool
-    let offline: Bool
+    /// True for a workflow that performs no network activity (e.g. Synthetic Recon). This
+    /// describes the WORKFLOW, not host connectivity — MACSPLOIT does not detect whether
+    /// the Mac is online, and this must never read as a global offline/online status.
+    let noNetwork: Bool
     var body: some View {
-        if offline {
-            Label("Offline · No Network", systemImage: "network.slash")
+        if noNetwork {
+            Label("No network activity", systemImage: "network.slash")
                 .font(.caption).foregroundStyle(.secondary)
         } else {
             HStack(spacing: 6) {
