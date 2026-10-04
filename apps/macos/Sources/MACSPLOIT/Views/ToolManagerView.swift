@@ -14,7 +14,7 @@ struct ToolManagerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
-                PageHeading(title: "Tool Manager", subtitle: "\(model.providerStatuses.count) providers · Status, diagnostics, and setup help")
+                PageHeading(title: "Provider Center", subtitle: "\(model.providerStatuses.count) providers · How your security-tool environment is configured")
                 if model.isRefreshingProviders { ProgressView().controlSize(.small).accessibilityLabel("Refreshing providers") }
                 Button {
                     Task { await model.refreshProviders() }
@@ -22,7 +22,7 @@ struct ToolManagerView: View {
                 .disabled(!model.isConnected || model.isRefreshingProviders)
                 .help("Refresh local availability and version probes without restarting the core")
             }
-            Text("Setup commands are copy-only. MACSPLOIT never installs or updates providers.")
+            Text("MACSPLOIT needs a compatible provider executable — it does not require Homebrew. Homebrew is an optional recommended install method on macOS; existing executables on PATH or an explicit override are fully supported. Setup commands are copy-only; MACSPLOIT never installs or updates providers.")
                 .font(.callout).foregroundStyle(.secondary)
             if let error = model.providerRefreshError {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -99,14 +99,21 @@ private struct ProviderCard: View {
                 if let message = provider.installation.message {
                     Text(message).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
                 }
+                if provider.installation.state == "MISSING" {
+                    Text("Not detected. MACSPLOIT needs a compatible \(provider.name) executable. Install it by any method and make it available on PATH, or set an explicit provider override.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let setup = provider.setup {
                     if let command = setup.installCommand {
-                        HStack {
-                            Text(command).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(command, forType: .string)
-                            } label: { Label("Copy Install Command", systemImage: "doc.on.doc") }.controlSize(.small)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Recommended on macOS: Homebrew (optional)").font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Text(command).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(command, forType: .string)
+                                } label: { Label("Copy Recommended Command", systemImage: "doc.on.doc") }.controlSize(.small)
+                            }
                         }
                     }
                     HStack {

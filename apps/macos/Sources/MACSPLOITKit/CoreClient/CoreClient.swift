@@ -15,6 +15,8 @@ public protocol CoreAPI: Sendable {
     func cancelChain(workspace: String, chain: String) async throws
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent
     func listProviders() async throws -> [ProviderStatus]
+    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus
+    func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult
 }
 
 public extension CoreAPI {
@@ -82,5 +84,11 @@ public struct CoreClient: CoreAPI {
     }
     public func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent {
         try await call("read_evidence", ["workspace_id": .string(workspace), "evidence_id": .string(evidence)])
+    }
+    public func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus {
+        try await call("target_scope_status", ["workspace_id": .string(workspace), "target_id": .string(target)])
+    }
+    public func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
+        try await call("authorize_target", ["workspace_id": .string(workspace), "target_id": .string(target)])
     }
 }
