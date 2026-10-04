@@ -86,21 +86,6 @@ pub enum ChainKind {
 /// One preset stage: (display name, optional capability, optional pinned provider).
 type StagePlan = (&'static str, Option<Capability>, Option<&'static str>);
 
-/// Build a display-only command for the console from a launched command vector
-/// (`[executable_path, arg, ...]`): the executable is reduced to its file name so a
-/// private install path is not surfaced, and the argument array is preserved verbatim.
-/// This is never executed; process launch continues to use the exact argv. It carries
-/// no environment. Returns an empty vector for an empty command.
-fn display_command(command: &[String]) -> Vec<String> {
-    let Some((executable, args)) = command.split_first() else {
-        return Vec::new();
-    };
-    let name = std::path::Path::new(executable)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| executable.clone());
-    std::iter::once(name).chain(args.iter().cloned()).collect()
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRun {
     pub id: Id,
@@ -1042,11 +1027,12 @@ impl Engine {
         };
         let execution = provider.execute(&target.normalized_value, capability, &inputs, &ctx)?;
 
-        // Emit a display-only sanitized command for the live console: the executable's
-        // basename plus its argument array (never a shell string, never environment or
-        // secrets). The full command/path lives in the evidence envelope below. Future
-        // authenticated providers must redact sensitive arguments in display_command.
-        let display_command = display_command(&execution.command);
+        // Emit a display-only, sanitized command for the live console. The execution
+        // argv (execution.command) is untouched and still backs the evidence envelope
+        // below; the display copy strips the executable path to its basename and redacts
+        // URL query values (and, in future, other sensitive flags) at the single
+        // boundary in `sanitize`. It is never a shell string and carries no environment.
+        let display_command = crate::sanitize::display_command(&execution.command);
         if !display_command.is_empty() {
             let tx = conn.transaction()?;
             emit(
