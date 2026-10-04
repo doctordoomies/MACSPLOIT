@@ -19,6 +19,25 @@ pub struct Store {
     pub root: PathBuf,
 }
 
+/// Read-only scope coverage for a target, computed with the core's own scope logic so
+/// the UI never reimplements wildcard/CIDR/URL-host matching. Performs no network I/O.
+#[derive(Debug, Serialize)]
+pub struct ScopeStatus {
+    pub authorized: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_scope_entry: Option<String>,
+}
+
+/// Result of authorizing a target from the Recon flow: the updated workspace and the
+/// exact entry that was added (`None` when the target was already covered).
+#[derive(Debug, Serialize)]
+pub struct AuthorizeResult {
+    pub workspace: Workspace,
+    pub authorized: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_entry: Option<String>,
+}
+
 pub fn encoded<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .expect("serializable domain value")
@@ -262,6 +281,104 @@ impl Store {
 
     pub fn workspace(&self, id: Id) -> Result<Workspace> {
         workspace(&self.connect(id)?, id)
+    }
+
+    /// Whether the selected target is currently covered by workspace scope, plus the
+    /// narrowest exact entry that would authorize it. Read-only: no scope mutation and
+    /// no network activity. Scope coverage reuses `scope::contains` (the authoritative
+    /// matcher), so Swift does not define a second notion of coverage.
+    pub fn target_scope_status(&self, workspace_id: Id, target_id: Id) -> Result<ScopeStatus> {
+        let conn = self.connect(workspace_id)?;
+        let ws = workspace(&conn, workspace_id)?;
+        let target = targets_in(&conn, workspace_id)?
+            .into_iter()
+            .find(|t| t.id == target_id)
+            .ok_or_else(|| {
+                CoreError::new("InvalidTarget", "Target does not exist in this workspace.")
+            })?;
+        Ok(ScopeStatus {
+            authorized: crate::scope::contains(&ws.scope, &target.normalized_value),
+            required_scope_entry: crate::scope::target_entry(
+                target.target_type,
+                &target.normalized_value,
+            ),
+        })
+    }
+
+    /// Add only the narrowest exact scope entry required to authorize the target, if it
+    /// is not already covered, then re-check core authorization. A no-op (no write, no
+    /// event) when the target is already in scope. Never widens to wildcards, CIDRs,
+    /// sibling hosts, or resolved IPs, and performs no network activity. The durable
+    /// `WorkspaceScopeUpdated` event records the added entry and that it came from the
+    /// Recon authorization flow (operator intent — not proof of permission).
+    pub fn authorize_target(&self, workspace_id: Id, target_id: Id) -> Result<AuthorizeResult> {
+        let mut conn = self.connect(workspace_id)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ws = workspace(&tx, workspace_id)?;
+        let target = targets_in(&tx, workspace_id)?
+            .into_iter()
+            .find(|t| t.id == target_id)
+            .ok_or_else(|| {
+                CoreError::new("InvalidTarget", "Target does not exist in this workspace.")
+            })?;
+
+        // Already covered: do not touch scope or emit an event.
+        if crate::scope::contains(&ws.scope, &target.normalized_value) {
+            return Ok(AuthorizeResult {
+                workspace: ws,
+                authorized: true,
+                added_entry: None,
+            });
+        }
+
+        let entry = crate::scope::target_entry(target.target_type, &target.normalized_value)
+            .ok_or_else(|| {
+                CoreError::new(
+                    "InvalidTarget",
+                    "This target type cannot be authorized from Recon.",
+                )
+            })?;
+        if ws.scope.len() >= 100 {
+            return Err(CoreError::new(
+                "InvalidWorkspace",
+                "A workspace can have at most 100 scope entries.",
+            ));
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO scope_entries VALUES(?1,?2)",
+            params![workspace_id.to_string(), entry],
+        )?;
+        tx.execute(
+            "UPDATE workspaces SET updated_at=?1 WHERE id=?2",
+            params![crate::now(), workspace_id.to_string()],
+        )?;
+        emit(
+            &tx,
+            workspace_id,
+            EventType::WorkspaceScopeUpdated,
+            json!({
+                "workspace_id": workspace_id,
+                "added": entry,
+                "source": "recon_authorization",
+                "scope_count": ws.scope.len() + 1,
+            }),
+        )?;
+        audit(&tx, workspace_id, "WorkspaceScopeUpdated", workspace_id)?;
+        tx.commit()?;
+
+        // Re-check authorization against the persisted scope (fail closed).
+        let updated = self.workspace(workspace_id)?;
+        if !crate::scope::contains(&updated.scope, &target.normalized_value) {
+            return Err(CoreError::new(
+                "ScopeViolation",
+                "Authorization did not bring the target into scope.",
+            ));
+        }
+        Ok(AuthorizeResult {
+            workspace: updated,
+            authorized: true,
+            added_entry: Some(entry),
+        })
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<Workspace>> {
