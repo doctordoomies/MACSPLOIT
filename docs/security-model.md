@@ -69,12 +69,18 @@ cannot prove that arbitrary content contains no secret.
   `source: "recon_authorization"`, and re-checks `scope::contains` before any provider
   starts (fail closed). Cancel mutates nothing and launches nothing. The scope event
   records operator intent and workspace configuration — it is not proof of permission.
-- The live console shows a **display-only** sanitized command (`ProviderCommand` event:
-  executable basename plus the argument array). It is never executed — process launch
-  continues to use the exact executable path and argv — and carries no environment
-  variables or secrets; the full command and raw output remain in the hashed evidence
-  envelope. Future authenticated providers must redact sensitive arguments on this display
-  path.
+- The live console shows a **display-only** sanitized command (`ProviderCommand` event).
+  Execution and display are deliberately separated: the execution argv handed to the
+  shell-free supervisor is never modified, while the display copy is reduced at a single
+  boundary (`core/src/sanitize`) — the executable path becomes its basename, and HTTP(S)
+  URL arguments have their **query contents redacted** (`https://host/path?<redacted>`)
+  with userinfo removed and scheme/host/port/path preserved, so a secret such as
+  `?token=…` never enters the durable event/activity stream. The display command is never
+  executed and carries no environment variables; the complete execution record lives only
+  in the hashed evidence envelope. `sanitize_display_arg` is the enforced extension point
+  for redacting future sensitive flag/value pairs (auth headers, tokens, passwords, API
+  keys) — display text is privacy-reduced presentation data and is never assumed safe
+  merely because execution is shell-free.
 - Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

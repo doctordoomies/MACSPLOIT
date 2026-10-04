@@ -13,7 +13,9 @@ may include breaking changes).
   options, Run/Cancel, a persistent "only scan what you are authorized to assess"
   reminder) plus a collapsible, read-only **live console** built from durable events and
   provider runs — including a display-only sanitized command (`$ nmap -sT …`, executable
-  basename + argv, never a shell string, no environment or secrets). Out-of-scope targets
+  basename + argv, with HTTP(S) URL query values redacted to `?<redacted>`; never a shell
+  string, never executed, no environment or secrets — the exact argv stays only in the
+  hashed evidence envelope). Out-of-scope targets
   get an explicit **Authorize & Run** confirmation that adds only the narrowest exact
   scope entry (never a wildcard, CIDR, sibling host, or resolved IP), persists it, and
   re-checks core authorization before launching — via two additive, read-reuse protocol

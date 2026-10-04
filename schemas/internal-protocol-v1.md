@@ -42,8 +42,10 @@ empty request ID; an oversized frame closes the helper session.
 
 `target_scope_status` and `authorize_target` are additive to protocol v1 (no version
 bump). Durable events gain a `ProviderCommand` type carrying a display-only, sanitized
-command (executable basename plus argument array) for the live console; it is never a
-shell string and carries no environment or secrets.
+command for the live console: the executable basename plus an argument array whose HTTP(S)
+URLs have their query contents redacted (`https://host/path?<redacted>`) and userinfo
+removed. It is never a shell string, is never executed, and carries no environment or
+secrets; the exact execution argv and full output remain only in the hashed evidence.
 
 IDs are UUID strings. Field names use snake_case; timestamps are RFC3339 UTC.
 Maximum request: 64 KiB including newline. Maximum response: 8 MiB of JSON.
