@@ -59,6 +59,22 @@ cannot prove that arbitrary content contains no secret.
   `/etc/hosts` is parsed by MACSPLOIT; local names resolve through the normal system stack.
   TLS validation stays enabled for local HTTPS (a self-signed `https://localhost` surfaces a
   clear TLS failure rather than being silently trusted).
+- Recon authorization flow (Milestone 1.3) keeps the Rust core as the authorization
+  boundary while removing the leave-Recon-to-edit-scope friction. `target_scope_status`
+  is read-only and reuses `scope::contains` (no second matcher in Swift, no network). An
+  out-of-scope live Run requires an explicit **Authorize & Run** confirmation; on confirm,
+  `authorize_target` adds **only the narrowest exact entry** (`scope::target_entry`: the
+  domain/hostname/IP, or a URL's exact host — never a wildcard, CIDR, sibling host, or
+  resolved IP), persists it, emits a durable `WorkspaceScopeUpdated` event tagged
+  `source: "recon_authorization"`, and re-checks `scope::contains` before any provider
+  starts (fail closed). Cancel mutates nothing and launches nothing. The scope event
+  records operator intent and workspace configuration — it is not proof of permission.
+- The live console shows a **display-only** sanitized command (`ProviderCommand` event:
+  executable basename plus the argument array). It is never executed — process launch
+  continues to use the exact executable path and argv — and carries no environment
+  variables or secrets; the full command and raw output remain in the hashed evidence
+  envelope. Future authenticated providers must redact sensitive arguments on this display
+  path.
 - Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

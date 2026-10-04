@@ -37,6 +37,13 @@ empty request ID; an oversized frame closes the helper session.
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
 | list_providers | none | Provider metadata plus live installation status (state/version) |
+| target_scope_status | workspace_id, target_id | `{authorized, required_scope_entry?}` computed with the core scope matcher; read-only, no network activity |
+| authorize_target | workspace_id, target_id | Adds only the narrowest exact scope entry needed (no-op if already covered), persists it, re-checks authorization, and returns `{workspace, authorized, added_entry?}`; emits `WorkspaceScopeUpdated` (payload `added`, `source: "recon_authorization"`); no network activity |
+
+`target_scope_status` and `authorize_target` are additive to protocol v1 (no version
+bump). Durable events gain a `ProviderCommand` type carrying a display-only, sanitized
+command (executable basename plus argument array) for the live console; it is never a
+shell string and carries no environment or secrets.
 
 IDs are UUID strings. Field names use snake_case; timestamps are RFC3339 UTC.
 Maximum request: 64 KiB including newline. Maximum response: 8 MiB of JSON.

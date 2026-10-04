@@ -237,7 +237,9 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 4. Open **Recon → DNS Recon** and run it. No external CLI is required.
 5. For **Web Analysis**, add a full HTTP(S) URL target (the UI can create an HTTPS URL target from a selected domain) and run the built-in analyzer.
 
-Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT shows the missing tool and installation command instead of leaving the workflow unexplained.
+Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and Recon routes you there when something is missing.
+
+If you pick an authorized target that is not yet in workspace scope, Recon offers **Authorize & Run**: it adds only the narrowest exact scope entry (never a wildcard, CIDR, or sibling host), the Rust core re-checks authorization, and only then does the workflow start. Every live Run keeps a visible reminder to assess only systems you own or are explicitly permitted to test.
 
 
 

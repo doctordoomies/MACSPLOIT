@@ -269,8 +269,10 @@ scope range cannot accidentally become a mass-scan instruction.
 
 ## 1.3 UX stabilization
 
-**Issue #36 — ACTIVE.** Owner testing after Direct IP Recon exposed usability gaps that
-must be fixed before the acceptance matrix continues.
+**Issue #36 — implemented in an open PR (MERGE GATE; not yet merged).** Milestone 1
+remains ACTIVE; the real-target acceptance matrix (1.5) is still outstanding. Owner
+testing after Direct IP Recon exposed usability gaps that must be fixed before the
+acceptance matrix continues.
 
 Required outcomes:
 

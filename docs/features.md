@@ -19,6 +19,9 @@ today, not aspirations. Statuses:
 | Scope enforcement | STABLE | Exact/wildcard/CIDR, IPv4/IPv6, per-asset for active providers |
 | Local & private web targets | BETA | `localhost`/loopback/`::1`/private IP/CIDR/`.localhost`/`/etc/hosts` names as first-class web targets with custom ports; no public DNS; scope still authoritative; `localhost`≠`127.0.0.1`≠`::1` |
 | Direct IP Recon | BETA | Explicit in-scope IPv4/IPv6 → Nmap → HTTPX; no DNS prerequisite; one selected IP only (no CIDR expansion); IPv6 probe URLs bracketed |
+| Recon authorization flow | BETA | Core-backed `target_scope_status`; "Authorize & Run" adds only the narrowest exact scope entry (no wildcard/CIDR widening), persists it, and re-checks core authorization before launch |
+| Live execution console | BETA | Read-only, collapsible console from durable events/provider runs, incl. a display-only sanitized command (executable basename + argv; no shell, env, or secrets) |
+| Provider setup (Homebrew optional) | BETA | Provider Center + Recon present Homebrew as an optional recommended install method; existing executables on PATH or an explicit override are first-class |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
 | Evidence | STABLE | Raw provider output preserved, SHA-256 verified |
 | Activity / events | STABLE | Durable, replayable |
