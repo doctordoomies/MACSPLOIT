@@ -292,9 +292,35 @@ Required outcomes:
 Do not weaken scope semantics, add broad CIDR scanning, auto-install Homebrew/providers,
 or begin Milestone 2 work as part of this issue.
 
-## 1.4 Real-target acceptance matrix
+## 1.4 First-run setup and onboarding
 
-After Issue #36 lands and receives owner UI acceptance, add/maintain an acceptance matrix covering at minimum:
+**Issue #38 — NEXT after Issue #36.** A fresh MACSPLOIT install should guide the user
+through environment readiness before exposing the full workbench.
+
+Required outcomes:
+
+- first-run Welcome + explicit authorization-responsibility acknowledgement;
+- environment check for core readiness, detected providers, versions/paths where useful,
+  architecture compatibility, and optional Homebrew availability;
+- provider setup that treats Homebrew as an optional recommended convenience, supports
+  existing compatible executables, and never silently installs software;
+- explicit optional Homebrew setup only with user approval and a reviewed current
+  installation method;
+- appearance/theme selection and a Standard/Advanced presentation preference;
+- a simple starting dashboard preset such as Minimal, Operator, or Research;
+- an optional interactive tutorial using Synthetic Recon first so the tutorial can teach
+  the workbench without real network activity;
+- a final Ready summary leading naturally into first workspace creation or the workbench;
+- setup is resumable, re-runnable from Settings / Setup & Environment, and does not
+  require deleting workspace data or preferences.
+
+The broader managed-provider installation system remains a later provider-platform
+decision. Research/news backend implementation is not required merely because setup can
+choose a Research-oriented dashboard preset.
+
+## 1.5 Real-target acceptance matrix
+
+After Issues #36 and #38 land and receive owner acceptance, add/maintain an acceptance matrix covering at minimum:
 
 - domain;
 - hostname;
@@ -988,7 +1014,8 @@ After the agent finishes:
 | Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
 | Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
 | Issue #36 — UX stabilization | Milestone 1.3 — ACTIVE |
-| Real-target acceptance matrix | Milestone 1.4 — NEXT after Issue #36 |
+| Issue #38 — first-run setup and onboarding | Milestone 1.4 — NEXT after Issue #36 |
+| Real-target acceptance matrix | Milestone 1.5 — after Issues #36 and #38 |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
@@ -1010,7 +1037,7 @@ M0  Consolidate current beta
     Tool Manager DONE + CodeQL cutover
             ↓
 M1  Real-target usability
-    localhost/private + Direct IP Recon + UX stabilization + acceptance
+    localhost/private + Direct IP Recon + UX stabilization + onboarding + acceptance
             ↓
 M2  Bug bounty workbench + Findings foundation
             ↓
@@ -1051,9 +1078,10 @@ M0 is complete; Milestone 1.1 is merged via PR #31 and Milestone 1.2 Direct IP R
 merged via PR #35 with green post-merge CI and Advanced CodeQL. The next execution sequence is:
 
 1. complete Issue #36 — Milestone 1.3 UX Stabilization;
-2. complete the Milestone 1.4 real-target acceptance matrix;
-3. owner full-product walkthrough and fix any acceptance bugs;
-4. reach the Milestone 1 exit condition;
-5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
+2. complete Issue #38 — Milestone 1.4 First-run Setup & Onboarding;
+3. complete the Milestone 1.5 real-target acceptance matrix;
+4. owner full-product walkthrough and fix any acceptance bugs;
+5. reach the Milestone 1 exit condition;
+6. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
 
 That sequence remains authoritative until this roadmap is deliberately changed.
