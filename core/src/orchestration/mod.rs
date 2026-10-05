@@ -1144,6 +1144,15 @@ impl Engine {
             "UPDATE provider_runs SET end_time=?1,status='COMPLETED',exit_status=0 WHERE id=?2",
             params![crate::now(), run.to_string()],
         )?;
+        // Bounded, sanitized result summary for the live console. Values that look like
+        // URLs are redacted (query stripped) via the display sanitizer; raw stdout stays
+        // only in the evidence envelope. Preview is capped; by_type carries full counts.
+        emit(
+            &tx,
+            workspace,
+            EventType::ProviderResults,
+            provider_results_payload(run, &metadata.name, &discoveries),
+        )?;
         emit(
             &tx,
             workspace,
@@ -1153,4 +1162,55 @@ impl Engine {
         tx.commit()?;
         Ok(())
     }
+}
+
+const RESULTS_PREVIEW_MAX: usize = 8;
+
+/// Build the bounded, presentation-safe `ProviderResults` payload from parsed discoveries.
+fn provider_results_payload(
+    run: Id,
+    provider: &str,
+    discoveries: &[crate::assets::Discovery],
+) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
+    for d in discoveries {
+        *by_type.entry(encoded(&d.asset_type)).or_insert(0) += 1;
+    }
+    let preview: Vec<serde_json::Value> = discoveries
+        .iter()
+        .take(RESULTS_PREVIEW_MAX)
+        .map(|d| {
+            let value = crate::sanitize::sanitize_display_arg(&clip(&d.value, 256));
+            let source = d
+                .source
+                .as_ref()
+                .map(|s| crate::sanitize::sanitize_display_arg(&clip(s, 256)));
+            json!({
+                "type": encoded(&d.asset_type),
+                "value": value,
+                "source": source,
+                "relationship": d.relationship.as_ref().map(encoded),
+            })
+        })
+        .collect();
+    json!({
+        "provider_run_id": run,
+        "provider": provider,
+        "count": discoveries.len(),
+        "by_type": by_type,
+        "preview": preview,
+    })
+}
+
+/// Clip a string to a maximum number of bytes on a char boundary (display safety).
+fn clip(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        return value.to_owned();
+    }
+    let mut end = max;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
