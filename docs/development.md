@@ -129,7 +129,7 @@ Before every push, run:
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 scripts/check_repository.py --all-history
+python3 scripts/check_repository.py --reachable-history HEAD
 gh repo view doctordoomies/MACSPLOIT --json nameWithOwner,isPrivate,visibility
 ```
 

@@ -52,7 +52,7 @@ coverage. No shell interpolation of event values is used.
 | Rust-only PR, Cargo/lock/toolchain/build-core | Full Rust suite, format and Clippy on Ubuntu | Rust, no build |
 | Swift-only PR, Swift package/resources/build scripts | macOS Swift tests with actual Rust helper/offline bridge + signed app build | Swift manual production build |
 | Mixed Rust + Swift PR | Ubuntu Rust + complete macOS suite | Rust + Swift |
-| Policy Python/tests/manifests | Ubuntu policy/routing tests and full-history audits | Python |
+| Policy Python/tests/manifests | Ubuntu policy/routing tests and current reachable-history audits | Python |
 | Schemas, providers, fixtures, shared test scripts, classifier/gates, workflow/action configuration | Ubuntu Rust + full macOS suite + policy | All four languages |
 | Main application-code push | Full macOS suite + policy; also Ubuntu Rust when Rust changed | Affected languages |
 | Unknown/unreliable classification | All CI jobs appropriate to full mode | All four languages |
@@ -205,6 +205,15 @@ to `false` and disable the advanced workflow (or revert it) to avoid competing
 uploads. Do not delete historical alerts. Revert the CI workflow/script changes
 through review if routing is faulty; manual normal CI always requests the full
 suite while a fix is prepared. Keep `Build & test (macOS)` required throughout.
+
+### PR history isolation
+
+Normal PR CI audits the commit history reachable from the checked-out prospective
+merge commit with `check_repository.py --reachable-history HEAD`. This still
+catches secrets or prohibited files that were added and later deleted on the
+current branch, but it does not walk unrelated feature branches fetched by
+`actions/checkout`. The explicit `--all-history` mode remains available for
+deliberate repository-wide/local release audits.
 
 ## Dependabot: review before merge
 
