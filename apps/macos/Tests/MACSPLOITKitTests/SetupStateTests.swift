@@ -126,4 +126,24 @@ import Testing
         #expect(InterfaceDetail.advanced.expandsDetailByDefault)
         #expect(!InterfaceDetail.standard.expandsDetailByDefault)
     }
+
+    @Test func acknowledgementPersistsImmediatelyWithoutAdvancing() {
+        let d = freshDefaults()
+        do {
+            let model = SetupModel(store: SetupStore(defaults: d))
+            model.step = .authorization
+            model.setAuthorizationAcknowledged(true) // no advance() call
+        }
+        // Persisted at the store level...
+        #expect(SetupStore(defaults: d).authorizationAcknowledged)
+        // ...and a recreated model (relaunch) sees it checked.
+        let relaunched = SetupModel(store: SetupStore(defaults: d))
+        #expect(relaunched.authorizationAcknowledged)
+    }
+
+    @Test func providerSetupOffersRecommendedCustomizeSkip() {
+        #expect(ProviderSetupChoice.allCases.map(\.rawValue) == ["recommended", "customize", "skip"])
+        // The recommended external provider set is the normal five; MACSPLOIT installs none.
+        #expect(RecommendedProviders.ids == ["subfinder", "nmap", "httpx", "katana", "ffuf"])
+    }
 }
