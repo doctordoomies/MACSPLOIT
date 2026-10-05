@@ -1,6 +1,21 @@
 import SwiftUI
 import MACSPLOITKit
 
+// Presentation preferences flow to the workbench through the environment so section views
+// do not need the SetupModel threaded through every initializer.
+private struct InterfaceDetailKey: EnvironmentKey { static let defaultValue: InterfaceDetail = .standard }
+private struct DashboardPresetKey: EnvironmentKey { static let defaultValue: DashboardPreset = .operatorView }
+extension EnvironmentValues {
+    var interfaceDetail: InterfaceDetail {
+        get { self[InterfaceDetailKey.self] }
+        set { self[InterfaceDetailKey.self] = newValue }
+    }
+    var dashboardPreset: DashboardPreset {
+        get { self[DashboardPresetKey.self] }
+        set { self[DashboardPresetKey.self] = newValue }
+    }
+}
+
 /// Centered, gutter-padded content container for a workbench page. Keeps primary
 /// content off the window edges and prevents giant edge-to-edge forms on wide displays
 /// while still allowing wide content (tables) when `maxWidth` is nil.

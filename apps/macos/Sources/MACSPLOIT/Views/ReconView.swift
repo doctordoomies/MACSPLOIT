@@ -77,9 +77,11 @@ enum ReconMode: String, CaseIterable, Identifiable {
 
 struct ReconView: View {
     @ObservedObject var model: WorkspaceModel
+    @Environment(\.interfaceDetail) private var interfaceDetail
     @State private var mode: ReconMode = .synthetic
     @State private var showAuthorizeDialog = false
-    @State private var consoleExpanded = true
+    @State private var consoleExpanded = false
+    @State private var consoleDefaultApplied = false
 
     // MARK: Selection & readiness
 
@@ -176,6 +178,14 @@ struct ReconView: View {
             }
         }
         .sheet(isPresented: $showAuthorizeDialog) { authorizeDialog }
+        .onAppear {
+            // Advanced expands the live console by default; applied once so the user's
+            // later manual toggle is respected.
+            if !consoleDefaultApplied {
+                consoleExpanded = interfaceDetail.expandsDetailByDefault
+                consoleDefaultApplied = true
+            }
+        }
         .task(id: model.selectedTargetId) { await model.refreshScopeStatus() }
         .task(id: model.snapshot?.workspace.scope ?? []) { await model.refreshScopeStatus() }
     }

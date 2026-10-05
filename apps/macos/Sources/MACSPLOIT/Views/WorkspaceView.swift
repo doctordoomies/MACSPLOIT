@@ -100,7 +100,8 @@ struct WorkspaceView: View {
         .alert("MACSPLOIT", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
-        .task { await model.boot(); await model.observe() }
+        // Boot/observe are owned once by AppRootView so Setup → Workbench never spawns
+        // duplicate observers.
     }
 }
 
