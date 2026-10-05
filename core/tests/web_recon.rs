@@ -253,3 +253,52 @@ fn web_recon_requires_url_target() {
         .unwrap_err();
     assert_eq!(error.code, "InvalidTarget");
 }
+
+#[test]
+fn provider_results_event_is_bounded_and_query_redacted() {
+    // Katana discovers URLs incl. a query; the ProviderResults console summary must be
+    // bounded and must redact URL query contents (raw output stays in evidence).
+    let temp = tempfile::tempdir().unwrap();
+    let mut tools = ToolConfig::default();
+    tools
+        .overrides
+        .insert("katana".into(), fixture("fake-katana.sh"));
+    let engine = Engine::open_with(
+        Store::open(temp.path()).unwrap(),
+        Duration::ZERO,
+        tools,
+        Arc::new(StaticDnsResolver::new()),
+    )
+    .unwrap();
+    let workspace = engine
+        .store
+        .create_workspace("Web", &["example.test".into(), "*.example.test".into()])
+        .unwrap();
+    let target = engine
+        .store
+        .add_target(workspace.id, "https://app.example.test/")
+        .unwrap();
+    engine
+        .start(
+            workspace.id,
+            target.id,
+            ChainKind::WebRecon,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let snapshot = wait(&engine, workspace.id);
+
+    let results = snapshot
+        .events
+        .iter()
+        .find(|e| e.event_type == macsploit_core::events::EventType::ProviderResults)
+        .expect("ProviderResults event");
+    let payload = &results.payload;
+    assert!(payload["count"].as_u64().unwrap() >= 1);
+    let preview = payload["preview"].as_array().unwrap();
+    assert!(preview.len() <= 8, "preview must be bounded");
+    let shown = serde_json::to_string(payload).unwrap();
+    // The discovered query URL (…/api/users?x=1) is redacted in the summary.
+    assert!(shown.contains("<redacted>"));
+    assert!(!shown.contains("x=1"));
+}

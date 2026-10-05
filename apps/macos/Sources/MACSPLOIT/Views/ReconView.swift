@@ -480,6 +480,7 @@ struct ReconView: View {
                 }
                 HStack {
                     Spacer()
+                    Button("View assets") { model.section = .assets }.controlSize(.small)
                     Button("View evidence") { model.section = .evidence }.controlSize(.small)
                     Button("View activity") { model.section = .activity }.controlSize(.small)
                 }
@@ -500,6 +501,13 @@ struct ReconView: View {
                     Text(displayTime(chain.createdAt)).foregroundStyle(.secondary).font(.caption)
                     Spacer()
                     StatusBadge(status: chain.status)
+                }
+                if chain.status == "COMPLETED" {
+                    // Completion summary from real workspace state (no fabricated counts).
+                    let assets = model.snapshot?.assets.count ?? 0
+                    let evidence = model.snapshot?.evidence.count ?? 0
+                    Text("Completed · \(assets) assets · \(evidence) evidence")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 let stages = (model.snapshot?.stages ?? []).filter { $0.chainId == chain.id }.sorted { $0.position < $1.position }
                 VStack(spacing: 0) {

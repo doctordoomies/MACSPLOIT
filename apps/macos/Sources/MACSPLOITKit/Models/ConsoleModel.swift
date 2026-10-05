@@ -44,17 +44,28 @@ public func reconConsoleLines(snapshot: Snapshot, chainId: String) -> [ConsoleLi
         }
     }
 
+    // Bounded result summaries keyed by provider_run_id (from ProviderResults events).
+    var results: [String: CoreEvent] = [:]
+    for event in snapshot.events where event.eventType == "ProviderResults" {
+        if let runId = event.payload["provider_run_id"].string { results[runId] = event }
+    }
+
     for run in snapshot.providerRuns.filter({ $0.chainId == chainId }).sorted(by: { $0.startTime < $1.startTime }) {
-        let label = run.providerId.uppercased()
+        let label = resultLabel(run.providerId)
         lines.append(ConsoleLine(id: "run-start-\(run.id)", timestamp: run.startTime,
                                  label: label, detail: "provider started · \(run.target)"))
         if let command = commands[run.id] {
             lines.append(ConsoleLine(id: "run-cmd-\(run.id)", timestamp: run.startTime,
                                      label: "$", detail: command))
         }
-        if let end = run.endTime {
+        let end = run.endTime ?? run.startTime
+        // Result preview + count lines (ids sort after run-end at the same timestamp).
+        if let event = results[run.id] {
+            lines.append(contentsOf: resultLines(event: event, runId: run.id, label: label, timestamp: end))
+        }
+        if let endTime = run.endTime {
             let exit = run.exitStatus.map { " · exit \($0)" } ?? ""
-            lines.append(ConsoleLine(id: "run-end-\(run.id)", timestamp: end,
+            lines.append(ConsoleLine(id: "run-end-\(run.id)", timestamp: endTime,
                                      label: label, detail: "\(run.status.lowercased())\(exit)"))
         }
     }
@@ -65,4 +76,48 @@ public func reconConsoleLines(snapshot: Snapshot, chainId: String) -> [ConsoleLi
     }
 
     return lines.sorted { ($0.timestamp, $0.id) < ($1.timestamp, $1.id) }
+}
+
+/// Short console label for a provider id (drops the `native_` prefix).
+private func resultLabel(_ providerId: String) -> String {
+    providerId.replacingOccurrences(of: "native_", with: "").uppercased()
+}
+
+/// Render bounded result lines from a ProviderResults event: one line per preview item
+/// ("ids sort after run-end"), then a count line. Never dumps raw output.
+private func resultLines(event: CoreEvent, runId: String, label: String, timestamp: String) -> [ConsoleLine] {
+    var out: [ConsoleLine] = []
+    var count = 0
+    if case let .number(n) = event.payload["count"] { count = Int(n) }
+    var shown = 0
+    if case let .array(preview) = event.payload["preview"] {
+        for (index, item) in preview.enumerated() {
+            guard let value = item["value"].string else { continue }
+            let source = item["source"].string
+            let relationship = item["relationship"].string
+            var detail: String
+            if let source, !source.isEmpty {
+                detail = "\(source) → \(value)"
+            } else {
+                detail = value
+            }
+            if let relationship, !relationship.isEmpty {
+                detail += " (\(relationship.replacingOccurrences(of: "_", with: " ")))"
+            }
+            out.append(ConsoleLine(id: "run-result-\(runId)-\(index)", timestamp: timestamp,
+                                   label: label, detail: detail))
+            shown += 1
+        }
+    }
+    // Count line, with a "+N more" hint when the preview was truncated.
+    if count > 0 {
+        let more = count - shown
+        let suffix = more > 0 ? " · + \(more) more — View Assets" : ""
+        out.append(ConsoleLine(id: "run-resultcount-\(runId)", timestamp: timestamp,
+                               label: label, detail: "discovered \(count)\(suffix)"))
+    } else {
+        out.append(ConsoleLine(id: "run-resultcount-\(runId)", timestamp: timestamp,
+                               label: label, detail: "no new discoveries"))
+    }
+    return out
 }
