@@ -1,5 +1,7 @@
 # Baseline verification procedure
 
+*This document outlines the verification steps for changes affecting the roadmap or milestone tracker.*
+
 Issue #27 requires that any change to the roadmap or milestone tracker be
 verifiable against a characterized baseline. A fix is **unverifiable by
 definition** if the test suite was already failing before the change was applied.
