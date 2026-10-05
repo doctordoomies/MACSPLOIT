@@ -17,6 +17,19 @@ public protocol CoreAPI: Sendable {
     func listProviders() async throws -> [ProviderStatus]
     func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus
     func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult
+    func startInstall(provider: String, method: String) async throws
+    func cancelInstall() async throws
+    func installStatus() async throws -> InstallState
+}
+
+public extension CoreAPI {
+    // Default no-op/empty implementations so existing test doubles need not implement the
+    // install surface. CoreClient overrides these with the real protocol calls.
+    func startInstall(provider: String, method: String) async throws {
+        throw CoreFailure(code: "Unsupported", message: "Install not available in this client.")
+    }
+    func cancelInstall() async throws {}
+    func installStatus() async throws -> InstallState { InstallState(running: nil, last: nil) }
 }
 
 public extension CoreAPI {
@@ -90,5 +103,14 @@ public struct CoreClient: CoreAPI {
     }
     public func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
         try await call("authorize_target", ["workspace_id": .string(workspace), "target_id": .string(target)])
+    }
+    public func startInstall(provider: String, method: String) async throws {
+        let _: JSONValue = try await call("start_install", ["provider_id": .string(provider), "method": .string(method)])
+    }
+    public func cancelInstall() async throws {
+        let _: JSONValue = try await call("cancel_install", [:])
+    }
+    public func installStatus() async throws -> InstallState {
+        try await call("install_status", [:])
     }
 }

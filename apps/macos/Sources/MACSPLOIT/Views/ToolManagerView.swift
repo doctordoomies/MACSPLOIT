@@ -47,7 +47,7 @@ struct ToolManagerView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(visibleProviders) { provider in ProviderCard(provider: provider) }
+                        ForEach(visibleProviders) { provider in ProviderCard(provider: provider, model: model) }
                     }.padding(1)
                 }
             }
@@ -59,6 +59,16 @@ struct ToolManagerView: View {
 
 private struct ProviderCard: View {
     let provider: ProviderStatus
+    @ObservedObject var model: WorkspaceModel
+
+    private var installRunningHere: Bool {
+        model.installState?.running?.providerId == provider.id
+    }
+    private var lastOutcomeHere: InstallOutcome? {
+        let last = model.installState?.last
+        return last?.providerId == provider.id ? last : nil
+    }
+
     private var statusColor: Color {
         switch provider.installation.state {
         case "BUILT_IN", "INSTALLED": return .green
@@ -102,8 +112,9 @@ private struct ProviderCard: View {
                     Text(message).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
                 }
                 if provider.installation.state == "MISSING" {
-                    Text("Not detected. MACSPLOIT needs a compatible \(provider.name) executable. Install it by any method and make it available on PATH, or set an explicit provider override.")
+                    Text("Not detected. MACSPLOIT needs a compatible \(provider.name) executable. Install it below, by any method on PATH, or set an explicit provider override.")
                         .font(.caption).foregroundStyle(.secondary)
+                    installControls
                 }
                 if let setup = provider.setup {
                     if let command = setup.installCommand {
@@ -127,5 +138,45 @@ private struct ProviderCard: View {
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+    }
+
+    /// Install actions for a missing external provider. The user explicitly initiates each
+    /// install; MACSPLOIT runs no shell and installs nothing silently.
+    @ViewBuilder private var installControls: some View {
+        if installRunningHere {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Installing \(provider.name)…").font(.caption)
+                Button("Cancel") { Task { await model.cancelInstall() } }.controlSize(.small)
+            }
+        } else {
+            HStack(spacing: 8) {
+                Button {
+                    Task { await model.installProvider(provider.id, method: "homebrew") }
+                } label: { Label("Install with Homebrew", systemImage: "shippingbox") }
+                    .controlSize(.small)
+                    .disabled(!model.isConnected || model.installState?.running != nil)
+                Button {
+                    Task { await model.installProvider(provider.id, method: "managed_download") }
+                } label: { Label("Install without Homebrew", systemImage: "arrow.down.circle") }
+                    .controlSize(.small)
+                    .disabled(!model.isConnected || model.installState?.running != nil)
+            }
+            Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). Or use an existing executable on PATH / a provider override.")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        if let outcome = lastOutcomeHere {
+            let color: Color = outcome.status == "SUCCEEDED" ? .green : (outcome.status == "FAILED" ? .orange : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(outcome.message).font(.caption).foregroundStyle(color)
+                if let detail = outcome.detail {
+                    if detail.hasPrefix("https://"), let url = URL(string: detail) {
+                        Link("Official installer", destination: url).font(.caption2)
+                    } else {
+                        Text(detail).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
+            }
+        }
     }
 }

@@ -166,6 +166,18 @@ public struct AuthorizeResult: Codable, Sendable, Equatable {
     public let authorized: Bool
     public let addedEntry: String?
 }
+/// Outcome of a provider installation attempt.
+public struct InstallOutcome: Codable, Sendable, Equatable {
+    public let providerId: String, method: String, status: String, message: String
+    public let detail: String?
+}
+/// Current provider-install state (running + last outcome). Install is global, not
+/// workspace data.
+public struct InstallState: Codable, Sendable, Equatable {
+    public struct Running: Codable, Sendable, Equatable { public let providerId: String, method: String }
+    public let running: Running?
+    public let last: InstallOutcome?
+}
 public struct ProviderInstallation: Codable, Sendable, Equatable {
     public let state: String
     public let path: String?

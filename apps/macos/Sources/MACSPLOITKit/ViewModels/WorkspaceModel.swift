@@ -85,6 +85,9 @@ public final class WorkspaceModel: ObservableObject {
     public func observe() async {
         while !Task.isCancelled {
             await pollOnce()
+            // Poll install status only while an install is active (or just finished) to
+            // reflect progress without steady background chatter.
+            if installState?.running != nil || wasInstalling { await refreshInstallStatus() }
             do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
         }
     }
@@ -255,6 +258,34 @@ public final class WorkspaceModel: ObservableObject {
     public var consoleLines: [ConsoleLine] {
         guard let snapshot, let chain = selectedChainId else { return [] }
         return reconConsoleLines(snapshot: snapshot, chainId: chain)
+    }
+
+    /// Current provider-install state (running + last outcome), polled alongside events.
+    @Published public private(set) var installState: InstallState?
+    private var wasInstalling = false
+
+    public func refreshInstallStatus() async {
+        guard isConnected else { return }
+        let state = try? await client.installStatus()
+        installState = state
+        let running = state?.running != nil
+        // When an install finishes, refresh provider status so the UI reflects it.
+        if wasInstalling && !running { await refreshProviders() }
+        wasInstalling = running
+    }
+
+    /// Start a typed provider installation (e.g. Homebrew). Observed via installState.
+    public func installProvider(_ id: String, method: String) async {
+        guard isConnected else { return }
+        do {
+            try await client.startInstall(provider: id, method: method)
+            await refreshInstallStatus()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func cancelInstall() async {
+        try? await client.cancelInstall()
+        await refreshInstallStatus()
     }
 
     public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }
