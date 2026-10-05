@@ -19,6 +19,17 @@ hickory-resolver = "0.26"
 tokio = { version = "1", features = ["rt", "time", "net", "sync"] }
 roxmltree = "0.21"
 ureq = "2"
+tempfile = "3"
+# Managed provider installation: extract exactly one reviewed executable from a
+# pinned, checksum-verified upstream archive. Minimal feature sets only.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+# Build fixture archives and compute pinned digests in managed-install tests.
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"

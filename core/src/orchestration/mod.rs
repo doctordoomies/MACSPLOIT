@@ -693,6 +693,7 @@ pub struct Engine {
     pub store: Store,
     registry: ProviderRegistry,
     tools: crate::process::ToolConfig,
+    downloader: Arc<dyn crate::install::download::DownloadTransport>,
     active: Arc<Mutex<Option<ActiveRun>>>,
     install: Arc<Mutex<InstallCoordinator>>,
     _lock: Arc<File>,
@@ -742,6 +743,43 @@ impl Engine {
         resolver: Arc<dyn crate::dns::DnsResolver>,
         web: Arc<dyn crate::web::WebTransport>,
     ) -> Result<Self> {
+        Self::open_full(
+            store,
+            stage_delay,
+            tools,
+            resolver,
+            web,
+            crate::install::download::transport_from_env(),
+        )
+    }
+
+    /// Open an engine with an explicit download transport as well. Managed-install
+    /// tests inject a static, offline transport here so no network is ever reached.
+    pub fn open_with_download(
+        store: Store,
+        stage_delay: Duration,
+        tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
+        web: Arc<dyn crate::web::WebTransport>,
+        downloader: Arc<dyn crate::install::download::DownloadTransport>,
+    ) -> Result<Self> {
+        Self::open_full(store, stage_delay, tools, resolver, web, downloader)
+    }
+
+    fn open_full(
+        store: Store,
+        stage_delay: Duration,
+        mut tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
+        web: Arc<dyn crate::web::WebTransport>,
+        downloader: Arc<dyn crate::install::download::DownloadTransport>,
+    ) -> Result<Self> {
+        // Managed provider binaries live under the data directory unless an explicit
+        // directory was configured (e.g. MACSPLOIT_TOOLS_DIR). This is the same path
+        // `locate` searches, so a managed install is discovered immediately after.
+        if tools.managed_dir.is_none() {
+            tools.managed_dir = Some(store.root.join("Providers"));
+        }
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -759,6 +797,7 @@ impl Engine {
             store,
             registry: ProviderRegistry::with_transports(resolver, web),
             tools,
+            downloader,
             active: Arc::new(Mutex::new(None)),
             install: Arc::new(Mutex::new(InstallCoordinator::default())),
             _lock: Arc::new(lock),
@@ -918,7 +957,14 @@ impl Engine {
             // Installs can legitimately take minutes; cap generously.
             let deadline = Instant::now() + Duration::from_secs(600);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::install::install(&engine.tools, &provider, method, &cancelled, deadline)
+                crate::install::install(
+                    &engine.tools,
+                    engine.downloader.as_ref(),
+                    &provider,
+                    method,
+                    &cancelled,
+                    deadline,
+                )
             }));
             let outcome = match outcome {
                 Ok(Ok(outcome)) => outcome,

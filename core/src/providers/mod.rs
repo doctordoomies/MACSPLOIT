@@ -57,6 +57,25 @@ pub struct ProviderStatus {
     pub installation: Installation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<ProviderSetup>,
+    /// Which reviewed install methods MACSPLOIT offers for this provider. The core
+    /// matrix is authoritative; the UI uses this only to decide which buttons to
+    /// show (it never chooses formulas, URLs, or artifacts itself).
+    #[serde(default)]
+    pub install: ProviderInstallInfo,
+}
+
+/// Reviewed install-method availability for one provider, derived from the typed
+/// installer matrix. Presentation metadata only — installation is always enforced
+/// and performed by the Rust core.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderInstallInfo {
+    /// A `brew install <reviewed formula>` method is available.
+    pub homebrew: bool,
+    /// A verified app-managed direct download is available (false for Nmap).
+    pub managed_download: bool,
+    /// The provider's official installer/download page, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_installer_url: Option<String>,
 }
 
 /// Static, provider-owned help. Consumers may display/copy it, never execute it.
@@ -218,10 +237,22 @@ impl ProviderRegistry {
     pub fn status(&self, tools: &ToolConfig) -> Vec<ProviderStatus> {
         self.providers
             .iter()
-            .map(|provider| ProviderStatus {
-                metadata: provider.metadata(),
-                installation: provider.installation(tools),
-                setup: provider.setup(),
+            .map(|provider| {
+                let metadata = provider.metadata();
+                let install = match crate::install::options(&metadata.id) {
+                    Some(opts) => ProviderInstallInfo {
+                        homebrew: opts.homebrew_formula.is_some(),
+                        managed_download: opts.managed_download_supported,
+                        official_installer_url: opts.official_installer_url.map(str::to_owned),
+                    },
+                    None => ProviderInstallInfo::default(),
+                };
+                ProviderStatus {
+                    installation: provider.installation(tools),
+                    setup: provider.setup(),
+                    install,
+                    metadata,
+                }
             })
             .collect()
     }

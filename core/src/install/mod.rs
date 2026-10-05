@@ -10,12 +10,23 @@
 //! method for a given approach fails closed (Unsupported) and routes the user to
 //! Homebrew or the official installer rather than faking a result.
 
+pub mod download;
+pub mod extract;
+pub mod manifest;
+
 use crate::{
     error::{CoreError, Result},
     process::{self, ToolConfig},
 };
+use download::DownloadTransport;
+use manifest::Arch;
 use serde::{Deserialize, Serialize};
-use std::{sync::atomic::AtomicBool, time::Instant};
+use std::{
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 
 const INSTALL_STDOUT_CAP: usize = 256 * 1024;
 const INSTALL_STDERR_CAP: usize = 64 * 1024;
@@ -135,6 +146,7 @@ impl InstallOutcome {
 /// dispatches to the chosen method. Never executes a caller-supplied command.
 pub fn install(
     tools: &ToolConfig,
+    downloader: &dyn DownloadTransport,
     provider_id: &str,
     method: InstallMethod,
     cancelled: &AtomicBool,
@@ -146,20 +158,7 @@ pub fn install(
     match method {
         InstallMethod::Homebrew => homebrew_install(tools, &opts, cancelled, deadline),
         InstallMethod::ManagedDownload => {
-            // Fail closed: a verified app-managed binary downloader is a separate,
-            // security-reviewed deliverable. Never fake success or fetch-and-run.
-            let mut outcome = InstallOutcome::new(
-                provider_id,
-                method,
-                InstallStatus::Unsupported,
-                if opts.managed_download_supported {
-                    "App-managed download is being finalized. Install with Homebrew, or use the official installer."
-                } else {
-                    "This provider has no safe app-managed install. Install with Homebrew, or use the official installer."
-                },
-            );
-            outcome.detail = opts.official_installer_url.map(str::to_owned);
-            Ok(outcome)
+            managed_install(tools, downloader, &opts, provider_id, cancelled, deadline)
         }
         InstallMethod::OfficialInstaller => {
             let mut outcome = InstallOutcome::new(
@@ -241,6 +240,152 @@ fn homebrew_install(
     Ok(result)
 }
 
+/// App-managed direct download: resolve the reviewed, pinned artifact for this
+/// provider and the host architecture, then download → verify → extract → install
+/// atomically into the managed providers directory. Fails closed (never fakes
+/// success, never fetch-and-run) for any provider/architecture without a reviewed
+/// artifact, and leaves any existing install untouched on failure.
+fn managed_install(
+    tools: &ToolConfig,
+    downloader: &dyn DownloadTransport,
+    opts: &ProviderInstallOptions,
+    provider_id: &str,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<InstallOutcome> {
+    let route_to_supported = |message: &str| {
+        let mut outcome = InstallOutcome::new(
+            provider_id,
+            InstallMethod::ManagedDownload,
+            InstallStatus::Unsupported,
+            message,
+        );
+        outcome.detail = opts.official_installer_url.map(str::to_owned);
+        outcome
+    };
+
+    if !opts.managed_download_supported {
+        // e.g. Nmap: privileged .dmg installer, no safe app-managed artifact.
+        return Ok(route_to_supported(
+            "This provider has no safe app-managed install. Install with Homebrew, or use the official installer.",
+        ));
+    }
+    let Some(arch) = Arch::host() else {
+        return Ok(route_to_supported(
+            "No reviewed managed download is available for this architecture. Use Homebrew or the official installer.",
+        ));
+    };
+    let Some(artifact) = manifest::artifact(provider_id, arch) else {
+        return Ok(route_to_supported(
+            "No reviewed managed artifact for this provider on this architecture. Use Homebrew or the official installer.",
+        ));
+    };
+    let Some(managed_dir) = tools.managed_dir.clone() else {
+        // Production always wires this from the data directory; fail closed if absent.
+        return Ok(route_to_supported(
+            "The managed providers directory is unavailable. Use Homebrew or the official installer.",
+        ));
+    };
+
+    match install_managed_artifact(downloader, &artifact, &managed_dir, cancelled, deadline) {
+        Ok(path) => {
+            let mut outcome = InstallOutcome::new(
+                provider_id,
+                InstallMethod::ManagedDownload,
+                InstallStatus::Succeeded,
+                &format!(
+                    "Installed {} {} ({}) to the managed providers directory.",
+                    artifact.provider_id,
+                    artifact.version,
+                    arch.as_str()
+                ),
+            );
+            outcome.detail = Some(path.display().to_string());
+            Ok(outcome)
+        }
+        Err(error) if error.code == "Cancelled" => Ok(InstallOutcome::new(
+            provider_id,
+            InstallMethod::ManagedDownload,
+            InstallStatus::Cancelled,
+            "Installation cancelled.",
+        )),
+        Err(error) => {
+            // Fail closed: report failure; any previously installed binary is intact.
+            Ok(InstallOutcome::new(
+                provider_id,
+                InstallMethod::ManagedDownload,
+                InstallStatus::Failed,
+                &format!("Managed install failed: {}", error.message),
+            ))
+        }
+    }
+}
+
+/// Download, verify, extract, and atomically install one reviewed artifact into
+/// `managed_dir`, returning the installed executable path. Every failure mode
+/// (bad checksum, unsafe archive, cancellation, timeout) leaves `managed_dir`'s
+/// existing contents untouched: work happens in a staging directory on the same
+/// filesystem and only the final `rename` is observable.
+///
+/// This is the single code path the engine uses for managed installs; tests drive
+/// it with a fake transport and a fixture artifact so the real logic runs offline.
+pub fn install_managed_artifact(
+    downloader: &dyn DownloadTransport,
+    artifact: &manifest::ManagedArtifact,
+    managed_dir: &Path,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(managed_dir)?;
+    // Owner-only managed directory.
+    let _ = std::fs::set_permissions(managed_dir, std::fs::Permissions::from_mode(0o700));
+
+    // Staging on the same filesystem as the destination so the final move is atomic.
+    let staging = tempfile::Builder::new()
+        .prefix(".staging-")
+        .tempdir_in(managed_dir)
+        .map_err(|e| CoreError::new("StorageError", &format!("Could not create staging: {e}")))?;
+
+    let archive_path = staging.path().join("artifact");
+    download::download_verified(downloader, artifact, &archive_path, cancelled, deadline)?;
+
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(CoreError::new("Cancelled", "Installation cancelled."));
+    }
+
+    let extracted = staging.path().join(&artifact.installed_name);
+    extract::extract_member(
+        &archive_path,
+        artifact.archive,
+        &artifact.member,
+        &extracted,
+        artifact.max_extracted_bytes,
+    )?;
+
+    // The extracted object must be a plain regular file (not a symlink); set a
+    // safe executable mode explicitly rather than trusting the archive's bits.
+    let meta = std::fs::symlink_metadata(&extracted)?;
+    if !meta.file_type().is_file() {
+        return Err(CoreError::new(
+            "UnsafeArchive",
+            "Extracted member is not a regular file.",
+        ));
+    }
+    std::fs::set_permissions(&extracted, std::fs::Permissions::from_mode(0o755))?;
+
+    // Atomic install: rename within the same directory replaces any previous good
+    // binary in one step. If anything above failed, we never reach this line.
+    let final_path = managed_dir.join(&artifact.installed_name);
+    std::fs::rename(&extracted, &final_path).map_err(|e| {
+        CoreError::new(
+            "StorageError",
+            &format!("Could not install the executable: {e}"),
+        )
+    })?;
+    // `staging` is removed on drop, cleaning the archive and any partial files.
+    Ok(final_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +405,11 @@ mod tests {
         t
     }
 
+    /// An empty offline transport: any managed download fails closed with no net.
+    fn no_dl() -> download::StaticDownloadTransport {
+        download::StaticDownloadTransport::new()
+    }
+
     #[test]
     fn matrix_only_lists_reviewed_providers() {
         for id in ["subfinder", "httpx", "katana", "ffuf", "nmap"] {
@@ -275,6 +425,7 @@ mod tests {
     fn unknown_provider_cannot_request_installation() {
         let err = install(
             &ToolConfig::default(),
+            &no_dl(),
             "evil-tool",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -300,6 +451,7 @@ mod tests {
         let tools = tools_with_brew(brew);
         let outcome = install(
             &tools,
+            &no_dl(),
             "httpx",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -321,6 +473,7 @@ mod tests {
         let tools = tools_with_brew(brew);
         let outcome = install(
             &tools,
+            &no_dl(),
             "ffuf",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -335,6 +488,7 @@ mod tests {
         // No brew override and an empty extra search path → not found.
         let err = install(
             &ToolConfig::default(),
+            &no_dl(),
             "subfinder",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -349,9 +503,12 @@ mod tests {
 
     #[test]
     fn managed_and_existing_binary_fail_closed_without_installing() {
+        // No managed directory wired → managed download fails closed (routes to a
+        // supported method) without any network activity.
         let t = ToolConfig::default();
         let dl = install(
             &t,
+            &no_dl(),
             "subfinder",
             InstallMethod::ManagedDownload,
             &AtomicBool::new(false),
@@ -362,6 +519,7 @@ mod tests {
         assert!(dl.detail.as_deref().unwrap_or("").starts_with("https://"));
         let eb = install(
             &t,
+            &no_dl(),
             "nmap",
             InstallMethod::ExistingBinary,
             &AtomicBool::new(false),
@@ -371,6 +529,7 @@ mod tests {
         assert_eq!(eb.status, InstallStatus::Unsupported);
         let off = install(
             &t,
+            &no_dl(),
             "nmap",
             InstallMethod::OfficialInstaller,
             &AtomicBool::new(false),
@@ -382,5 +541,53 @@ mod tests {
             off.detail.as_deref(),
             Some("https://nmap.org/download.html")
         );
+    }
+
+    #[test]
+    fn nmap_managed_download_is_unsupported_and_routes_to_official() {
+        // Even with a managed directory available, Nmap has no managed artifact.
+        let dir = tempfile::tempdir().unwrap();
+        let t = ToolConfig {
+            managed_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let out = install(
+            &t,
+            &no_dl(),
+            "nmap",
+            InstallMethod::ManagedDownload,
+            &AtomicBool::new(false),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(out.status, InstallStatus::Unsupported);
+        assert_eq!(
+            out.detail.as_deref(),
+            Some("https://nmap.org/download.html")
+        );
+        // Nothing was written into the managed directory.
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn supported_managed_download_fails_closed_when_transport_cannot_serve() {
+        // A supported provider with a managed dir but an empty transport must fail
+        // (not fake success), and must not leave a binary behind.
+        let dir = tempfile::tempdir().unwrap();
+        let t = ToolConfig {
+            managed_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let out = install(
+            &t,
+            &no_dl(),
+            "subfinder",
+            InstallMethod::ManagedDownload,
+            &AtomicBool::new(false),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(out.status, InstallStatus::Failed);
+        assert!(!dir.path().join("subfinder").exists());
     }
 }

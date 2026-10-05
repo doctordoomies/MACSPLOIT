@@ -20,11 +20,15 @@ fn fake_brew(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 
 fn engine(tools: ToolConfig) -> (tempfile::TempDir, Engine) {
     let temp = tempfile::tempdir().unwrap();
-    let engine = Engine::open_with(
+    // Inject an empty, offline download transport: any managed download fails
+    // closed with no network. Homebrew paths use a fake `brew` executable instead.
+    let engine = Engine::open_with_download(
         Store::open(temp.path()).unwrap(),
         Duration::ZERO,
         tools,
         Arc::new(macsploit_core::dns::StaticDnsResolver::new()),
+        Arc::new(macsploit_core::web::StaticWebTransport::new()),
+        Arc::new(macsploit_core::install::download::StaticDownloadTransport::new()),
     )
     .unwrap();
     (temp, engine)
@@ -82,13 +86,27 @@ fn unknown_provider_cannot_start_install() {
 }
 
 #[test]
-fn managed_download_fails_closed_without_installing() {
+fn nmap_managed_download_is_unsupported() {
+    // Nmap has no reviewed managed artifact → UNSUPPORTED, no network, no install.
     let (_t, engine) = engine(ToolConfig::default());
+    engine
+        .start_install("nmap", InstallMethod::ManagedDownload)
+        .unwrap();
+    let status = wait_last(&engine);
+    assert_eq!(status["last"]["status"], serde_json::json!("UNSUPPORTED"));
+}
+
+#[test]
+fn supported_managed_download_fails_closed_when_offline() {
+    // A supported provider with the empty offline transport must fail (not fake
+    // success) and must not leave a binary in the managed directory.
+    let (temp, engine) = engine(ToolConfig::default());
     engine
         .start_install("ffuf", InstallMethod::ManagedDownload)
         .unwrap();
     let status = wait_last(&engine);
-    assert_eq!(status["last"]["status"], serde_json::json!("UNSUPPORTED"));
+    assert_eq!(status["last"]["status"], serde_json::json!("FAILED"));
+    assert!(!temp.path().join("Providers").join("ffuf").exists());
 }
 
 #[test]
