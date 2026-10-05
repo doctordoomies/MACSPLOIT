@@ -115,6 +115,48 @@ actor ReplyTransport: CoreTransport {
         #expect(object["method"] as? String == "authorize_target")
     }
 
+    @Test func testProviderStatusDecodesInstallInfo() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"subfinder","name":"Subfinder","description":"d","version":"external","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","offline":false,"installation":{"state":"MISSING"},"install":{"homebrew":true,"managed_download":true,"official_installer_url":"https://github.com/projectdiscovery/subfinder/releases"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].homebrewSupported)
+        #expect(providers[0].managedDownloadSupported)
+        #expect(providers[0].install?.officialInstallerUrl?.hasPrefix("https://") == true)
+    }
+
+    @Test func testNmapManagedDownloadUnsupportedInInstallInfo() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"nmap","name":"Nmap","description":"d","version":"external","capabilities":["PORT_SCAN"],"supported_target_types":["IPAddress"],"risk_class":"ACTIVE","offline":false,"installation":{"state":"MISSING"},"install":{"homebrew":true,"managed_download":false,"official_installer_url":"https://nmap.org/download.html"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].homebrewSupported)
+        #expect(providers[0].managedDownloadSupported == false)
+        #expect(providers[0].install?.officialInstallerUrl == "https://nmap.org/download.html")
+    }
+
+    @Test func testProviderStatusWithoutInstallInfoDefaultsUnsupported() async throws {
+        // Older/missing `install` field must decode to a safe "no methods" default.
+        let reply = ReplyTransport(#"{"result":[{"id":"native_dns","name":"Native DNS","description":"d","version":"built-in","capabilities":["DNS_RESOLUTION"],"supported_target_types":["Domain"],"risk_class":"ACTIVE_LOW_IMPACT","offline":true,"installation":{"state":"BUILT_IN"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].install == nil)
+        #expect(providers[0].homebrewSupported == false)
+        #expect(providers[0].managedDownloadSupported == false)
+    }
+
+    @Test func testStartInstallEncodesManagedDownloadMethod() async throws {
+        let reply = ReplyTransport(#"{"result":{"started":true,"provider_id":"subfinder"}}"#)
+        try await CoreClient(transport: reply).startInstall(provider: "subfinder", method: "managed_download")
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        let params = object["params"] as! [String: Any]
+        #expect(params["provider_id"] as? String == "subfinder")
+        #expect(params["method"] as? String == "managed_download")
+    }
+
+    @Test func testInstallStatusDecodesManagedSuccess() async throws {
+        let reply = ReplyTransport(#"{"result":{"running":null,"last":{"provider_id":"subfinder","method":"managed_download","status":"SUCCEEDED","message":"Installed subfinder 2.16.0 (arm64).","detail":"/Users/x/Library/Application Support/MACSPLOIT/Providers/subfinder"}}}"#)
+        let state = try await CoreClient(transport: reply).installStatus()
+        #expect(state.last?.status == "SUCCEEDED")
+        #expect(state.last?.method == "managed_download")
+        #expect(state.last?.detail?.hasSuffix("/Providers/subfinder") == true)
+    }
+
     @Test func testStartInstallEncodesProviderAndMethod() async throws {
         let reply = ReplyTransport(#"{"result":{"started":true,"provider_id":"httpx"}}"#)
         try await CoreClient(transport: reply).startInstall(provider: "httpx", method: "homebrew")

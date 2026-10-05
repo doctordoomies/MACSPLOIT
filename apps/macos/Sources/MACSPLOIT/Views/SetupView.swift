@@ -210,7 +210,7 @@ struct SetupView: View {
                     .help("Provider Center is available in the workbench after setup.")
                 Spacer()
             }
-            Text("MACSPLOIT never installs providers and runs no shell or remote scripts. Homebrew is optional. Setup commands shown in Provider Center are copy-only guidance.")
+            Text("Setup never installs anything itself — installation is explicit in Provider Center. MACSPLOIT runs no shell or remote scripts and never installs Homebrew itself; Homebrew is optional. Setup commands shown are copy-only guidance.")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
     }

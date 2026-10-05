@@ -22,7 +22,7 @@ struct ToolManagerView: View {
                 .disabled(!model.isConnected || model.isRefreshingProviders)
                 .help("Refresh local availability and version probes without restarting the core")
             }
-            Text("MACSPLOIT needs a compatible provider executable — it does not require Homebrew. Homebrew is an optional recommended install method on macOS; existing executables on PATH or an explicit override are fully supported. Setup commands are copy-only; MACSPLOIT never installs or updates providers.")
+            Text("MACSPLOIT needs a compatible provider executable — it does not require Homebrew. You explicitly start every install: MACSPLOIT never installs tools silently and never installs Homebrew itself. Reviewed providers can be installed with Homebrew or by a verified, checksummed app-managed download of the official release; existing executables on PATH or an explicit override are fully supported. There are no background or automatic updates.")
                 .font(.callout).foregroundStyle(.secondary)
             if let error = model.providerRefreshError {
                 Label(error, systemImage: "exclamationmark.triangle")
@@ -151,19 +151,35 @@ private struct ProviderCard: View {
             }
         } else {
             HStack(spacing: 8) {
-                Button {
-                    Task { await model.installProvider(provider.id, method: "homebrew") }
-                } label: { Label("Install with Homebrew", systemImage: "shippingbox") }
-                    .controlSize(.small)
-                    .disabled(!model.isConnected || model.installState?.running != nil)
-                Button {
-                    Task { await model.installProvider(provider.id, method: "managed_download") }
-                } label: { Label("Install without Homebrew", systemImage: "arrow.down.circle") }
-                    .controlSize(.small)
-                    .disabled(!model.isConnected || model.installState?.running != nil)
+                if provider.homebrewSupported {
+                    Button {
+                        Task { await model.installProvider(provider.id, method: "homebrew") }
+                    } label: { Label("Install with Homebrew", systemImage: "shippingbox") }
+                        .controlSize(.small)
+                        .disabled(!model.isConnected || model.installState?.running != nil)
+                }
+                if provider.managedDownloadSupported {
+                    Button {
+                        Task { await model.installProvider(provider.id, method: "managed_download") }
+                    } label: { Label("Install without Homebrew", systemImage: "arrow.down.circle") }
+                        .controlSize(.small)
+                        .disabled(!model.isConnected || model.installState?.running != nil)
+                } else if let urlString = provider.install?.officialInstallerUrl,
+                          let url = URL(string: urlString) {
+                    // No safe app-managed download for this provider (e.g. Nmap):
+                    // offer the official installer page instead of a managed action.
+                    Link(destination: url) {
+                        Label("Official installer", systemImage: "arrow.up.forward.app")
+                    }.controlSize(.small)
+                }
             }
-            Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). Or use an existing executable on PATH / a provider override.")
-                .font(.caption2).foregroundStyle(.tertiary)
+            if provider.managedDownloadSupported {
+                Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). “Install without Homebrew” downloads the verified, checksummed official release into MACSPLOIT’s own providers directory. Or use an existing executable on PATH / a provider override.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            } else {
+                Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). This provider has no app-managed download; use Homebrew, an existing executable on PATH, a provider override, or the official installer.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
         }
         if let outcome = lastOutcomeHere {
             let color: Color = outcome.status == "SUCCEEDED" ? .green : (outcome.status == "FAILED" ? .orange : .secondary)

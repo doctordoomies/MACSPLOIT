@@ -204,11 +204,14 @@ import Testing
         #expect(!evidence.rawJson.contains("TOPSECRET")) // cookie value never persisted
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil))
-    func testProviderInstallManagedFailsClosedThroughBridgeOffline() async throws {
-        // start_install with the managed method is fail-closed (no network, no install):
-        // it returns an UNSUPPORTED outcome routing to Homebrew/official. Exercises the
-        // async start_install/install_status path over the pipe with the real core.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_DOWNLOAD_FAKE"] != nil))
+    func testProviderInstallManagedThroughBridgeOffline() async throws {
+        // Exercises the async start_install/install_status path over the pipe with the
+        // real core and the offline download transport (MACSPLOIT_DOWNLOAD_FAKE):
+        //  - Nmap has no managed artifact → UNSUPPORTED (routes to the official page).
+        //  - ffuf is supported but the offline transport cannot serve it → FAILED, and
+        //    crucially no binary is installed and no network is touched.
         let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-install-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -217,16 +220,27 @@ import Testing
         defer { transport.shutdown() }
         _ = try await client.hello()
 
-        try await client.startInstall(provider: "ffuf", method: "managed_download")
-        let deadline = Date().addingTimeInterval(10)
-        var last: InstallOutcome?
-        while Date() < deadline {
-            let state = try await client.installStatus()
-            if let outcome = state.last { last = outcome; break }
-            try await Task.sleep(nanoseconds: 50_000_000)
+        func runInstall(_ provider: String) async throws -> InstallOutcome? {
+            try await client.startInstall(provider: provider, method: "managed_download")
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                if let outcome = try await client.installStatus().last, outcome.providerId == provider {
+                    return outcome
+                }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            return nil
         }
-        #expect(last?.providerId == "ffuf")
-        #expect(last?.status == "UNSUPPORTED")
+
+        let nmap = try await runInstall("nmap")
+        #expect(nmap?.status == "UNSUPPORTED")
+        #expect(nmap?.detail == "https://nmap.org/download.html")
+
+        let ffuf = try await runInstall("ffuf")
+        #expect(ffuf?.status == "FAILED")
+        // Fail closed: nothing was installed into the managed providers directory.
+        let installed = directory.appendingPathComponent("Providers/ffuf")
+        #expect(!FileManager.default.fileExists(atPath: installed.path))
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil

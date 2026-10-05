@@ -40,7 +40,8 @@ public enum DashboardPreset: String, CaseIterable, Codable, Sendable, Identifiab
 }
 
 /// How the user wants to approach external-provider setup. This is a presentation choice
-/// only — MACSPLOIT never installs providers under any option.
+/// only; first-run setup never installs anything itself. (Explicit, user-initiated installs
+/// happen later in Provider Center.)
 public enum ProviderSetupChoice: String, CaseIterable, Codable, Sendable, Identifiable {
     case recommended, customize, skip
     public var id: String { rawValue }
