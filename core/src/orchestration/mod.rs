@@ -675,12 +675,26 @@ struct ActiveRun {
     chain: Id,
     cancelled: Arc<AtomicBool>,
 }
+/// In-memory provider-install state. Installation is global (not workspace data), so it
+/// lives here rather than in a workspace database — it is transient status, not evidence.
+#[derive(Default)]
+struct InstallCoordinator {
+    running: Option<RunningInstall>,
+    last: Option<crate::install::InstallOutcome>,
+}
+struct RunningInstall {
+    provider_id: String,
+    method: crate::install::InstallMethod,
+    cancelled: Arc<AtomicBool>,
+}
+
 #[derive(Clone)]
 pub struct Engine {
     pub store: Store,
     registry: ProviderRegistry,
     tools: crate::process::ToolConfig,
     active: Arc<Mutex<Option<ActiveRun>>>,
+    install: Arc<Mutex<InstallCoordinator>>,
     _lock: Arc<File>,
     stage_delay: Duration,
 }
@@ -746,6 +760,7 @@ impl Engine {
             registry: ProviderRegistry::with_transports(resolver, web),
             tools,
             active: Arc::new(Mutex::new(None)),
+            install: Arc::new(Mutex::new(InstallCoordinator::default())),
             _lock: Arc::new(lock),
             stage_delay,
         };
@@ -861,6 +876,102 @@ impl Engine {
 
     pub fn idle(&self) -> bool {
         self.active.lock().map(|a| a.is_none()).unwrap_or(false)
+    }
+
+    /// Start a typed provider installation on a worker thread (installs can run for
+    /// minutes — longer than the client's per-request timeout — so they are async and
+    /// observed via `install_status`). Returns an acknowledgement immediately. Only the
+    /// reviewed provider set can be installed; execution is shell-free.
+    pub fn start_install(
+        &self,
+        provider_id: &str,
+        method: crate::install::InstallMethod,
+    ) -> Result<serde_json::Value> {
+        // Validate the provider up front so an unknown id is rejected synchronously.
+        if crate::install::options(provider_id).is_none() {
+            return Err(CoreError::new(
+                "ProviderUnsupported",
+                "This provider cannot be installed.",
+            ));
+        }
+        let mut install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        if install.running.is_some() {
+            return Err(CoreError::new(
+                "CoreBusy",
+                "An installation is already running. Wait for it to finish or cancel it.",
+            ));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        install.running = Some(RunningInstall {
+            provider_id: provider_id.to_owned(),
+            method,
+            cancelled: cancelled.clone(),
+        });
+        drop(install);
+
+        let engine = self.clone();
+        let provider = provider_id.to_owned();
+        thread::spawn(move || {
+            // Installs can legitimately take minutes; cap generously.
+            let deadline = Instant::now() + Duration::from_secs(600);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::install::install(&engine.tools, &provider, method, &cancelled, deadline)
+            }));
+            let outcome = match outcome {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(error)) => crate::install::InstallOutcome {
+                    provider_id: provider.clone(),
+                    method,
+                    status: crate::install::InstallStatus::Failed,
+                    message: error.message,
+                    detail: None,
+                },
+                Err(_) => crate::install::InstallOutcome {
+                    provider_id: provider.clone(),
+                    method,
+                    status: crate::install::InstallStatus::Failed,
+                    message: "The installation failed unexpectedly.".into(),
+                    detail: None,
+                },
+            };
+            if let Ok(mut install) = engine.install.lock() {
+                install.running = None;
+                install.last = Some(outcome);
+            }
+        });
+        Ok(json!({"started": true, "provider_id": provider_id}))
+    }
+
+    /// Request cancellation of a running install (best effort; signals the process group).
+    pub fn cancel_install(&self) -> Result<()> {
+        let install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        if let Some(run) = install.running.as_ref() {
+            run.cancelled.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// Current install status: whether one is running (provider/method) and the last
+    /// outcome. Read-only; performs no installation.
+    pub fn install_status(&self) -> Result<serde_json::Value> {
+        let install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        let running = install
+            .running
+            .as_ref()
+            .map(|r| json!({"provider_id": r.provider_id, "method": r.method}));
+        Ok(json!({
+            "running": running,
+            "last": install.last,
+        }))
     }
 
     pub fn shutdown(&self) {

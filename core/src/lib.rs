@@ -4,6 +4,7 @@ pub mod dns;
 pub mod error;
 pub mod events;
 pub mod evidence;
+pub mod install;
 pub mod orchestration;
 pub mod process;
 pub mod protocol;
