@@ -36,7 +36,7 @@ empty request ID; an oversized frame closes the helper session.
 | start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
-| list_providers | none | Provider metadata plus live installation status (state/version) |
+| list_providers | none | Provider metadata, live installation status (state/version), and `install` (reviewed method availability: `homebrew`, `managed_download`, `official_installer_url?`) |
 | target_scope_status | workspace_id, target_id | `{authorized, required_scope_entry?}` computed with the core scope matcher; read-only, no network activity |
 | authorize_target | workspace_id, target_id | Adds only the narrowest exact scope entry needed (no-op if already covered), persists it, re-checks authorization, and returns `{workspace, authorized, added_entry?}`; emits `WorkspaceScopeUpdated` (payload `added`, `source: "recon_authorization"`); no network activity |
 | start_install | provider_id, method (`homebrew`, `managed_download`, `existing_binary`, `official_installer`) | Starts a typed, async provider install (worker thread); returns `{started, provider_id}`. Only the reviewed provider set is installable; execution is shell-free. Observe via `install_status` |

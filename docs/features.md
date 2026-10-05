@@ -32,7 +32,7 @@ today, not aspirations. Statuses:
 | Persistence | STABLE | Survives restart; migrations versioned |
 | Synthetic Recon (offline demo) | STABLE | Full pipeline with invented data, no network |
 | DNS Recon | BETA | Built-in forward (A/AAAA) for Domain/Hostname/URL-host and reverse (PTR) for IP/URL-IP targets; no external CLI |
-| Provider installation | BETA | Explicit, shell-free Homebrew install of the reviewed provider set (async, live status); existing-binary/PATH first-class; managed direct download typed + fail-closed pending review |
+| Provider installation | BETA | Explicit, shell-free install of the reviewed provider set (async, live status): Homebrew, or a verified app-managed direct download (pinned manifest, HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf; Nmap is Homebrew/official only; existing-binary/PATH first-class; no silent installs, no background updates |
 | Recon result summaries | BETA | Bounded, sanitized `ProviderResults` events render concise discoveries in the live console (Assets/Evidence remain authoritative) |
 
 ## Providers (recon pipeline)
@@ -81,7 +81,7 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, and copy-only setup help; no installer |
+| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, copy-only setup help, and explicit per-provider install (Homebrew, or verified managed download for subfinder/httpx/katana/ffuf) — see the Provider installation row |
 | Provider/plugin SDK | EXPERIMENTAL | Internal trait documented; no stable public ABI pre-1.0 |
 | Reporting exports | PLANNED | |
 | Workspace delete/export | PLANNED | Data location documented today |

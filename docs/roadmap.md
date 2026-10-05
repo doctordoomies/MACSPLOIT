@@ -316,9 +316,14 @@ Required outcomes:
 - setup is resumable, re-runnable from Settings / Setup & Environment, and does not
   require deleting workspace data or preferences.
 
-The broader managed-provider installation system remains a later provider-platform
-decision. Research/news backend implementation is not required merely because setup can
-choose a Research-oriented dashboard preset.
+Explicit, typed installation of the reviewed provider set is implemented in the M1.4
+follow-up: Homebrew for all, plus a verified app-managed direct download (pinned manifest,
+HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf;
+Nmap is Homebrew/official only. The broader managed-provider *platform* (arbitrary
+third-party providers, a marketplace, or any automatic/background updates) remains a later
+provider-platform decision and is intentionally out of scope. Research/news backend
+implementation is not required merely because setup can choose a Research-oriented
+dashboard preset.
 
 ## 1.5 Real-target acceptance matrix
 
@@ -721,10 +726,13 @@ Surface provider licensing, version compatibility, and external dependencies.
 
 ## 8.4 Managed installation — optional future subphase
 
-Only after a threat-model review, consider explicit user-approved install/update
-support.
+Explicit, user-approved installation of the **reviewed provider set** is now implemented
+(Homebrew, and a verified app-managed direct download for subfinder/httpx/katana/ffuf; see
+`docs/providers.md`). What remains future here is any broader managed-installation *platform*
+— arbitrary third-party providers, and any automatic/background update support — each of
+which needs its own threat-model review first.
 
-No silent installation. No arbitrary remote scripts.
+No silent installation. No arbitrary remote scripts. No background or automatic updates.
 
 ## 8.5 Core 1.0 release gate
 

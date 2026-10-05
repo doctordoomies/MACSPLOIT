@@ -20,15 +20,26 @@ may include breaking changes).
   source→value/relationship) now drives concise result lines in the live console, with a
   "+N more — View Assets" hint and a completion summary. URL values are query-redacted;
   raw output stays only in evidence. Assets/Evidence/Activity remain authoritative.
-- **Provider installation (M1.4 follow-up):** Provider Center and first-run setup can now
-  actually install an external provider with **Homebrew** (an explicit, user-initiated,
-  shell-free `brew install <reviewed-formula>` run asynchronously with live status), in
-  addition to using an existing executable on PATH or a provider override. Installs are
+- **Provider installation (M1.4 follow-up):** Provider Center can now actually install an
+  external provider on explicit user action, with no shell and nothing silent. Installs are
   typed (provider id + method, never an arbitrary command); only the reviewed set
-  (subfinder, httpx, katana, ffuf, nmap) is installable. App-managed direct download
-  (without Homebrew) is designed and typed but fail-closed for now (routes to Homebrew or
-  the official installer) pending its dedicated security review — MACSPLOIT never runs
-  `curl | sh`, never installs silently, and never installs Homebrew itself.
+  (subfinder, httpx, katana, ffuf, nmap) is installable, and they run asynchronously with
+  live status/cancellation.
+  - **Install with Homebrew:** a shell-free `brew install <reviewed-formula>`
+    (executable + argv, no `sudo`, never installs Homebrew itself).
+  - **Install without Homebrew (managed direct download):** now implemented for
+    subfinder/httpx/katana/ffuf as a native Rust pipeline. The exact artifact for the host
+    architecture (arm64/x86_64) is chosen from a hardcoded, pinned manifest
+    (version + HTTPS URL + SHA-256 + archive format + member); the download is HTTPS-only to
+    reviewed GitHub release-asset hosts with capped host-checked redirects and a streamed
+    size bound; the SHA-256 is verified before extraction; only the single reviewed
+    top-level executable member is extracted (traversal/symlink/hardlink/duplicate/zip-bomb/
+    malformed archives fail closed); and it is installed by an atomic `rename` into
+    `~/Library/Application Support/MACSPLOIT/Providers/`, leaving any previous good binary
+    intact on failure. Nmap has no managed download (privileged `.dmg`) and routes to
+    Homebrew/official. No `curl`/`unzip`/`tar`/`sh`, no `curl | sh`, no remote scripts, no
+    background updates — a new version is a reviewed manifest change. The pipeline is driven
+    through an injectable transport so it is fully tested offline.
 - **First-run setup & onboarding (Milestone 1.4):** a guided, versioned first-run
   experience shown before the workbench on a fresh install (or after a setup-version
   bump) and re-runnable from Settings → Setup & Environment without touching workspaces,
