@@ -63,16 +63,26 @@ creation and re-checks scoped assets before provider dispatch.
 
 ## DNS Recon
 
-A built-in live workflow for an explicitly in-scope Domain or Hostname. It gives a
-fresh installation a useful real reconnaissance path without requiring an external
-CLI:
+A built-in live workflow for an explicitly in-scope Domain, Hostname, IP, or HTTP(S) URL.
+It gives a fresh installation a useful real reconnaissance path without an external CLI.
+Forward and reverse lookups are chosen from the target:
 
 ```text
-Domain / Hostname
+Domain / Hostname / URL-with-hostname
   → Native DNS Resolver (A + AAAA)
   → IPAddress assets + resolves_to relationships
+
+IP / URL-with-IP-literal
+  → Native DNS Resolver (PTR / reverse)
+  → Hostname assets + ptr_record relationships (PTR observation only)
   → Evidence
 ```
+
+A URL's host is extracted with structured parsing in the core (path/query ignored, the
+original URL kept as provenance; credentials remain disallowed). Scope stays authoritative
+— e.g. `http://127.0.0.1/` runs only once `127.0.0.1` is authorized; loopback/private is
+classification only. A `ptr_record` relationship is a PTR observation and does not assert
+forward-confirmed mapping.
 
 Stages: Target Validation → DNS Resolution (`native_dns`) → Persistence →
 Completion. Risk is ACTIVE_LOW_IMPACT. Production resolution uses the host's system

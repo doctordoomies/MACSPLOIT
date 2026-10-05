@@ -52,7 +52,7 @@ flowchart LR
     D["Domain / Hostname"] -->|Native DNS| I[IPAddress]
 ```
 
-The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT.
+The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT. DNS Recon also accepts an **IP or an HTTP(S) URL**: a URL's host is used (forward lookup), while an IP target — or a URL whose host is an IP literal, e.g. `http://127.0.0.1/` — gets a **reverse (PTR)** lookup, recorded as `ptr_record` relationships (a PTR observation, not a forward-confirmed mapping). The target must still be in workspace scope.
 
 ### Domain Recon
 
@@ -241,7 +241,7 @@ On first launch MACSPLOIT opens a short **guided setup** before the workbench: a
 4. Open **Recon → DNS Recon** and run it. No external CLI is required.
 5. For **Web Analysis**, add a full HTTP(S) URL target (the UI can create an HTTPS URL target from a selected domain) and run the built-in analyzer.
 
-Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and Recon routes you there when something is missing.
+Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and can **install a missing provider with Homebrew** on an explicit click (a shell-free `brew install`, run asynchronously with live status; it never installs silently, never uses sudo, and never installs Homebrew itself). Recon routes you to Provider Center when something is missing.
 
 If you pick an authorized target that is not yet in workspace scope, Recon offers **Authorize & Run**: it adds only the narrowest exact scope entry (never a wildcard, CIDR, or sibling host), the Rust core re-checks authorization, and only then does the workflow start. Every live Run keeps a visible reminder to assess only systems you own or are explicitly permitted to test.
 

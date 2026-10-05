@@ -39,9 +39,13 @@ empty request ID; an oversized frame closes the helper session.
 | list_providers | none | Provider metadata plus live installation status (state/version) |
 | target_scope_status | workspace_id, target_id | `{authorized, required_scope_entry?}` computed with the core scope matcher; read-only, no network activity |
 | authorize_target | workspace_id, target_id | Adds only the narrowest exact scope entry needed (no-op if already covered), persists it, re-checks authorization, and returns `{workspace, authorized, added_entry?}`; emits `WorkspaceScopeUpdated` (payload `added`, `source: "recon_authorization"`); no network activity |
+| start_install | provider_id, method (`homebrew`, `managed_download`, `existing_binary`, `official_installer`) | Starts a typed, async provider install (worker thread); returns `{started, provider_id}`. Only the reviewed provider set is installable; execution is shell-free. Observe via `install_status` |
+| cancel_install | none | Requests cancellation of a running install |
+| install_status | none | `{running: {provider_id, method}?, last: InstallOutcome?}` where InstallOutcome is `{provider_id, method, status (SUCCEEDED/FAILED/CANCELLED/UNSUPPORTED), message, detail?}`; read-only |
 
-`target_scope_status` and `authorize_target` are additive to protocol v1 (no version
-bump). Durable events gain a `ProviderCommand` type carrying a display-only, sanitized
+`target_scope_status`, `authorize_target`, `start_install`, `cancel_install`, and
+`install_status` are additive to protocol v1 (no version bump). Installation state is
+in-memory and global (not workspace data), observed by polling `install_status`. Durable events gain a `ProviderCommand` type carrying a display-only, sanitized
 command for the live console: the executable basename plus an argument array whose HTTP(S)
 URLs have their query contents redacted (`https://host/path?<redacted>`) and userinfo
 removed. It is never a shell string, is never executed, and carries no environment or

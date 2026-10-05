@@ -81,6 +81,25 @@ cannot prove that arbitrary content contains no secret.
   for redacting future sensitive flag/value pairs (auth headers, tokens, passwords, API
   keys) — display text is privacy-reduced presentation data and is never assumed safe
   merely because execution is shell-free.
+- Provider installation is explicit, typed, and shell-free. A request names a provider id
+  and a method only; the Homebrew formula and official-installer URL come from a hardcoded
+  reviewed matrix (`core/src/install`), so a caller can never inject a command or formula.
+  "Install with Homebrew" runs `brew install <formula>` as an executable + argv through the
+  process supervisor (no `/bin/sh -c`, no `sudo`, never installs Homebrew itself), captures
+  exit status, and refreshes provider state. App-managed direct download is fail-closed in
+  this build (routes to Homebrew/official installer) pending its security review; the
+  reviewed design requires HTTPS-only official sources, exact-arch match, bounded size,
+  SHA-256 verification, traversal-safe extraction, atomic temp→destination under the app
+  support directory (never system dirs, never sudo), and failing closed if verification
+  cannot be performed. MACSPLOIT never runs `curl | sh` or remote scripts, and never
+  installs silently. Installation output is status only and never enters workspace evidence.
+- Reverse DNS (PTR) is a native, bounded lookup via the system resolver (no shelling to
+  dig/host/nslookup). A `ptr_record` relationship records a PTR observation only — it does
+  not claim forward-confirmed mapping. DNS Recon on an IP/URL target still requires the
+  host to be in workspace scope; loopback/private status authorizes nothing.
+- The live-console `ProviderResults` summary is bounded and presentation-safe: counts plus
+  a capped preview whose URL values/sources are query-redacted by the display sanitizer.
+  Raw provider output remains only in the hashed evidence envelope.
 - Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

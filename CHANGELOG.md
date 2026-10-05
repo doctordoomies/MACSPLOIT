@@ -7,6 +7,28 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **DNS Recon for IP and URL targets (M1.4 follow-up):** DNS Recon now accepts Domain,
+  Hostname, IP, and HTTP(S) URL targets. Domains/hostnames (and URL hostnames) resolve
+  forward (A/AAAA); an IP target, or a URL whose host is an IP literal, does a reverse
+  (PTR) lookup — PTR names become `Hostname` assets linked from the IP by a new
+  `ptr_record` relationship (a PTR observation only, not forward-confirmed). URL hosts are
+  extracted with structured parsing in the core; scope stays authoritative (the owner case
+  `http://127.0.0.1/` runs once the IP is in scope). Native resolver gains bounded reverse
+  lookup (migration 003).
+- **Recon results in the live console (M1.4 follow-up):** a durable, bounded, sanitized
+  `ProviderResults` event (count, by-type counts, and a capped preview of
+  source→value/relationship) now drives concise result lines in the live console, with a
+  "+N more — View Assets" hint and a completion summary. URL values are query-redacted;
+  raw output stays only in evidence. Assets/Evidence/Activity remain authoritative.
+- **Provider installation (M1.4 follow-up):** Provider Center and first-run setup can now
+  actually install an external provider with **Homebrew** (an explicit, user-initiated,
+  shell-free `brew install <reviewed-formula>` run asynchronously with live status), in
+  addition to using an existing executable on PATH or a provider override. Installs are
+  typed (provider id + method, never an arbitrary command); only the reviewed set
+  (subfinder, httpx, katana, ffuf, nmap) is installable. App-managed direct download
+  (without Homebrew) is designed and typed but fail-closed for now (routes to Homebrew or
+  the official installer) pending its dedicated security review — MACSPLOIT never runs
+  `curl | sh`, never installs silently, and never installs Homebrew itself.
 - **First-run setup & onboarding (Milestone 1.4):** a guided, versioned first-run
   experience shown before the workbench on a fresh install (or after a setup-version
   bump) and re-runnable from Settings → Setup & Environment without touching workspaces,

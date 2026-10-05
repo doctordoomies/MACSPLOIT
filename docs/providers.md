@@ -35,6 +35,43 @@ crawling/content discovery, and per-hop scope-checked for native-HTTP redirects,
 Provider statuses (metadata plus live installation state) are exposed to the UI
 through the `list_providers` protocol method.
 
+## Provider installation
+
+MACSPLOIT can install a missing external provider on explicit user action; it never
+installs anything silently and runs no shell. Installation is **typed**: a request names a
+provider id and a method (`start_install`), and the Homebrew formula / official-installer
+URL come only from a hardcoded reviewed matrix in `core/src/install` — a caller can never
+supply a command or formula. Installs run asynchronously on a worker (they can take
+minutes, longer than the client request timeout) and are observed via `install_status`;
+installation output is status only and never enters workspace evidence.
+
+| Provider | Homebrew formula | App-managed direct download | Official installer |
+| --- | --- | --- | --- |
+| Subfinder | `subfinder` | supported (staged) | GitHub releases |
+| HTTPX | `httpx` | supported (staged) | GitHub releases |
+| Katana | `katana` | supported (staged) | GitHub releases |
+| ffuf | `ffuf` | supported (staged) | GitHub releases |
+| Nmap | `nmap` | not appropriate (privileged .dmg) | nmap.org |
+
+- **Install with Homebrew (implemented):** MACSPLOIT locates the `brew` executable
+  (resolving a Homebrew symlink) and runs `brew install <reviewed formula>` as an
+  executable + argument array through the process supervisor — never `/bin/sh -c`, never a
+  command string, never `sudo`, and it never installs Homebrew itself. Exit status is
+  captured; provider status is refreshed on completion; cancellation signals the process
+  group.
+- **Install without Homebrew (managed direct download):** the Go-based tools publish
+  checksummed, per-architecture macOS archives on their official GitHub releases, so a
+  verified app-managed install into `~/Library/Application Support/MACSPLOIT/Providers/`
+  (HTTPS-only, official source, exact-arch match, bounded size, SHA-256 verification,
+  traversal-safe extraction, atomic temp→destination, no system directories, no sudo) is
+  the intended design. It is **typed and fail-closed in this build** — it routes the user
+  to Homebrew or the official installer rather than shipping an unverified downloader —
+  pending its dedicated security review. MACSPLOIT never does `curl | sh` or runs remote
+  scripts. Nmap is excluded from app-managed download (its official standalone build is a
+  privileged `.dmg`); install it with Homebrew or the official installer.
+- **Use existing binary:** a compatible executable already on PATH or named by a provider
+  override is first-class and never reinstalled.
+
 MACSPLOIT needs a **compatible provider executable** — it does not depend on Homebrew.
 Executable discovery resolves a candidate (including a Homebrew Cellar symlink) to a real,
 executable regular file on PATH, `/opt/homebrew/bin`, `/usr/local/bin`, or an explicit

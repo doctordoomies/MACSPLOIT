@@ -31,7 +31,9 @@ today, not aspirations. Statuses:
 | Activity / events | STABLE | Durable, replayable |
 | Persistence | STABLE | Survives restart; migrations versioned |
 | Synthetic Recon (offline demo) | STABLE | Full pipeline with invented data, no network |
-| DNS Recon | BETA | Built-in A/AAAA workflow for an explicitly in-scope Domain/Hostname; no external CLI |
+| DNS Recon | BETA | Built-in forward (A/AAAA) for Domain/Hostname/URL-host and reverse (PTR) for IP/URL-IP targets; no external CLI |
+| Provider installation | BETA | Explicit, shell-free Homebrew install of the reviewed provider set (async, live status); existing-binary/PATH first-class; managed direct download typed + fail-closed pending review |
+| Recon result summaries | BETA | Bounded, sanitized `ProviderResults` events render concise discoveries in the live console (Assets/Evidence remain authoritative) |
 
 ## Providers (recon pipeline)
 
