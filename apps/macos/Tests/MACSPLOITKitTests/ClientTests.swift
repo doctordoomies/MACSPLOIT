@@ -115,6 +115,25 @@ actor ReplyTransport: CoreTransport {
         #expect(object["method"] as? String == "authorize_target")
     }
 
+    @Test func testStartInstallEncodesProviderAndMethod() async throws {
+        let reply = ReplyTransport(#"{"result":{"started":true,"provider_id":"httpx"}}"#)
+        try await CoreClient(transport: reply).startInstall(provider: "httpx", method: "homebrew")
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(object["method"] as? String == "start_install")
+        let params = object["params"] as! [String: Any]
+        #expect(params["provider_id"] as? String == "httpx")
+        #expect(params["method"] as? String == "homebrew")
+    }
+
+    @Test func testInstallStatusDecodes() async throws {
+        let reply = ReplyTransport(#"{"result":{"running":null,"last":{"provider_id":"ffuf","method":"managed_download","status":"UNSUPPORTED","message":"use Homebrew","detail":"https://example.test"}}}"#)
+        let state = try await CoreClient(transport: reply).installStatus()
+        #expect(state.running == nil)
+        #expect(state.last?.providerId == "ffuf")
+        #expect(state.last?.status == "UNSUPPORTED")
+        #expect(state.last?.detail == "https://example.test")
+    }
+
     @Test func testStartChainEncodesIpReconChain() async throws {
         let reply = ReplyTransport(#"{"result":{"id":"c","workspace_id":"w","target_id":"t","name":"IP Recon","status":"PENDING","created_at":"now","updated_at":"now","error_code":null}}"#)
         _ = try await CoreClient(transport: reply).startChain(workspace: "w", target: "t", chain: "ip_recon")

@@ -204,6 +204,31 @@ import Testing
         #expect(!evidence.rawJson.contains("TOPSECRET")) // cookie value never persisted
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil))
+    func testProviderInstallManagedFailsClosedThroughBridgeOffline() async throws {
+        // start_install with the managed method is fail-closed (no network, no install):
+        // it returns an UNSUPPORTED outcome routing to Homebrew/official. Exercises the
+        // async start_install/install_status path over the pipe with the real core.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-install-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        try await client.startInstall(provider: "ffuf", method: "managed_download")
+        let deadline = Date().addingTimeInterval(10)
+        var last: InstallOutcome?
+        while Date() < deadline {
+            let state = try await client.installStatus()
+            if let outcome = state.last { last = outcome; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(last?.providerId == "ffuf")
+        #expect(last?.status == "UNSUPPORTED")
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
