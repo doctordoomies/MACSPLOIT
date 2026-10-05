@@ -53,6 +53,11 @@ def automated_branch(ref):
     return ref.startswith(("refs/heads/dependabot/", "refs/remotes/origin/dependabot/"))
 
 
+def bot_like(identity):
+    name, _ = identity
+    return name.endswith("[bot]") or identity in (DEPENDABOT, GITHUB)
+
+
 def identity_allowed(ref, author, committer, sha=None, reviewed_automation=None):
     owner_pairs = {
         (HUMAN, HUMAN),
@@ -61,13 +66,27 @@ def identity_allowed(ref, author, committer, sha=None, reviewed_automation=None)
     }
     if (author, committer) in owner_pairs:
         return True
-    dependabot_pair = author == DEPENDABOT and committer in (DEPENDABOT, GITHUB)
-    if not dependabot_pair:
+
+    # Preserve strict handling for owner metadata. Mixed/legacy owner identities
+    # must still fail instead of being accepted as an "external contributor".
+    if author in (HUMAN, OWNER_GITHUB) or committer in (HUMAN, OWNER_GITHUB):
         return False
-    if automated_branch(ref):
-        return True
-    reviewed_automation = reviewed_automation or set()
-    return sha in reviewed_automation
+
+    dependabot_pair = author == DEPENDABOT and committer in (DEPENDABOT, GITHUB)
+    if dependabot_pair:
+        if automated_branch(ref):
+            return True
+        reviewed_automation = reviewed_automation or set()
+        return sha in reviewed_automation
+
+    # Other automation remains fail-closed. Human contributors are allowed when
+    # neither side looks like a bot; GitHub may legitimately be the committer for
+    # a web-created human commit.
+    if bot_like(author):
+        return False
+    if committer != GITHUB and bot_like(committer):
+        return False
+    return True
 
 
 def audit():
