@@ -33,6 +33,8 @@ enum SetupEnvironment {
 struct SetupView: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject var setup: SetupModel
+    @State private var providerChoice: ProviderSetupChoice = .recommended
+    @State private var expandedProviderGuidance: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -135,7 +137,10 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("I understand that MACSPLOIT is a security assessment tool. I will only scan, test, validate, or otherwise assess systems that I own or have explicit authorization to assess.")
                         .font(.body)
-                    Toggle(isOn: $setup.authorizationAcknowledged) {
+                    Toggle(isOn: Binding(
+                        get: { setup.authorizationAcknowledged },
+                        set: { setup.setAuthorizationAcknowledged($0) }
+                    )) {
                         Text("I understand and agree to this responsibility.").font(.callout)
                     }
                     .toggleStyle(.checkbox)
@@ -168,40 +173,117 @@ struct SetupView: View {
         }
     }
 
+    /// Recommended external providers, in the registry order when present.
+    private var recommendedProviders: [ProviderStatus] {
+        RecommendedProviders.ids.compactMap { id in model.providerStatuses.first { $0.id == id } }
+    }
+
     private var providersStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            heading("Providers", "External tools extend MACSPLOIT. Built-in capabilities always work.")
-            WorkbenchCard {
-                VStack(alignment: .leading, spacing: 10) {
-                    if model.providerStatuses.isEmpty {
-                        Text("Provider status unavailable. You can review it later in Provider Center.")
-                            .font(.callout).foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(model.providerStatuses.enumerated()), id: \.offset) { _, p in
-                            HStack(spacing: 10) {
-                                Image(systemName: p.installation.isAvailable ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(p.installation.isAvailable ? Color.green : Color.orange)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(p.name).font(.callout)
-                                    Text(p.description).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer()
-                                Text(p.installation.isBuiltIn ? "Built in" : (p.installation.isAvailable ? p.installation.summary : "Not detected"))
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(p.installation.isAvailable ? Color.secondary : Color.orange)
+        VStack(alignment: .leading, spacing: 16) {
+            heading("Provider setup", "Choose how to approach external tools. Nothing is installed.")
+
+            Picker("Provider setup", selection: $providerChoice) {
+                ForEach(ProviderSetupChoice.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented).frame(maxWidth: 360)
+            Text(providerChoice.summary).font(.caption).foregroundStyle(.secondary)
+
+            switch providerChoice {
+            case .recommended: recommendedProvidersView
+            case .customize: customizeProvidersView
+            case .skip: skipProvidersView
+            }
+
+            HStack {
+                Button("Refresh") { Task { await model.refreshProviders() } }.controlSize(.small)
+                Button("Open Provider Center") { } // navigation happens post-setup; informational here
+                    .controlSize(.small).disabled(true)
+                    .help("Provider Center is available in the workbench after setup.")
+                Spacer()
+            }
+            Text("MACSPLOIT never installs providers and runs no shell or remote scripts. Homebrew is optional. Setup commands shown in Provider Center are copy-only guidance.")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private var recommendedProvidersView: some View {
+        WorkbenchCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("The normal recommended external provider set:").font(.caption).foregroundStyle(.secondary)
+                if recommendedProviders.isEmpty {
+                    Text("Provider status unavailable. You can review it later in Provider Center.")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(recommendedProviders.enumerated()), id: \.offset) { _, p in
+                        providerStatusRow(p)
+                    }
+                }
+            }
+        }
+    }
+
+    private var customizeProvidersView: some View {
+        WorkbenchCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Tap a provider to show or hide its setup guidance. This only changes what is shown — it installs nothing.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(recommendedProviders.enumerated()), id: \.offset) { _, p in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button {
+                            if expandedProviderGuidance.contains(p.id) { expandedProviderGuidance.remove(p.id) }
+                            else { expandedProviderGuidance.insert(p.id) }
+                        } label: {
+                            HStack {
+                                Image(systemName: expandedProviderGuidance.contains(p.id) ? "chevron.down" : "chevron.right")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                providerStatusRow(p)
                             }
+                        }
+                        .buttonStyle(.plain)
+                        if expandedProviderGuidance.contains(p.id) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(p.description).font(.caption).foregroundStyle(.secondary)
+                                if p.installation.isBuiltIn {
+                                    Text("Built in — no installation required.").font(.caption2).foregroundStyle(.secondary)
+                                } else if let command = p.setup?.installCommand {
+                                    Text("Recommended on macOS (optional): \(command)")
+                                        .font(.caption2.monospaced()).textSelection(.enabled).foregroundStyle(.secondary)
+                                    Text("Or install by any method and ensure it is on PATH. Full guidance is in Provider Center.")
+                                        .font(.caption2).foregroundStyle(.tertiary)
+                                }
+                            }
+                            .padding(.leading, 20)
                         }
                     }
                 }
             }
-            HStack {
-                Text("Recommended setup uses the normal provider set. Missing external providers never block MACSPLOIT — Synthetic Recon and built-in workflows remain available.")
+        }
+    }
+
+    private var skipProvidersView: some View {
+        WorkbenchCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Continue without external providers", systemImage: "forward.end").font(.headline)
+                Text("You can set up external providers later — Recon routes you to Provider Center when one is needed.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("Synthetic Recon still works (offline), and built-in workflows (DNS Recon, Web Analysis) remain available.")
                     .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Refresh") { Task { await model.refreshProviders() } }.controlSize(.small)
             }
-            Text("MACSPLOIT never installs providers. See Provider Center for copyable, recommended setup commands.")
-                .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func providerStatusRow(_ p: ProviderStatus) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: p.installation.isAvailable ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(p.installation.isAvailable ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(p.name).font(.callout)
+                Text(p.description).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Text(p.installation.isBuiltIn ? "Built in" : (p.installation.isAvailable ? p.installation.summary : "Not detected"))
+                .font(.caption.monospaced())
+                .foregroundStyle(p.installation.isAvailable ? Color.secondary : Color.orange)
         }
     }
 
