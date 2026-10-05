@@ -43,7 +43,7 @@ enum ReconMode: String, CaseIterable, Identifiable {
     var purpose: String {
         switch self {
         case .synthetic: return "Synthetic demo using invented discoveries. Performs no network activity."
-        case .dns: return "Built-in A/AAAA resolution for a domain or hostname."
+        case .dns: return "Forward A/AAAA for a domain, hostname, or URL host; reverse PTR for an IP."
         case .domain: return "Subdomains → DNS → ports/services → HTTP probing."
         case .ip: return "Ports/services → HTTP probing for one selected IP. No DNS required."
         case .web: return "Bounded same-host crawling from an in-scope URL."
@@ -67,7 +67,7 @@ enum ReconMode: String, CaseIterable, Identifiable {
     var targetRequirement: String {
         switch self {
         case .synthetic: return "the demo domain example.test"
-        case .dns: return "a Domain or Hostname target"
+        case .dns: return "a Domain, Hostname, IP, or HTTP(S) URL target"
         case .domain: return "a Domain target"
         case .ip: return "an IPAddress target"
         case .web, .webAnalysis, .contentDiscovery: return "an HTTP(S) URL target"
@@ -117,7 +117,7 @@ struct ReconView: View {
         guard let target = selectedTarget else { return false }
         switch mode {
         case .synthetic: return target.targetType == "Domain" && target.normalizedValue == "example.test"
-        case .dns: return ["Domain", "Hostname"].contains(target.targetType)
+        case .dns: return ["Domain", "Hostname", "IPAddress", "URL"].contains(target.targetType)
         case .domain: return target.targetType == "Domain"
         case .ip: return target.targetType == "IPAddress"
         case .web, .webAnalysis, .contentDiscovery: return target.targetType == "URL"
@@ -375,7 +375,7 @@ struct ReconView: View {
             Text("Synthetic demo — no external providers and no network activity.")
                 .font(.caption).foregroundStyle(.secondary)
         case .dns:
-            providerList([ProviderRowData(name: "Native DNS Resolver", detail: "A + AAAA resolution (system resolver)", available: model.nativeDns?.installation.isAvailable ?? true, status: model.nativeDns?.installation.summary ?? "Built in", risk: "ACTIVE · LOW", warn: false)])
+            providerList([ProviderRowData(name: "Native DNS Resolver", detail: "A/AAAA forward + PTR reverse (system resolver)", available: model.nativeDns?.installation.isAvailable ?? true, status: model.nativeDns?.installation.summary ?? "Built in", risk: "ACTIVE · LOW", warn: false)])
         case .domain:
             providerList([
                 ProviderRowData(name: "Subfinder", detail: "Subdomain discovery · passive", available: subfinderReady, status: model.subfinder?.installation.summary ?? "", risk: "PASSIVE", warn: false),
@@ -574,7 +574,7 @@ struct ReconView: View {
     private var emptyTargetHint: String {
         switch mode {
         case .synthetic: return "Add example.test using the target bar above."
-        case .dns: return "Add an in-scope domain or hostname using the target bar above."
+        case .dns: return "Add an in-scope domain, hostname, IP, or HTTP(S) URL using the target bar above."
         case .domain: return "Add an in-scope domain using the target bar above."
         case .ip: return "Add an explicitly authorized IPv4 or IPv6 address using the target bar above."
         case .web, .webAnalysis, .contentDiscovery:

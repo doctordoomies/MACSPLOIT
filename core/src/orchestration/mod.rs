@@ -208,11 +208,14 @@ impl Store {
             ChainKind::DnsRecon => {
                 if !matches!(
                     target.target_type,
-                    TargetType::Domain | TargetType::Hostname
+                    TargetType::Domain
+                        | TargetType::Hostname
+                        | TargetType::IPAddress
+                        | TargetType::URL
                 ) {
                     return Err(CoreError::new(
                         "InvalidTarget",
-                        "DNS Recon requires a domain or hostname target.",
+                        "DNS Recon requires a domain, hostname, IP, or HTTP(S) URL target.",
                     ));
                 }
                 (
