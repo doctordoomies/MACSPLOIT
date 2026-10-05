@@ -35,6 +35,7 @@ public final class WorkspaceModel: ObservableObject {
     @Published public private(set) var lastTargetType: String?
     @Published public private(set) var isBusy = false
     @Published public private(set) var isConnected = false
+    @Published public private(set) var coreVersion: String?
     @Published public var errorMessage: String?
     @Published public private(set) var connectionError: String?
     @Published public private(set) var evidenceText = "Select evidence to inspect its verified raw JSON."
@@ -44,7 +45,8 @@ public final class WorkspaceModel: ObservableObject {
 
     public func boot() async {
         do {
-            _ = try await client.hello()
+            let hello = try await client.hello()
+            coreVersion = hello.coreVersion
             workspaces = try await client.listWorkspaces()
             isConnected = true; connectionError = nil
             await refreshProviders()
