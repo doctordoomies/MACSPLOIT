@@ -121,7 +121,7 @@ struct SetupView: View {
     private var welcomeStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             // The authoritative app build copies this artwork into Contents/Resources.
-            if let url = Bundle.main.url(forResource: "MACSPLOIT-AppIcon-1024", withExtension: "png"),
+            if let url = Bundle.main.url(forResource: "MACSPLOIT-Logo-1024", withExtension: "png"),
                let logo = NSImage(contentsOf: url) {
                 Image(nsImage: logo)
                     .resizable()
