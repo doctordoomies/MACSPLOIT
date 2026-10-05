@@ -51,9 +51,9 @@ class RepositoryPolicyTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(value)
 
-    def check(self, mode):
+    def check(self, *args):
         return subprocess.run(
-            [os.sys.executable, str(ROOT / "scripts/check_repository.py"), mode],
+            [os.sys.executable, str(ROOT / "scripts/check_repository.py"), *args],
             cwd=self.repo, env=self.env, capture_output=True, text=True,
         )
 
@@ -123,6 +123,47 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.git("add", "README.md")
         self.git("commit", "-m", "ghp_" + "C" * 36)
         self.assertNotEqual(self.check("--all-history").returncode, 0)
+
+    def test_reachable_history_catches_deleted_secret(self):
+        sample = "ghp_" + "D" * 36
+        self.write("sample.txt", sample)
+        self.git("add", "sample.txt")
+        self.commit()
+        self.git("rm", "sample.txt")
+        self.commit()
+        result = self.check("--reachable-history", "HEAD")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GitHub token", result.stderr)
+        self.assertNotIn(sample, result.stdout + result.stderr)
+
+    def test_reachable_history_ignores_unrelated_branch_binary(self):
+        self.write("README.md", "main branch\n")
+        self.git("add", "README.md")
+        self.commit()
+        main_head = self.git("rev-parse", "HEAD").decode().strip()
+
+        self.git("switch", "-c", "unrelated")
+        binary = self.repo / "unrelated.bin"
+        binary.write_bytes(b"binary\0payload")
+        self.git("add", "unrelated.bin")
+        self.commit()
+
+        self.git("switch", "main")
+        result = self.check("--reachable-history", main_head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        repo_wide = self.check("--all-history")
+        self.assertNotEqual(repo_wide.returncode, 0)
+        self.assertIn("binary data requires explicit review", repo_wide.stderr)
+
+    def test_reachable_history_blocks_binary_on_current_branch(self):
+        binary = self.repo / "current.bin"
+        binary.write_bytes(b"binary\0payload")
+        self.git("add", "current.bin")
+        self.commit()
+        result = self.check("--reachable-history", "HEAD")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("binary data requires explicit review", result.stderr)
 
     def test_uninspectable_blobs_are_blocked(self):
         self.assertTrue(audit.content_issues(b"binary\0payload"))
