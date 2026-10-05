@@ -996,6 +996,17 @@ Before assigning Claude, Codex, or another coding agent:
 6. assign a branch + PR scope;
 7. state "do not merge".
 
+For substantial code or behavior changes, regression fixes, or work where the
+current base is not already known to be green, establish a reproducible
+pre-change baseline using
+[baseline-verification.md](baseline-verification.md).
+
+Small documentation-only changes can use the normal verification in
+`CONTRIBUTING.md` unless CI or a maintainer requests a characterized baseline.
+
+Do not claim a change is verified when upstream or environment failures prevent
+the required checks; document those failures with evidence instead.
+
 After the agent finishes:
 
 1. inspect the diff;

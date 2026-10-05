@@ -19,7 +19,7 @@
 - [ ] Provider/tool output is treated as untrusted (bounded, validated, no shell)
 - [ ] `./scripts/test.sh` passes locally (Rust + Swift + repository-policy)
 - [ ] `cargo fmt --all -- --check` and `cargo clippy` clean
-- [ ] The repository audit passes (`python3 scripts/check_repository.py --all-history`)
+- [ ] The repository audit passes (`python3 scripts/check_repository.py --reachable-history HEAD`)
 
 ## Security / scope notes
 

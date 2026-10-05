@@ -25,6 +25,9 @@ class IdentityPolicyTests(unittest.TestCase):
                 self.assertTrue(identities.identity_allowed(ref, author, committer))
             self.assertFalse(identities.identity_allowed(ref, identities.HUMAN, identities.GITHUB))
             self.assertFalse(identities.identity_allowed(ref, identities.OWNER_GITHUB, identities.HUMAN))
+            self.assertTrue(identities.identity_allowed(
+                ref, ("Other Human", "other@example.test"),
+                ("Other Human", "other@example.test")))
             self.assertFalse(identities.identity_allowed(
                 ref, ("Other Human", "other@example.test"), identities.HUMAN))
 
@@ -60,11 +63,10 @@ class IdentityPolicyTests(unittest.TestCase):
             (identities.DEPENDABOT, ("GitHub", "other@example.test")),
             (identities.DEPENDABOT, identities.HUMAN),
             (("random[bot]", "random@users.noreply.github.com"), identities.GITHUB),
-            (("Other Human", "other@example.test"), identities.GITHUB),
         ):
             self.assertFalse(identities.identity_allowed(ref, author, committer))
 
-    def test_reachable_non_tip_human_identity_is_rejected_without_echo(self):
+    def test_external_human_contributor_history_is_allowed(self):
         with tempfile.TemporaryDirectory(prefix="macsploit-identities-") as directory:
             env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
             def git(*args, **extra):
@@ -73,18 +75,20 @@ class IdentityPolicyTests(unittest.TestCase):
             git("config", "user.name", identities.HUMAN[0])
             git("config", "user.email", identities.HUMAN[1])
             git("commit", "--allow-empty", "-m", "Synthetic root")
-            git("switch", "-c", "dependabot/cargo/test")
-            git("commit", "--allow-empty", "-m", "Synthetic dependency update",
-                GIT_AUTHOR_NAME=identities.DEPENDABOT[0], GIT_AUTHOR_EMAIL=identities.DEPENDABOT[1],
+            git("commit", "--allow-empty", "-m", "External contribution",
+                GIT_AUTHOR_NAME="Other Human", GIT_AUTHOR_EMAIL="other@example.test",
+                GIT_COMMITTER_NAME="Other Human", GIT_COMMITTER_EMAIL="other@example.test")
+            git("commit", "--allow-empty", "-m", "External web contribution",
+                GIT_AUTHOR_NAME="Web Contributor", GIT_AUTHOR_EMAIL="web@example.test",
                 GIT_COMMITTER_NAME=identities.GITHUB[0], GIT_COMMITTER_EMAIL=identities.GITHUB[1])
-            def check():
-                return subprocess.run([os.sys.executable, str(ROOT / "scripts/check_identities.py")],
-                                      cwd=directory, env=env, capture_output=True, text=True)
-            self.assertEqual(check().returncode, 0)
-            git("commit", "--allow-empty", "-m", "Synthetic unapproved human",
-                GIT_AUTHOR_NAME="Other Human", GIT_AUTHOR_EMAIL="other@example.test")
-            git("commit", "--allow-empty", "-m", "Canonical tip cannot hide earlier identity")
-            result = check()
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("BLOCKED identity", result.stderr)
-            self.assertNotIn("other@example.test", result.stdout + result.stderr)
+            result = subprocess.run(
+                [os.sys.executable, str(ROOT / "scripts/check_identities.py")],
+                cwd=directory, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_external_human_cannot_mask_owner_identity_mismatch(self):
+        ref = "refs/heads/main"
+        external = ("Other Human", "other@example.test")
+        self.assertFalse(identities.identity_allowed(ref, external, identities.HUMAN))
+        self.assertFalse(identities.identity_allowed(ref, identities.HUMAN, external))
+        self.assertFalse(identities.identity_allowed(ref, external, identities.OWNER_GITHUB))

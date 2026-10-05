@@ -240,6 +240,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--staged", action="store_true")
     mode.add_argument("--all-history", action="store_true")
+    mode.add_argument("--reachable-history", metavar="REVISION")
     mode.add_argument("--pre-push", nargs=2, metavar=("REMOTE_NAME", "REMOTE_URL"))
     args = parser.parse_args()
     try:
@@ -248,6 +249,8 @@ def main():
             revisions = push_revisions(sys.stdin)
         elif args.staged:
             revisions = [None]
+        elif args.reachable_history:
+            revisions = run("git", "rev-list", args.reachable_history).decode().splitlines()
         else:
             revisions = run("git", "rev-list", "--all").decode().splitlines()
         audit_snapshots(revisions)

@@ -46,9 +46,9 @@ jobs:
           persist-credentials: false
       - name: Policy and routing tests
         run: python3 -m unittest discover -s tests -v
-      - name: Full-history repository and identity audits
+      - name: Reachable-history repository and identity audits
         run: |
-          python3 scripts/check_repository.py --all-history
+          python3 scripts/check_repository.py --reachable-history HEAD
           python3 scripts/check_identities.py
 
   rust:

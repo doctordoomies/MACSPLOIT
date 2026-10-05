@@ -37,7 +37,7 @@ screenshots, and embedded strings before adding any sample.
 1. Review the staged diff and every outgoing commit, including deletions from
    earlier commits that may still be in history. Confirm all fixtures are synthetic.
 2. Run `python3 scripts/check_repository.py --staged` before committing.
-3. Run `python3 scripts/check_repository.py --all-history` before pushing.
+3. Run `python3 scripts/check_repository.py --all-history` before pushing when you want a deliberate repository-wide audit. CI uses `--reachable-history HEAD` so an unrelated in-progress branch cannot make another PR fail.
 4. Verify canonical GitHub destination and intended visibility. The installed pre-push hook
    repeats this online check and audits each outgoing commit snapshot.
 5. Push only after all checks pass. Never use `--no-verify` to bypass a failure.
@@ -87,12 +87,14 @@ Dependabot receives a narrow trusted automation exception:
   `scripts/reviewed-automation-commits.json` with a non-empty review reason.
   Only the pinned SHA plus the exact Dependabot/GitHub identity pair is accepted.
 
-No name-only, email-domain, arbitrary bot, other human, wildcard Dependabot-on-main,
-or other GitHub-committer exception exists. Git metadata alone does not authenticate
-a bot; review the GitHub PR/account/signature context before adding a SHA to the
-manifest. Replacing the SHA requires a new review. Do not rewrite trusted automation
-commits into human identities. Unexpected human metadata blocks launch and requires
-review, not automatic history rewriting.
+No name-only, email-domain, arbitrary-bot, or wildcard Dependabot-on-main
+exception exists. Ordinary external human contributors are allowed, including
+GitHub-web commits where GitHub is the committer. Owner identities remain pinned
+to the exact approved pairs above so legacy or mixed owner metadata cannot be
+smuggled through as an external contributor. Git metadata alone does not
+authenticate a bot; review the GitHub PR/account/signature context before adding
+a SHA to the automation manifest. Replacing the SHA requires a new review. Do not
+rewrite trusted automation or contributor commits into owner identities.
 
 Prefer squash-merging future Dependabot PRs into a canonical owner-authored commit
 so bot commits do not normally enter human-branch history. The reviewed-automation
