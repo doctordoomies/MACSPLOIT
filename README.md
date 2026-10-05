@@ -229,6 +229,10 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 
 ## Quick start
 
+### First launch
+
+On first launch MACSPLOIT opens a short **guided setup** before the workbench: a welcome, a required authorization acknowledgement, an environment/provider check (Homebrew is optional — never required), appearance (System/Light/Dark), an interface-detail preference (Standard/Advanced), a dashboard preset (Minimal/Operator/Research), and an optional offline tutorial. Setup is resumable, remembers completion across restarts, and can be re-run anytime from **Settings → Setup & Environment** without affecting workspaces or evidence. Existing data is never touched.
+
 ### Run a real built-in workflow
 
 1. Create or select a workspace.

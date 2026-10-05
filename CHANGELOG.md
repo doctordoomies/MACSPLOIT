@@ -7,6 +7,24 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **First-run setup & onboarding (Milestone 1.4):** a guided, versioned first-run
+  experience shown before the workbench on a fresh install (or after a setup-version
+  bump) and re-runnable from Settings → Setup & Environment without touching workspaces,
+  evidence, SQLite, or installing anything. Steps: Welcome; a **required** authorization
+  acknowledgement (Continue disabled until accepted; stored locally, explicitly not legal
+  proof — scope and Authorize & Run remain separate, and the Rust core still enforces
+  scope); Environment check (core/macOS/arch/providers/Homebrew — local facts only, no
+  connectivity detection); Provider setup (reuses Provider Center data; Homebrew optional;
+  never installs); Homebrew (optional, links to official instructions, no remote scripts);
+  Appearance (System/Light/Dark, applied app-wide — replaces the forced dark mode);
+  Interface detail (Standard/Advanced — presentation only, wired to the Recon live
+  console default); Dashboard preset (Minimal/Operator/Research over the modular
+  dashboard, Research = reserved non-fabricated area); an optional offline tutorial
+  (Synthetic Recon, no network); and a Ready summary from real state. Setup state is a
+  versioned app-preferences layer (UserDefaults) — not workspace SQLite — so progress
+  resumes after a quit and completion survives restart. Existing users see onboarding once
+  after upgrading with their data intact. The app root now owns a single core boot
+  lifecycle so Setup → Workbench never spawns duplicate observers.
 - **UX stabilization (Milestone 1.3):** a responsive workbench pass with a core-backed
   authorization flow. Recon replaces the cramped segmented picker with adaptive workflow
   cards and a single execution panel (target, authorization state, provider readiness,

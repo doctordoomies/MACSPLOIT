@@ -22,6 +22,10 @@ today, not aspirations. Statuses:
 | Recon authorization flow | BETA | Core-backed `target_scope_status`; "Authorize & Run" adds only the narrowest exact scope entry (no wildcard/CIDR widening), persists it, and re-checks core authorization before launch |
 | Live execution console | BETA | Read-only, collapsible console from durable events/provider runs, incl. a display-only sanitized command (executable basename + argv; no shell, env, or secrets) |
 | Provider setup (Homebrew optional) | BETA | Provider Center + Recon present Homebrew as an optional recommended install method; existing executables on PATH or an explicit override are first-class |
+| First-run setup & onboarding | BETA | Versioned guided setup (welcome, required authorization acknowledgement, environment, providers, optional Homebrew, appearance, interface detail, dashboard preset, optional offline tutorial); resumable and re-runnable from Settings; never installs software or touches workspace data |
+| Appearance preference | BETA | System / Light / Dark, persisted and applied app-wide |
+| Interface detail (Standard/Advanced) | BETA | Presentation-only default; Advanced expands the Recon live console by default. Never changes security capability |
+| Dashboard presets | BETA | Minimal / Operator / Research starting layouts over the modular dashboard (Research shows a reserved, non-fabricated area) |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
 | Evidence | STABLE | Raw provider output preserved, SHA-256 verified |
 | Activity / events | STABLE | Durable, replayable |
