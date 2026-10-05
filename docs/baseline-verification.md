@@ -1,66 +1,106 @@
 # Baseline verification procedure
 
-*This document outlines the verification steps for changes affecting the roadmap or milestone tracker.*
+This procedure strengthens Roadmap v2 verification by making it clear when a
+pre-change baseline is useful and how to document it.
 
-Issue #27 requires that any change to the roadmap or milestone tracker be
-verifiable against a characterized baseline. A fix is **unverifiable by
-definition** if the test suite was already failing before the change was applied.
-
-Every agent PR that touches roadmap/tracker files (or any code) must follow this
-procedure and attach the artifacts to the PR.
+It is intended for substantial code or behavior changes, regression fixes, and
+work where the current baseline is not already known to be green. Small
+documentation-only changes can use the normal verification required by
+`CONTRIBUTING.md` unless CI or a maintainer requests a characterized baseline.
 
 ## Procedure
 
-1. **Clean baseline.** From a fresh checkout of the target branch at the base
-   commit (do not build on top of uncommitted local state):
+1. **Start from a clean, known base.** Use a fresh checkout or a clean worktree
+   at the target branch or base commit. Do not characterize a baseline on top of
+   unrelated uncommitted changes.
 
-      git clone git@github.com:doctordoomies/MACSPLOIT.git
-   cd MACSPLOIT
-   git checkout <base-commit-for-the-issue>
-   git status   # must be clean
-   
-2. **Install dependencies exactly per lockfile.** No floating versions:
+```sh
+git clone https://github.com/doctordoomies/MACSPLOIT.git
+cd MACSPLOIT
+git checkout <base-commit-for-the-change>
+git status   # must be clean
+```
 
-      cargo fetch --locked
-   
+2. **Install dependencies exactly per lockfile.** Do not float dependency
+   versions while establishing the baseline.
+
+```sh
+cargo fetch --locked
+```
+
    Swift and Python checks use the system toolchains documented in
-   `docs/development.md` and `CONTRIBUTING.md`; record `swift --version` and
-   `python3 --version` in the baseline log.
+   `docs/development.md` and `CONTRIBUTING.md`. When a baseline log is required,
+   record the relevant toolchain versions with it.
 
-3. **Capture the true baseline log** (full suite, before any change):
+3. **Capture a pre-change baseline when it is materially useful.**
 
-      ./scripts/test.sh 2>&1 | tee baseline.log
-   
-4. **Triage every baseline failure.** Classify each failure as:
+   A full pre-change baseline is expected for:
+
+   - substantial code or behavior changes;
+   - regression fixes;
+   - changes where the current base is not already known to be green;
+   - work where a maintainer specifically requests baseline characterization.
+
+```sh
+./scripts/test.sh 2>&1 | tee baseline.log
+```
+
+   For a small documentation-only change on a known-green base, a separate
+   pre-change full-suite run is optional. The PR should still complete the normal
+   required verification before merge.
+
+4. **Triage baseline failures.** Classify each failure as:
+
    - **environment issue** — fix or pin the environment cause and re-run;
-   - **flaky test** — re-run to confirm, note the flake;
-   - **genuine pre-existing bug** — file or link an issue; do not silently fix it
-     inside an unrelated PR.
+   - **flaky test** — re-run to confirm and document the flake;
+   - **genuine pre-existing bug** — file or link an issue and do not silently
+     include the fix in unrelated work.
 
-   The baseline must be green, or the exact failing set must be documented in the
-   PR with the triage classification.
+   If the baseline is not green, document the exact failing set and why it is
+   pre-existing before claiming the new change is verified.
 
 5. **Apply the change in isolation** on a dedicated branch, keeping the diff
-   minimal and scoped to the assigned issue.
+   minimal and scoped to the assigned issue or task.
 
-6. **Re-run the full suite** and capture the post-change log:
+6. **Run post-change verification.**
 
-      ./scripts/test.sh 2>&1 | tee post-change.log
-   
-7. **Produce a before/after diff summary** showing that no baseline-passing test
-   regressed and that any newly passing test is attributable to the change.
+   For substantial code or behavior changes, run the full suite and capture the
+   result when useful:
 
-## PR artifacts
+```sh
+./scripts/test.sh 2>&1 | tee post-change.log
+```
 
-Attach to the PR description:
+   For small documentation-only changes, follow the normal checks in
+   `CONTRIBUTING.md` and rely on CI unless a maintainer requests additional
+   verification.
 
-- `baseline.log` (pre-change full-suite run);
-- `post-change.log` (post-change full-suite run);
-- the test diff summary;
-- the exact reproduction commands (the commands above plus toolchain versions).
+7. **Summarize the result.**
+
+   When a pre-change baseline was captured, state what changed between the
+   baseline and post-change verification and confirm that no previously passing
+   check regressed.
+
+## PR evidence
+
+When this baseline procedure is used, include enough evidence in the PR for a
+maintainer to understand and reproduce the result.
+
+Useful evidence may include:
+
+- baseline and post-change logs;
+- CI links;
+- a concise before/after summary;
+- exact reproduction commands;
+- relevant toolchain versions.
+
+Full log attachments are not required for trivial changes unless specifically
+requested.
 
 ## Escalation
 
-If the suite cannot be made green due to upstream breakage, do **not** claim the
-fix is verified. Document the exact failing set with evidence in the PR and mark
-the job **BLOCKED_UPSTREAM**.
+If verification cannot be completed because of upstream or environment
+breakage, do **not** claim the change is fully verified.
+
+Document the exact failing set with evidence and mark the work
+**BLOCKED_UPSTREAM** when appropriate.
