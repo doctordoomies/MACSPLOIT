@@ -39,6 +39,34 @@ public enum DashboardPreset: String, CaseIterable, Codable, Sendable, Identifiab
     }
 }
 
+/// How the user wants to approach external-provider setup. This is a presentation choice
+/// only — MACSPLOIT never installs providers under any option.
+public enum ProviderSetupChoice: String, CaseIterable, Codable, Sendable, Identifiable {
+    case recommended, customize, skip
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .recommended: return "Recommended"
+        case .customize: return "Customize"
+        case .skip: return "Skip for now"
+        }
+    }
+    public var summary: String {
+        switch self {
+        case .recommended: return "Review the normal recommended external provider set."
+        case .customize: return "Choose which providers' setup guidance to view."
+        case .skip: return "Continue without external providers for now."
+        }
+    }
+}
+
+/// The normal recommended external-provider set surfaced during setup. These are
+/// provider ids from the registry; MACSPLOIT discovers existing executables and never
+/// installs anything.
+public enum RecommendedProviders {
+    public static let ids = ["subfinder", "nmap", "httpx", "katana", "ffuf"]
+}
+
 /// Ordered first-run steps. `authorization` is required and cannot be silently skipped.
 public enum SetupStep: String, CaseIterable, Codable, Sendable, Identifiable {
     case welcome, authorization, environment, providers, homebrew, appearance, interfaceDetail, dashboard, tutorial, ready
@@ -234,6 +262,13 @@ public final class SetupModel: ObservableObject {
 
     /// Live appearance preference for the root scene; also persists eagerly so a change
     /// from Settings survives even without stepping through the flow.
+    /// Persist the required authorization acknowledgement the moment it changes, so a
+    /// quit before "Continue" does not revert it on relaunch. Acknowledgement semantics
+    /// are unchanged: it authorizes nothing; scope stays authoritative in the core.
+    public func setAuthorizationAcknowledged(_ value: Bool) {
+        authorizationAcknowledged = value
+        store.authorizationAcknowledged = value
+    }
     public func setAppearance(_ value: AppearancePreference) { appearance = value; store.appearance = value }
     public func setInterfaceDetail(_ value: InterfaceDetail) { interfaceDetail = value; store.interfaceDetail = value }
     public func setDashboardPreset(_ value: DashboardPreset) { dashboardPreset = value; store.dashboardPreset = value }

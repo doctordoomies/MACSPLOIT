@@ -154,6 +154,26 @@ public final class WorkspaceModel: ObservableObject {
         catch { providerRefreshError = "Could not refresh providers: \(error.localizedDescription)" }
     }
 
+    /// The dedicated, clearly-labelled workspace used by the offline tutorial.
+    public static let tutorialWorkspaceName = "MACSPLOIT Tutorial (demo)"
+
+    /// Prepare safe tutorial demo state through the normal path: reuse the labelled
+    /// tutorial workspace if it already exists (never deleting or overwriting any other
+    /// workspace), otherwise create it with the offline demo scope, then ensure the
+    /// invented `example.test` target exists. Launches nothing — the caller runs Synthetic
+    /// Recon only on an explicit user action.
+    public func prepareTutorialDemo() async {
+        if let existing = workspaces.first(where: { $0.name == Self.tutorialWorkspaceName }) {
+            await selectWorkspace(existing.id)
+        } else {
+            _ = await createWorkspace(name: Self.tutorialWorkspaceName, scopeText: "example.test\n*.example.test\n192.0.2.0/24")
+        }
+        _ = await addTarget(value: "example.test")
+    }
+
+    /// Whether the current workspace is the tutorial demo workspace.
+    public var isTutorialWorkspace: Bool { snapshot?.workspace.name == Self.tutorialWorkspaceName }
+
     public func runRecon(kind: String = "synthetic", options: JSONValue = .object([:])) async {
         guard let id = selectedWorkspaceId, let target = selectedTargetId else { return }
         isBusy = true; defer { isBusy = false }
