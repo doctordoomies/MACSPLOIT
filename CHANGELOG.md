@@ -7,6 +7,57 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **DNS Recon for IP and URL targets (M1.4 follow-up):** DNS Recon now accepts Domain,
+  Hostname, IP, and HTTP(S) URL targets. Domains/hostnames (and URL hostnames) resolve
+  forward (A/AAAA); an IP target, or a URL whose host is an IP literal, does a reverse
+  (PTR) lookup — PTR names become `Hostname` assets linked from the IP by a new
+  `ptr_record` relationship (a PTR observation only, not forward-confirmed). URL hosts are
+  extracted with structured parsing in the core; scope stays authoritative (the owner case
+  `http://127.0.0.1/` runs once the IP is in scope). Native resolver gains bounded reverse
+  lookup (migration 003).
+- **Recon results in the live console (M1.4 follow-up):** a durable, bounded, sanitized
+  `ProviderResults` event (count, by-type counts, and a capped preview of
+  source→value/relationship) now drives concise result lines in the live console, with a
+  "+N more — View Assets" hint and a completion summary. URL values are query-redacted;
+  raw output stays only in evidence. Assets/Evidence/Activity remain authoritative.
+- **Provider installation (M1.4 follow-up):** Provider Center can now actually install an
+  external provider on explicit user action, with no shell and nothing silent. Installs are
+  typed (provider id + method, never an arbitrary command); only the reviewed set
+  (subfinder, httpx, katana, ffuf, nmap) is installable, and they run asynchronously with
+  live status/cancellation.
+  - **Install with Homebrew:** a shell-free `brew install <reviewed-formula>`
+    (executable + argv, no `sudo`, never installs Homebrew itself).
+  - **Install without Homebrew (managed direct download):** now implemented for
+    subfinder/httpx/katana/ffuf as a native Rust pipeline. The exact artifact for the host
+    architecture (arm64/x86_64) is chosen from a hardcoded, pinned manifest
+    (version + HTTPS URL + SHA-256 + archive format + member); the download is HTTPS-only to
+    reviewed GitHub release-asset hosts with capped host-checked redirects and a streamed
+    size bound; the SHA-256 is verified before extraction; only the single reviewed
+    top-level executable member is extracted (traversal/symlink/hardlink/duplicate/zip-bomb/
+    malformed archives fail closed); and it is installed by an atomic `rename` into
+    `~/Library/Application Support/MACSPLOIT/Providers/`, leaving any previous good binary
+    intact on failure. Nmap has no managed download (privileged `.dmg`) and routes to
+    Homebrew/official. No `curl`/`unzip`/`tar`/`sh`, no `curl | sh`, no remote scripts, no
+    background updates — a new version is a reviewed manifest change. The pipeline is driven
+    through an injectable transport so it is fully tested offline.
+- **First-run setup & onboarding (Milestone 1.4):** a guided, versioned first-run
+  experience shown before the workbench on a fresh install (or after a setup-version
+  bump) and re-runnable from Settings → Setup & Environment without touching workspaces,
+  evidence, SQLite, or installing anything. Steps: Welcome; a **required** authorization
+  acknowledgement (Continue disabled until accepted; stored locally, explicitly not legal
+  proof — scope and Authorize & Run remain separate, and the Rust core still enforces
+  scope); Environment check (core/macOS/arch/providers/Homebrew — local facts only, no
+  connectivity detection); Provider setup (reuses Provider Center data; Homebrew optional;
+  never installs); Homebrew (optional, links to official instructions, no remote scripts);
+  Appearance (System/Light/Dark, applied app-wide — replaces the forced dark mode);
+  Interface detail (Standard/Advanced — presentation only, wired to the Recon live
+  console default); Dashboard preset (Minimal/Operator/Research over the modular
+  dashboard, Research = reserved non-fabricated area); an optional offline tutorial
+  (Synthetic Recon, no network); and a Ready summary from real state. Setup state is a
+  versioned app-preferences layer (UserDefaults) — not workspace SQLite — so progress
+  resumes after a quit and completion survives restart. Existing users see onboarding once
+  after upgrading with their data intact. The app root now owns a single core boot
+  lifecycle so Setup → Workbench never spawns duplicate observers.
 - **UX stabilization (Milestone 1.3):** a responsive workbench pass with a core-backed
   authorization flow. Recon replaces the cramped segmented picker with adaptive workflow
   cards and a single execution panel (target, authorization state, provider readiness,

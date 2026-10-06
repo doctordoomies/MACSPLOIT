@@ -24,6 +24,10 @@ pub enum AssetType {
 pub enum RelationshipType {
     HasSubdomain,
     ResolvesTo,
+    /// A PTR (reverse-DNS) record: the IP has a PTR pointing at this name. This is a
+    /// PTR observation only — it does NOT assert the name's forward records point back
+    /// to the IP (that would require a separate forward-confirmation lookup).
+    PtrRecord,
     Exposes,
     Serves,
     HasEndpoint,

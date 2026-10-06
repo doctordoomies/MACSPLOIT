@@ -22,12 +22,18 @@ today, not aspirations. Statuses:
 | Recon authorization flow | BETA | Core-backed `target_scope_status`; "Authorize & Run" adds only the narrowest exact scope entry (no wildcard/CIDR widening), persists it, and re-checks core authorization before launch |
 | Live execution console | BETA | Read-only, collapsible console from durable events/provider runs, incl. a display-only sanitized command (executable basename + argv; no shell, env, or secrets) |
 | Provider setup (Homebrew optional) | BETA | Provider Center + Recon present Homebrew as an optional recommended install method; existing executables on PATH or an explicit override are first-class |
+| First-run setup & onboarding | BETA | Versioned guided setup (welcome, required authorization acknowledgement, environment, providers, optional Homebrew, appearance, interface detail, dashboard preset, optional offline tutorial); resumable and re-runnable from Settings; never installs software or touches workspace data |
+| Appearance preference | BETA | System / Light / Dark, persisted and applied app-wide |
+| Interface detail (Standard/Advanced) | BETA | Presentation-only default; Advanced expands the Recon live console by default. Never changes security capability |
+| Dashboard presets | BETA | Minimal / Operator / Research starting layouts over the modular dashboard (Research shows a reserved, non-fabricated area) |
 | Asset graph / data model | STABLE | Assets, relationships, observations, provenance |
 | Evidence | STABLE | Raw provider output preserved, SHA-256 verified |
 | Activity / events | STABLE | Durable, replayable |
 | Persistence | STABLE | Survives restart; migrations versioned |
 | Synthetic Recon (offline demo) | STABLE | Full pipeline with invented data, no network |
-| DNS Recon | BETA | Built-in A/AAAA workflow for an explicitly in-scope Domain/Hostname; no external CLI |
+| DNS Recon | BETA | Built-in forward (A/AAAA) for Domain/Hostname/URL-host and reverse (PTR) for IP/URL-IP targets; no external CLI |
+| Provider installation | BETA | Explicit, shell-free install of the reviewed provider set (async, live status): Homebrew, or a verified app-managed direct download (pinned manifest, HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf; Nmap is Homebrew/official only; existing-binary/PATH first-class; no silent installs, no background updates |
+| Recon result summaries | BETA | Bounded, sanitized `ProviderResults` events render concise discoveries in the live console (Assets/Evidence remain authoritative) |
 
 ## Providers (recon pipeline)
 
@@ -75,7 +81,7 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, and copy-only setup help; no installer |
+| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, copy-only setup help, and explicit per-provider install (Homebrew, or verified managed download for subfinder/httpx/katana/ffuf) — see the Provider installation row |
 | Provider/plugin SDK | EXPERIMENTAL | Internal trait documented; no stable public ABI pre-1.0 |
 | Reporting exports | PLANNED | |
 | Workspace delete/export | PLANNED | Data location documented today |

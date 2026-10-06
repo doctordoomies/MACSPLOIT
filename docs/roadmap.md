@@ -269,10 +269,9 @@ scope range cannot accidentally become a mass-scan instruction.
 
 ## 1.3 UX stabilization
 
-**Issue #36 — implemented in an open PR (MERGE GATE; not yet merged).** Milestone 1
-remains ACTIVE; the real-target acceptance matrix (1.5) is still outstanding. Owner
-testing after Direct IP Recon exposed usability gaps that must be fixed before the
-acceptance matrix continues.
+**Issue #36 — DONE via PR #39.** Owner-accepted and merged. Milestone 1 remains ACTIVE;
+the real-target acceptance matrix (1.5) is still outstanding. Owner testing after Direct
+IP Recon exposed usability gaps that were fixed in this pass.
 
 Required outcomes:
 
@@ -296,8 +295,9 @@ or begin Milestone 2 work as part of this issue.
 
 ## 1.4 First-run setup and onboarding
 
-**Issue #38 — NEXT after Issue #36.** A fresh MACSPLOIT install should guide the user
-through environment readiness before exposing the full workbench.
+**Issue #38 — ACTIVE (implemented in an open PR, MERGE GATE; not yet merged).** A fresh
+MACSPLOIT install should guide the user through environment readiness before exposing the
+full workbench.
 
 Required outcomes:
 
@@ -316,9 +316,14 @@ Required outcomes:
 - setup is resumable, re-runnable from Settings / Setup & Environment, and does not
   require deleting workspace data or preferences.
 
-The broader managed-provider installation system remains a later provider-platform
-decision. Research/news backend implementation is not required merely because setup can
-choose a Research-oriented dashboard preset.
+Explicit, typed installation of the reviewed provider set is implemented in the M1.4
+follow-up: Homebrew for all, plus a verified app-managed direct download (pinned manifest,
+HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf;
+Nmap is Homebrew/official only. The broader managed-provider *platform* (arbitrary
+third-party providers, a marketplace, or any automatic/background updates) remains a later
+provider-platform decision and is intentionally out of scope. Research/news backend
+implementation is not required merely because setup can choose a Research-oriented
+dashboard preset.
 
 ## 1.5 Real-target acceptance matrix
 
@@ -721,10 +726,13 @@ Surface provider licensing, version compatibility, and external dependencies.
 
 ## 8.4 Managed installation — optional future subphase
 
-Only after a threat-model review, consider explicit user-approved install/update
-support.
+Explicit, user-approved installation of the **reviewed provider set** is now implemented
+(Homebrew, and a verified app-managed direct download for subfinder/httpx/katana/ffuf; see
+`docs/providers.md`). What remains future here is any broader managed-installation *platform*
+— arbitrary third-party providers, and any automatic/background update support — each of
+which needs its own threat-model review first.
 
-No silent installation. No arbitrary remote scripts.
+No silent installation. No arbitrary remote scripts. No background or automatic updates.
 
 ## 8.5 Core 1.0 release gate
 
@@ -1026,8 +1034,8 @@ After the agent finishes:
 | PR #26 / Issue #24 — Tool Manager | Milestone 0 — DONE |
 | Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
 | Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
-| Issue #36 — UX stabilization | Milestone 1.3 — ACTIVE |
-| Issue #38 — first-run setup and onboarding | Milestone 1.4 — NEXT after Issue #36 |
+| Issue #36 — UX stabilization | Milestone 1.3 — DONE via PR #39 |
+| Issue #38 — first-run setup and onboarding | Milestone 1.4 — ACTIVE (MERGE GATE) |
 | Real-target acceptance matrix | Milestone 1.5 — after Issues #36 and #38 |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
@@ -1087,14 +1095,13 @@ formal release gate around Core 1.0.
 
 Do **not** start Historical URL Intelligence yet.
 
-M0 is complete; Milestone 1.1 is merged via PR #31 and Milestone 1.2 Direct IP Recon is
-merged via PR #35 with green post-merge CI and Advanced CodeQL. The next execution sequence is:
+M0 is complete; Milestones 1.1 (PR #31), 1.2 (PR #35), and 1.3 UX Stabilization (PR #39)
+are merged with green post-merge CI and Advanced CodeQL. The next execution sequence is:
 
-1. complete Issue #36 — Milestone 1.3 UX Stabilization;
-2. complete Issue #38 — Milestone 1.4 First-run Setup & Onboarding;
-3. complete the Milestone 1.5 real-target acceptance matrix;
-4. owner full-product walkthrough and fix any acceptance bugs;
-5. reach the Milestone 1 exit condition;
-6. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
+1. complete Issue #38 — Milestone 1.4 First-run Setup & Onboarding (in progress);
+2. complete the Milestone 1.5 real-target acceptance matrix;
+3. owner full-product walkthrough and fix any acceptance bugs;
+4. reach the Milestone 1 exit condition;
+5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
 
 That sequence remains authoritative until this roadmap is deliberately changed.

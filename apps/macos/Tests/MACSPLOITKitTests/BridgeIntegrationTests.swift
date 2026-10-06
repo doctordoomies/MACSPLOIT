@@ -205,6 +205,45 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_DOWNLOAD_FAKE"] != nil))
+    func testProviderInstallManagedThroughBridgeOffline() async throws {
+        // Exercises the async start_install/install_status path over the pipe with the
+        // real core and the offline download transport (MACSPLOIT_DOWNLOAD_FAKE):
+        //  - Nmap has no managed artifact → UNSUPPORTED (routes to the official page).
+        //  - ffuf is supported but the offline transport cannot serve it → FAILED, and
+        //    crucially no binary is installed and no network is touched.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-install-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        func runInstall(_ provider: String) async throws -> InstallOutcome? {
+            try await client.startInstall(provider: provider, method: "managed_download")
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                if let outcome = try await client.installStatus().last, outcome.providerId == provider {
+                    return outcome
+                }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            return nil
+        }
+
+        let nmap = try await runInstall("nmap")
+        #expect(nmap?.status == "UNSUPPORTED")
+        #expect(nmap?.detail == "https://nmap.org/download.html")
+
+        let ffuf = try await runInstall("ffuf")
+        #expect(ffuf?.status == "FAILED")
+        // Fail closed: nothing was installed into the managed providers directory.
+        let installed = directory.appendingPathComponent("Providers/ffuf")
+        #expect(!FileManager.default.fileExists(atPath: installed.path))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
     func testIpReconRunsNmapAndHttpxThroughBridgeOffline() async throws {

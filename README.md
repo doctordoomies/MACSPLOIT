@@ -52,7 +52,7 @@ flowchart LR
     D["Domain / Hostname"] -->|Native DNS| I[IPAddress]
 ```
 
-The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT.
+The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT. DNS Recon also accepts an **IP or an HTTP(S) URL**: a URL's host is used (forward lookup), while an IP target — or a URL whose host is an IP literal, e.g. `http://127.0.0.1/` — gets a **reverse (PTR)** lookup, recorded as `ptr_record` relationships (a PTR observation, not a forward-confirmed mapping). The target must still be in workspace scope.
 
 ### Domain Recon
 
@@ -229,6 +229,10 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 
 ## Quick start
 
+### First launch
+
+On first launch MACSPLOIT opens a short **guided setup** before the workbench: a welcome, a required authorization acknowledgement, an environment/provider check (Homebrew is optional — never required), appearance (System/Light/Dark), an interface-detail preference (Standard/Advanced), a dashboard preset (Minimal/Operator/Research), and an optional offline tutorial. Setup is resumable, remembers completion across restarts, and can be re-run anytime from **Settings → Setup & Environment** without affecting workspaces or evidence. Existing data is never touched.
+
 ### Run a real built-in workflow
 
 1. Create or select a workspace.
@@ -237,7 +241,7 @@ MACSPLOIT is not an automatic exploitation framework, a replacement for every sp
 4. Open **Recon → DNS Recon** and run it. No external CLI is required.
 5. For **Web Analysis**, add a full HTTP(S) URL target (the UI can create an HTTPS URL target from a selected domain) and run the built-in analyzer.
 
-Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and Recon routes you there when something is missing.
+Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and can **install a missing provider** on an explicit click — either with **Homebrew** (a shell-free `brew install`) or, for subfinder/httpx/katana/ffuf, **without Homebrew** via a verified app-managed direct download (a pinned, SHA-256-checked official release archive, extracted safely and installed atomically into MACSPLOIT's own providers directory). Nmap is Homebrew/official only. Every install is explicit and runs asynchronously with live status; MACSPLOIT never installs silently, never uses sudo, never installs Homebrew itself, never runs `curl | sh` or remote scripts, and never updates tools in the background. Recon routes you to Provider Center when something is missing.
 
 If you pick an authorized target that is not yet in workspace scope, Recon offers **Authorize & Run**: it adds only the narrowest exact scope entry (never a wildcard, CIDR, or sibling host), the Rust core re-checks authorization, and only then does the workflow start. Every live Run keeps a visible reminder to assess only systems you own or are explicitly permitted to test.
 

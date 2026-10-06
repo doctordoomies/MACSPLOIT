@@ -208,11 +208,14 @@ impl Store {
             ChainKind::DnsRecon => {
                 if !matches!(
                     target.target_type,
-                    TargetType::Domain | TargetType::Hostname
+                    TargetType::Domain
+                        | TargetType::Hostname
+                        | TargetType::IPAddress
+                        | TargetType::URL
                 ) {
                     return Err(CoreError::new(
                         "InvalidTarget",
-                        "DNS Recon requires a domain or hostname target.",
+                        "DNS Recon requires a domain, hostname, IP, or HTTP(S) URL target.",
                     ));
                 }
                 (
@@ -672,12 +675,27 @@ struct ActiveRun {
     chain: Id,
     cancelled: Arc<AtomicBool>,
 }
+/// In-memory provider-install state. Installation is global (not workspace data), so it
+/// lives here rather than in a workspace database — it is transient status, not evidence.
+#[derive(Default)]
+struct InstallCoordinator {
+    running: Option<RunningInstall>,
+    last: Option<crate::install::InstallOutcome>,
+}
+struct RunningInstall {
+    provider_id: String,
+    method: crate::install::InstallMethod,
+    cancelled: Arc<AtomicBool>,
+}
+
 #[derive(Clone)]
 pub struct Engine {
     pub store: Store,
     registry: ProviderRegistry,
     tools: crate::process::ToolConfig,
+    downloader: Arc<dyn crate::install::download::DownloadTransport>,
     active: Arc<Mutex<Option<ActiveRun>>>,
+    install: Arc<Mutex<InstallCoordinator>>,
     _lock: Arc<File>,
     stage_delay: Duration,
 }
@@ -725,6 +743,43 @@ impl Engine {
         resolver: Arc<dyn crate::dns::DnsResolver>,
         web: Arc<dyn crate::web::WebTransport>,
     ) -> Result<Self> {
+        Self::open_full(
+            store,
+            stage_delay,
+            tools,
+            resolver,
+            web,
+            crate::install::download::transport_from_env(),
+        )
+    }
+
+    /// Open an engine with an explicit download transport as well. Managed-install
+    /// tests inject a static, offline transport here so no network is ever reached.
+    pub fn open_with_download(
+        store: Store,
+        stage_delay: Duration,
+        tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
+        web: Arc<dyn crate::web::WebTransport>,
+        downloader: Arc<dyn crate::install::download::DownloadTransport>,
+    ) -> Result<Self> {
+        Self::open_full(store, stage_delay, tools, resolver, web, downloader)
+    }
+
+    fn open_full(
+        store: Store,
+        stage_delay: Duration,
+        mut tools: crate::process::ToolConfig,
+        resolver: Arc<dyn crate::dns::DnsResolver>,
+        web: Arc<dyn crate::web::WebTransport>,
+        downloader: Arc<dyn crate::install::download::DownloadTransport>,
+    ) -> Result<Self> {
+        // Managed provider binaries live under the data directory unless an explicit
+        // directory was configured (e.g. MACSPLOIT_TOOLS_DIR). This is the same path
+        // `locate` searches, so a managed install is discovered immediately after.
+        if tools.managed_dir.is_none() {
+            tools.managed_dir = Some(store.root.join("Providers"));
+        }
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -742,7 +797,9 @@ impl Engine {
             store,
             registry: ProviderRegistry::with_transports(resolver, web),
             tools,
+            downloader,
             active: Arc::new(Mutex::new(None)),
+            install: Arc::new(Mutex::new(InstallCoordinator::default())),
             _lock: Arc::new(lock),
             stage_delay,
         };
@@ -858,6 +915,109 @@ impl Engine {
 
     pub fn idle(&self) -> bool {
         self.active.lock().map(|a| a.is_none()).unwrap_or(false)
+    }
+
+    /// Start a typed provider installation on a worker thread (installs can run for
+    /// minutes — longer than the client's per-request timeout — so they are async and
+    /// observed via `install_status`). Returns an acknowledgement immediately. Only the
+    /// reviewed provider set can be installed; execution is shell-free.
+    pub fn start_install(
+        &self,
+        provider_id: &str,
+        method: crate::install::InstallMethod,
+    ) -> Result<serde_json::Value> {
+        // Validate the provider up front so an unknown id is rejected synchronously.
+        if crate::install::options(provider_id).is_none() {
+            return Err(CoreError::new(
+                "ProviderUnsupported",
+                "This provider cannot be installed.",
+            ));
+        }
+        let mut install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        if install.running.is_some() {
+            return Err(CoreError::new(
+                "CoreBusy",
+                "An installation is already running. Wait for it to finish or cancel it.",
+            ));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        install.running = Some(RunningInstall {
+            provider_id: provider_id.to_owned(),
+            method,
+            cancelled: cancelled.clone(),
+        });
+        drop(install);
+
+        let engine = self.clone();
+        let provider = provider_id.to_owned();
+        thread::spawn(move || {
+            // Installs can legitimately take minutes; cap generously.
+            let deadline = Instant::now() + Duration::from_secs(600);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::install::install(
+                    &engine.tools,
+                    engine.downloader.as_ref(),
+                    &provider,
+                    method,
+                    &cancelled,
+                    deadline,
+                )
+            }));
+            let outcome = match outcome {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(error)) => crate::install::InstallOutcome {
+                    provider_id: provider.clone(),
+                    method,
+                    status: crate::install::InstallStatus::Failed,
+                    message: error.message,
+                    detail: None,
+                },
+                Err(_) => crate::install::InstallOutcome {
+                    provider_id: provider.clone(),
+                    method,
+                    status: crate::install::InstallStatus::Failed,
+                    message: "The installation failed unexpectedly.".into(),
+                    detail: None,
+                },
+            };
+            if let Ok(mut install) = engine.install.lock() {
+                install.running = None;
+                install.last = Some(outcome);
+            }
+        });
+        Ok(json!({"started": true, "provider_id": provider_id}))
+    }
+
+    /// Request cancellation of a running install (best effort; signals the process group).
+    pub fn cancel_install(&self) -> Result<()> {
+        let install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        if let Some(run) = install.running.as_ref() {
+            run.cancelled.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// Current install status: whether one is running (provider/method) and the last
+    /// outcome. Read-only; performs no installation.
+    pub fn install_status(&self) -> Result<serde_json::Value> {
+        let install = self
+            .install
+            .lock()
+            .map_err(|_| CoreError::new("InternalError", "Install coordinator unavailable."))?;
+        let running = install
+            .running
+            .as_ref()
+            .map(|r| json!({"provider_id": r.provider_id, "method": r.method}));
+        Ok(json!({
+            "running": running,
+            "last": install.last,
+        }))
     }
 
     pub fn shutdown(&self) {
@@ -1141,6 +1301,15 @@ impl Engine {
             "UPDATE provider_runs SET end_time=?1,status='COMPLETED',exit_status=0 WHERE id=?2",
             params![crate::now(), run.to_string()],
         )?;
+        // Bounded, sanitized result summary for the live console. Values that look like
+        // URLs are redacted (query stripped) via the display sanitizer; raw stdout stays
+        // only in the evidence envelope. Preview is capped; by_type carries full counts.
+        emit(
+            &tx,
+            workspace,
+            EventType::ProviderResults,
+            provider_results_payload(run, &metadata.name, &discoveries),
+        )?;
         emit(
             &tx,
             workspace,
@@ -1150,4 +1319,55 @@ impl Engine {
         tx.commit()?;
         Ok(())
     }
+}
+
+const RESULTS_PREVIEW_MAX: usize = 8;
+
+/// Build the bounded, presentation-safe `ProviderResults` payload from parsed discoveries.
+fn provider_results_payload(
+    run: Id,
+    provider: &str,
+    discoveries: &[crate::assets::Discovery],
+) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
+    for d in discoveries {
+        *by_type.entry(encoded(&d.asset_type)).or_insert(0) += 1;
+    }
+    let preview: Vec<serde_json::Value> = discoveries
+        .iter()
+        .take(RESULTS_PREVIEW_MAX)
+        .map(|d| {
+            let value = crate::sanitize::sanitize_display_arg(&clip(&d.value, 256));
+            let source = d
+                .source
+                .as_ref()
+                .map(|s| crate::sanitize::sanitize_display_arg(&clip(s, 256)));
+            json!({
+                "type": encoded(&d.asset_type),
+                "value": value,
+                "source": source,
+                "relationship": d.relationship.as_ref().map(encoded),
+            })
+        })
+        .collect();
+    json!({
+        "provider_run_id": run,
+        "provider": provider,
+        "count": discoveries.len(),
+        "by_type": by_type,
+        "preview": preview,
+    })
+}
+
+/// Clip a string to a maximum number of bytes on a char boundary (display safety).
+fn clip(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        return value.to_owned();
+    }
+    let mut end = max;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }

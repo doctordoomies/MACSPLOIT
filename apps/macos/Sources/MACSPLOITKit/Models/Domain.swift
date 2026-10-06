@@ -166,6 +166,18 @@ public struct AuthorizeResult: Codable, Sendable, Equatable {
     public let authorized: Bool
     public let addedEntry: String?
 }
+/// Outcome of a provider installation attempt.
+public struct InstallOutcome: Codable, Sendable, Equatable {
+    public let providerId: String, method: String, status: String, message: String
+    public let detail: String?
+}
+/// Current provider-install state (running + last outcome). Install is global, not
+/// workspace data.
+public struct InstallState: Codable, Sendable, Equatable {
+    public struct Running: Codable, Sendable, Equatable { public let providerId: String, method: String }
+    public let running: Running?
+    public let last: InstallOutcome?
+}
 public struct ProviderInstallation: Codable, Sendable, Equatable {
     public let state: String
     public let path: String?
@@ -185,12 +197,25 @@ public struct ProviderInstallation: Codable, Sendable, Equatable {
         }
     }
 }
+/// Reviewed install-method availability for a provider, from the core matrix. The
+/// UI uses this only to decide which install buttons to show; the Rust core always
+/// chooses the formula/URL/artifact and performs (and enforces) the install.
+public struct ProviderInstallInfo: Codable, Sendable, Equatable {
+    public let homebrew: Bool
+    public let managedDownload: Bool
+    public let officialInstallerUrl: String?
+}
 public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
     public let id: String, name: String, description: String, version: String
     public let capabilities: [String], supportedTargetTypes: [String], riskClass: String
     public let offline: Bool
     public let installation: ProviderInstallation
     public let setup: ProviderSetup?
+    public let install: ProviderInstallInfo?
+    /// Whether a verified app-managed direct download is offered (false for Nmap).
+    public var managedDownloadSupported: Bool { install?.managedDownload ?? false }
+    /// Whether a Homebrew install method is offered.
+    public var homebrewSupported: Bool { install?.homebrew ?? false }
 }
 public struct CoreHello: Codable, Sendable {
     public let coreVersion: String, protocolVersion: Int, offlineOnly: Bool

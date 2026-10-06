@@ -4,6 +4,7 @@
 <dict>
     <key>CFBundleExecutable</key><string>MACSPLOIT</string>
     <key>CFBundleIdentifier</key><string>com.doctordoomies.MACSPLOIT</string>
+    <key>CFBundleIconFile</key><string>MACSPLOIT.icns</string>
     <key>CFBundleName</key><string>MACSPLOIT</string>
     <key>CFBundleDisplayName</key><string>MACSPLOIT</string>
     <key>CFBundlePackageType</key><string>APPL</string>

@@ -43,7 +43,7 @@ enum ReconMode: String, CaseIterable, Identifiable {
     var purpose: String {
         switch self {
         case .synthetic: return "Synthetic demo using invented discoveries. Performs no network activity."
-        case .dns: return "Built-in A/AAAA resolution for a domain or hostname."
+        case .dns: return "Forward A/AAAA for a domain, hostname, or URL host; reverse PTR for an IP."
         case .domain: return "Subdomains → DNS → ports/services → HTTP probing."
         case .ip: return "Ports/services → HTTP probing for one selected IP. No DNS required."
         case .web: return "Bounded same-host crawling from an in-scope URL."
@@ -67,7 +67,7 @@ enum ReconMode: String, CaseIterable, Identifiable {
     var targetRequirement: String {
         switch self {
         case .synthetic: return "the demo domain example.test"
-        case .dns: return "a Domain or Hostname target"
+        case .dns: return "a Domain, Hostname, IP, or HTTP(S) URL target"
         case .domain: return "a Domain target"
         case .ip: return "an IPAddress target"
         case .web, .webAnalysis, .contentDiscovery: return "an HTTP(S) URL target"
@@ -77,9 +77,11 @@ enum ReconMode: String, CaseIterable, Identifiable {
 
 struct ReconView: View {
     @ObservedObject var model: WorkspaceModel
+    @Environment(\.interfaceDetail) private var interfaceDetail
     @State private var mode: ReconMode = .synthetic
     @State private var showAuthorizeDialog = false
-    @State private var consoleExpanded = true
+    @State private var consoleExpanded = false
+    @State private var consoleDefaultApplied = false
 
     // MARK: Selection & readiness
 
@@ -115,7 +117,7 @@ struct ReconView: View {
         guard let target = selectedTarget else { return false }
         switch mode {
         case .synthetic: return target.targetType == "Domain" && target.normalizedValue == "example.test"
-        case .dns: return ["Domain", "Hostname"].contains(target.targetType)
+        case .dns: return ["Domain", "Hostname", "IPAddress", "URL"].contains(target.targetType)
         case .domain: return target.targetType == "Domain"
         case .ip: return target.targetType == "IPAddress"
         case .web, .webAnalysis, .contentDiscovery: return target.targetType == "URL"
@@ -176,6 +178,14 @@ struct ReconView: View {
             }
         }
         .sheet(isPresented: $showAuthorizeDialog) { authorizeDialog }
+        .onAppear {
+            // Advanced expands the live console by default; applied once so the user's
+            // later manual toggle is respected.
+            if !consoleDefaultApplied {
+                consoleExpanded = interfaceDetail.expandsDetailByDefault
+                consoleDefaultApplied = true
+            }
+        }
         .task(id: model.selectedTargetId) { await model.refreshScopeStatus() }
         .task(id: model.snapshot?.workspace.scope ?? []) { await model.refreshScopeStatus() }
     }
@@ -365,7 +375,7 @@ struct ReconView: View {
             Text("Synthetic demo — no external providers and no network activity.")
                 .font(.caption).foregroundStyle(.secondary)
         case .dns:
-            providerList([ProviderRowData(name: "Native DNS Resolver", detail: "A + AAAA resolution (system resolver)", available: model.nativeDns?.installation.isAvailable ?? true, status: model.nativeDns?.installation.summary ?? "Built in", risk: "ACTIVE · LOW", warn: false)])
+            providerList([ProviderRowData(name: "Native DNS Resolver", detail: "A/AAAA forward + PTR reverse (system resolver)", available: model.nativeDns?.installation.isAvailable ?? true, status: model.nativeDns?.installation.summary ?? "Built in", risk: "ACTIVE · LOW", warn: false)])
         case .domain:
             providerList([
                 ProviderRowData(name: "Subfinder", detail: "Subdomain discovery · passive", available: subfinderReady, status: model.subfinder?.installation.summary ?? "", risk: "PASSIVE", warn: false),
@@ -470,6 +480,7 @@ struct ReconView: View {
                 }
                 HStack {
                     Spacer()
+                    Button("View assets") { model.section = .assets }.controlSize(.small)
                     Button("View evidence") { model.section = .evidence }.controlSize(.small)
                     Button("View activity") { model.section = .activity }.controlSize(.small)
                 }
@@ -490,6 +501,13 @@ struct ReconView: View {
                     Text(displayTime(chain.createdAt)).foregroundStyle(.secondary).font(.caption)
                     Spacer()
                     StatusBadge(status: chain.status)
+                }
+                if chain.status == "COMPLETED" {
+                    // Completion summary from real workspace state (no fabricated counts).
+                    let assets = model.snapshot?.assets.count ?? 0
+                    let evidence = model.snapshot?.evidence.count ?? 0
+                    Text("Completed · \(assets) assets · \(evidence) evidence")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 let stages = (model.snapshot?.stages ?? []).filter { $0.chainId == chain.id }.sorted { $0.position < $1.position }
                 VStack(spacing: 0) {
@@ -564,7 +582,7 @@ struct ReconView: View {
     private var emptyTargetHint: String {
         switch mode {
         case .synthetic: return "Add example.test using the target bar above."
-        case .dns: return "Add an in-scope domain or hostname using the target bar above."
+        case .dns: return "Add an in-scope domain, hostname, IP, or HTTP(S) URL using the target bar above."
         case .domain: return "Add an in-scope domain using the target bar above."
         case .ip: return "Add an explicitly authorized IPv4 or IPv6 address using the target bar above."
         case .web, .webAnalysis, .contentDiscovery:

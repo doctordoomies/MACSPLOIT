@@ -35,6 +35,7 @@ public final class WorkspaceModel: ObservableObject {
     @Published public private(set) var lastTargetType: String?
     @Published public private(set) var isBusy = false
     @Published public private(set) var isConnected = false
+    @Published public private(set) var coreVersion: String?
     @Published public var errorMessage: String?
     @Published public private(set) var connectionError: String?
     @Published public private(set) var evidenceText = "Select evidence to inspect its verified raw JSON."
@@ -44,7 +45,8 @@ public final class WorkspaceModel: ObservableObject {
 
     public func boot() async {
         do {
-            _ = try await client.hello()
+            let hello = try await client.hello()
+            coreVersion = hello.coreVersion
             workspaces = try await client.listWorkspaces()
             isConnected = true; connectionError = nil
             await refreshProviders()
@@ -83,6 +85,9 @@ public final class WorkspaceModel: ObservableObject {
     public func observe() async {
         while !Task.isCancelled {
             await pollOnce()
+            // Poll install status only while an install is active (or just finished) to
+            // reflect progress without steady background chatter.
+            if installState?.running != nil || wasInstalling { await refreshInstallStatus() }
             do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
         }
     }
@@ -151,6 +156,26 @@ public final class WorkspaceModel: ObservableObject {
         do { providerStatuses = try await client.listProviders() }
         catch { providerRefreshError = "Could not refresh providers: \(error.localizedDescription)" }
     }
+
+    /// The dedicated, clearly-labelled workspace used by the offline tutorial.
+    public static let tutorialWorkspaceName = "MACSPLOIT Tutorial (demo)"
+
+    /// Prepare safe tutorial demo state through the normal path: reuse the labelled
+    /// tutorial workspace if it already exists (never deleting or overwriting any other
+    /// workspace), otherwise create it with the offline demo scope, then ensure the
+    /// invented `example.test` target exists. Launches nothing — the caller runs Synthetic
+    /// Recon only on an explicit user action.
+    public func prepareTutorialDemo() async {
+        if let existing = workspaces.first(where: { $0.name == Self.tutorialWorkspaceName }) {
+            await selectWorkspace(existing.id)
+        } else {
+            _ = await createWorkspace(name: Self.tutorialWorkspaceName, scopeText: "example.test\n*.example.test\n192.0.2.0/24")
+        }
+        _ = await addTarget(value: "example.test")
+    }
+
+    /// Whether the current workspace is the tutorial demo workspace.
+    public var isTutorialWorkspace: Bool { snapshot?.workspace.name == Self.tutorialWorkspaceName }
 
     public func runRecon(kind: String = "synthetic", options: JSONValue = .object([:])) async {
         guard let id = selectedWorkspaceId, let target = selectedTargetId else { return }
@@ -233,6 +258,34 @@ public final class WorkspaceModel: ObservableObject {
     public var consoleLines: [ConsoleLine] {
         guard let snapshot, let chain = selectedChainId else { return [] }
         return reconConsoleLines(snapshot: snapshot, chainId: chain)
+    }
+
+    /// Current provider-install state (running + last outcome), polled alongside events.
+    @Published public private(set) var installState: InstallState?
+    private var wasInstalling = false
+
+    public func refreshInstallStatus() async {
+        guard isConnected else { return }
+        let state = try? await client.installStatus()
+        installState = state
+        let running = state?.running != nil
+        // When an install finishes, refresh provider status so the UI reflects it.
+        if wasInstalling && !running { await refreshProviders() }
+        wasInstalling = running
+    }
+
+    /// Start a typed provider installation (e.g. Homebrew). Observed via installState.
+    public func installProvider(_ id: String, method: String) async {
+        guard isConnected else { return }
+        do {
+            try await client.startInstall(provider: id, method: method)
+            await refreshInstallStatus()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func cancelInstall() async {
+        try? await client.cancelInstall()
+        await refreshInstallStatus()
     }
 
     public func provider(_ id: String) -> ProviderStatus? { providerStatuses.first { $0.id == id } }

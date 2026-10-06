@@ -73,6 +73,16 @@ pub enum Command {
         workspace_id: Id,
         target_id: Id,
     },
+    /// Start a typed provider installation (async; observe via install_status). The
+    /// method and provider id are typed; no caller-supplied command is executed.
+    StartInstall {
+        provider_id: String,
+        method: crate::install::InstallMethod,
+    },
+    /// Request cancellation of a running installation.
+    CancelInstall {},
+    /// Read-only install status (running provider/method + last outcome).
+    InstallStatus {},
 }
 
 impl Command {
@@ -91,6 +101,9 @@ impl Command {
             Self::ListProviders { .. } => "list_providers",
             Self::TargetScopeStatus { .. } => "target_scope_status",
             Self::AuthorizeTarget { .. } => "authorize_target",
+            Self::StartInstall { .. } => "start_install",
+            Self::CancelInstall { .. } => "cancel_install",
+            Self::InstallStatus { .. } => "install_status",
         }
     }
 }
@@ -183,6 +196,15 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 workspace_id,
                 target_id,
             } => serde_json::to_value(engine.store.authorize_target(workspace_id, target_id)?)?,
+            Command::StartInstall {
+                provider_id,
+                method,
+            } => engine.start_install(&provider_id, method)?,
+            Command::CancelInstall {} => {
+                engine.cancel_install()?;
+                json!({"cancelled": true})
+            }
+            Command::InstallStatus {} => engine.install_status()?,
         })
     })();
     match result {

@@ -16,6 +16,10 @@ pub enum EventType {
     /// Display-only sanitized command (executable basename + argument array) for the
     /// live console. Never a shell string; carries no environment or secrets.
     ProviderCommand,
+    /// Bounded, sanitized summary of a provider's parsed discoveries for the live
+    /// console (count, by-type counts, and a short preview). Never raw stdout; raw
+    /// output stays in the evidence envelope.
+    ProviderResults,
     ProviderCompleted,
     EvidenceCreated,
     TaskStatusChanged,

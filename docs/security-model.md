@@ -81,6 +81,38 @@ cannot prove that arbitrary content contains no secret.
   for redacting future sensitive flag/value pairs (auth headers, tokens, passwords, API
   keys) — display text is privacy-reduced presentation data and is never assumed safe
   merely because execution is shell-free.
+- Provider installation is explicit, typed, and shell-free. A request names a provider id
+  and a method only; the Homebrew formula and official-installer URL come from a hardcoded
+  reviewed matrix (`core/src/install`), so a caller can never inject a command or formula.
+  "Install with Homebrew" runs `brew install <formula>` as an executable + argv through the
+  process supervisor (no `/bin/sh -c`, no `sudo`, never installs Homebrew itself), captures
+  exit status, and refreshes provider state. "Install without Homebrew" (app-managed direct
+  download) is implemented for subfinder/httpx/katana/ffuf as a native Rust pipeline: the
+  exact artifact for the running architecture is chosen from a hardcoded, pinned manifest
+  (version + HTTPS URL + SHA-256 + archive format + expected member); the download is
+  HTTPS-only to reviewed GitHub release-asset hosts with capped, host-checked redirects and
+  a size bound enforced both by `Content-Length` and while streaming; the SHA-256 is
+  verified (constant-time) before extraction; extraction writes only the single reviewed
+  top-level regular-file member (traversal/absolute paths, symlinks, hardlinks, device/FIFO
+  entries, duplicates, zip-bombs, and malformed archives all fail closed, and archive
+  permission bits are not trusted); and the verified executable is installed by an atomic
+  `rename` into `~/Library/Application Support/MACSPLOIT/Providers/` from a same-filesystem
+  staging directory — never a system directory, never `sudo`. Any failure (bad checksum,
+  unsafe archive, cancellation, timeout) leaves the previous good binary untouched. Nmap has
+  no app-managed download (privileged `.dmg`) and routes to Homebrew/official. MACSPLOIT
+  never runs `curl`/`unzip`/`tar`/`sh`, never `curl | sh` or remote scripts, never installs
+  silently, and performs no background or automatic updates — a new provider version is a
+  reviewed manifest change. Installation output is status only and never enters workspace
+  evidence. The download/extraction pipeline is driven through an injectable transport so
+  the full logic is exercised offline in tests (`MACSPLOIT_DOWNLOAD_FAKE`), with no real
+  release assets fetched.
+- Reverse DNS (PTR) is a native, bounded lookup via the system resolver (no shelling to
+  dig/host/nslookup). A `ptr_record` relationship records a PTR observation only — it does
+  not claim forward-confirmed mapping. DNS Recon on an IP/URL target still requires the
+  host to be in workspace scope; loopback/private status authorizes nothing.
+- The live-console `ProviderResults` summary is bounded and presentation-safe: counts plus
+  a capped preview whose URL values/sources are query-redacted by the display sanitizer.
+  Raw provider output remains only in the hashed evidence envelope.
 - Nmap is an ACTIVE provider. It uses a conservative, unprivileged profile
   (`-sT -sV --top-ports 100`, XML output) with **no NSE scripts, no OS detection, no
   SYN/stealth scan, no timing/evasion presets, no decoys/spoofing/fragmentation, and

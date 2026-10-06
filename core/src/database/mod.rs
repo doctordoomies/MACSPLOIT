@@ -59,7 +59,7 @@ pub fn rows<T: DeserializeOwned>(
 pub fn migrate(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
-    const LATEST: i64 = 2;
+    const LATEST: i64 = 3;
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > LATEST {
         return Err(CoreError::new(
@@ -82,6 +82,29 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
             .map_err(|_| CoreError::new("MigrationFailure", "Domain-recon migration failed."))?;
         tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
+    }
+    if version < 3 {
+        // Rebuilding asset_relationships (CHECK change) requires foreign keys off so the
+        // relationship_observations FK survives the drop/rename. Pragma can't change inside
+        // a transaction, so toggle it around a dedicated migration transaction.
+        conn.pragma_update(None, "foreign_keys", false)?;
+        let result = (|| -> Result<()> {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(include_str!("../../migrations/003_reverse_dns.sql"))
+                .map_err(|_| CoreError::new("MigrationFailure", "Reverse-DNS migration failed."))?;
+            let invalid: bool = tx.prepare("PRAGMA foreign_key_check")?.exists([])?;
+            if invalid {
+                return Err(CoreError::new(
+                    "MigrationFailure",
+                    "Reverse-DNS migration violates referential integrity.",
+                ));
+            }
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+            Ok(())
+        })();
+        conn.pragma_update(None, "foreign_keys", true)?;
+        result?;
     }
     Ok(())
 }
@@ -581,6 +604,58 @@ pub fn observe(tx: &Transaction<'_>, observation: &Observation) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn reverse_dns_migration_preserves_existing_relationship_provenance() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/002_domain_recon.sql"))
+            .unwrap();
+        conn.execute_batch("PRAGMA user_version=2;
+            INSERT INTO workspaces VALUES('w','fixture','t','t');
+            INSERT INTO assets VALUES('a','w','Domain','example.test','example.test','{}','t','t');
+            INSERT INTO assets VALUES('b','w','IPAddress','192.0.2.1','192.0.2.1','{}','t','t');
+            INSERT INTO targets VALUES('t','w','example.test','example.test','Domain','t','a');
+            INSERT INTO chain_runs VALUES('c','w','t','DNS','COMPLETED','t','t',NULL);
+            INSERT INTO chain_stages VALUES('s','w','c',0,'DNS','DNS_RESOLUTION','COMPLETED','t','t','native_dns');
+            INSERT INTO provider_runs VALUES('p','w','c','s','native_dns','built-in','example.test','t','t','COMPLETED',NULL,0);
+            INSERT INTO evidence VALUES('e','w','p','native_dns','example.test','t','hash','application/json','e.json',0);
+            INSERT INTO asset_relationships VALUES('r','w','a','b','resolves_to','t');
+            INSERT INTO relationship_observations VALUES('o','w','r','p','e','t');").unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT relationship_type FROM asset_relationships WHERE id='r'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "resolves_to"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM relationship_observations WHERE relationship_id='r'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert!(!conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        assert!(conn
+            .execute("DELETE FROM asset_relationships WHERE id='r'", [])
+            .is_err());
+        conn.execute(
+            "INSERT INTO asset_relationships VALUES('ptr','w','b','a','ptr_record','t')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn migration_is_versioned_idempotent_and_enforces_foreign_keys() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
@@ -588,7 +663,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
         // The provider_id column added by migration 002 is present.
         assert!(conn

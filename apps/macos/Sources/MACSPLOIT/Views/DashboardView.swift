@@ -3,6 +3,7 @@ import MACSPLOITKit
 
 struct DashboardView: View {
     @ObservedObject var model: WorkspaceModel
+    @Environment(\.dashboardPreset) private var preset
 
     private var providersReady: Int { model.providerStatuses.filter { $0.installation.isAvailable }.count }
     private var providersTotal: Int { model.providerStatuses.count }
@@ -11,7 +12,7 @@ struct DashboardView: View {
         WorkbenchPage {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeading(title: model.snapshot?.workspace.name ?? "Dashboard",
-                            subtitle: "A calm overview of this authorized workspace. Detailed evidence and activity stay one click away.")
+                            subtitle: presetSubtitle)
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14)], spacing: 14) {
                     MetricTile(name: "Targets", value: model.snapshot?.targets.count ?? 0, symbol: "scope")
@@ -21,13 +22,36 @@ struct DashboardView: View {
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 16)], alignment: .leading, spacing: 16) {
-                    recentActivityCard
-                    latestReconCard
+                    // Minimal: essentials only. Operator: full operational view.
+                    // Research: operational view plus a reserved research surface.
+                    if preset != .minimal {
+                        recentActivityCard
+                        latestReconCard
+                    }
                     scopeCard
                     quickActionsCard
+                    if preset == .research { researchCard }
                 }
 
                 Text("Live providers run only when you explicitly launch a workflow. The Rust core enforces scope again before dispatch.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var presetSubtitle: String {
+        switch preset {
+        case .minimal: return "A minimal overview: metrics, scope, and quick actions."
+        case .operatorView: return "A calm operational overview. Detailed evidence and activity stay one click away."
+        case .research: return "An operational overview with a reserved research area."
+        }
+    }
+
+    private var researchCard: some View {
+        WorkbenchCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Research (reserved)", systemImage: "sparkle.magnifyingglass").font(.headline)
+                Text("A reserved space for future research tooling (e.g. historical URLs, technology intelligence). No external data is fetched and nothing is fabricated here.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

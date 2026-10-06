@@ -35,13 +35,67 @@ crawling/content discovery, and per-hop scope-checked for native-HTTP redirects,
 Provider statuses (metadata plus live installation state) are exposed to the UI
 through the `list_providers` protocol method.
 
+## Provider installation
+
+MACSPLOIT can install a missing external provider on explicit user action; it never
+installs anything silently and runs no shell. Installation is **typed**: a request names a
+provider id and a method (`start_install`), and the Homebrew formula / official-installer
+URL come only from a hardcoded reviewed matrix in `core/src/install` — a caller can never
+supply a command or formula. Installs run asynchronously on a worker (they can take
+minutes, longer than the client request timeout) and are observed via `install_status`;
+installation output is status only and never enters workspace evidence.
+
+| Provider | Homebrew formula | App-managed direct download | Official installer |
+| --- | --- | --- | --- |
+| Subfinder | `subfinder` | supported (pinned v2.16.0, arm64/x86_64) | GitHub releases |
+| HTTPX | `httpx` | supported (pinned v1.12.0, arm64/x86_64) | GitHub releases |
+| Katana | `katana` | supported (pinned v1.8.0, arm64/x86_64) | GitHub releases |
+| ffuf | `ffuf` | supported (pinned v2.3.0, arm64/x86_64) | GitHub releases |
+| Nmap | `nmap` | not appropriate (privileged .dmg) | nmap.org |
+
+- **Install with Homebrew (implemented):** MACSPLOIT locates the `brew` executable
+  (resolving a Homebrew symlink) and runs `brew install <reviewed formula>` as an
+  executable + argument array through the process supervisor — never `/bin/sh -c`, never a
+  command string, never `sudo`, and it never installs Homebrew itself. Exit status is
+  captured; provider status is refreshed on completion; cancellation signals the process
+  group.
+- **Install without Homebrew (managed direct download, implemented):** the Go-based tools
+  publish checksummed, per-architecture macOS archives on their official GitHub releases.
+  MACSPLOIT installs the one reviewed artifact for the running architecture using a native
+  Rust pipeline (no `curl`/`unzip`/`tar`/`sh`, no remote scripts, never `curl | sh`):
+  - **Pinned manifest.** `core/src/install/manifest.rs` hardcodes, per provider and
+    architecture, the exact version, HTTPS download URL, SHA-256 digest, archive format,
+    and expected executable member. A new upstream version requires editing this reviewed
+    file — never a runtime "latest" lookup. Unknown provider/architecture → fail closed.
+  - **Bounded HTTPS download.** The initial URL and every redirect must be HTTPS on a
+    reviewed GitHub release-asset host (`github.com`, `release-assets.githubusercontent.com`,
+    `objects.githubusercontent.com`); redirects are capped and credential-bearing URLs
+    rejected. Size is bounded both by `Content-Length` and while streaming; the digest is
+    verified (constant-time) before anything is extracted.
+  - **Safe extraction.** Only the single top-level regular-file member matching the pinned
+    name is written; path traversal, absolute paths, symlinks, hardlinks, device/FIFO
+    entries, duplicates, oversized (zip-bomb) members, and malformed archives all fail
+    closed. Archive permission bits are not trusted (mode is set explicitly).
+  - **Atomic install into `~/Library/Application Support/MACSPLOIT/Providers/`.** Work
+    happens in a staging directory on the same filesystem; the verified executable is moved
+    into place with a single atomic `rename`. No system directories, no `sudo`, no root. If
+    any step fails (bad checksum, unsafe archive, cancellation, timeout) the previous good
+    binary is left untouched. There are no background or automatic updates.
+  - Nmap is excluded from app-managed download (its official standalone build is a
+    privileged `.dmg`); the UI offers Homebrew, an existing binary, or the official page.
+- **Use existing binary:** a compatible executable already on PATH or named by a provider
+  override is first-class and never reinstalled.
+
 MACSPLOIT needs a **compatible provider executable** — it does not depend on Homebrew.
-Executable discovery resolves a candidate (including a Homebrew Cellar symlink) to a real,
-executable regular file on PATH, `/opt/homebrew/bin`, `/usr/local/bin`, or an explicit
-`MACSPLOIT_<TOOL>` override. Homebrew is presented in Provider Center and Recon only as an
-optional recommended install method on macOS; an executable installed by any other method
-and made available on PATH (or via an override) is fully supported. MACSPLOIT never
-installs or updates providers and never runs a package manager.
+Executable discovery resolves a candidate (including a Homebrew Cellar symlink, or a
+managed binary under `~/Library/Application Support/MACSPLOIT/Providers/`) to a real,
+executable regular file on PATH, `/opt/homebrew/bin`, `/usr/local/bin`, the managed
+directory, or an explicit `MACSPLOIT_<TOOL>` override. Homebrew is presented in Provider
+Center and Recon only as an optional recommended install method on macOS; an executable
+installed by any other method and made available on PATH (or via an override) is fully
+supported. MACSPLOIT never installs tools silently, never installs Homebrew itself, never
+runs arbitrary commands or remote scripts, and never performs background updates; every
+install is explicit and uses a reviewed, typed method, and unsupported routes fail closed.
 
 ## SyntheticDiscoveryProvider
 

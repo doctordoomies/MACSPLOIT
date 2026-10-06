@@ -57,6 +57,25 @@ pub struct ProviderStatus {
     pub installation: Installation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<ProviderSetup>,
+    /// Which reviewed install methods MACSPLOIT offers for this provider. The core
+    /// matrix is authoritative; the UI uses this only to decide which buttons to
+    /// show (it never chooses formulas, URLs, or artifacts itself).
+    #[serde(default)]
+    pub install: ProviderInstallInfo,
+}
+
+/// Reviewed install-method availability for one provider, derived from the typed
+/// installer matrix. Presentation metadata only — installation is always enforced
+/// and performed by the Rust core.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderInstallInfo {
+    /// A `brew install <reviewed formula>` method is available.
+    pub homebrew: bool,
+    /// A verified app-managed direct download is available (false for Nmap).
+    pub managed_download: bool,
+    /// The provider's official installer/download page, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_installer_url: Option<String>,
 }
 
 /// Static, provider-owned help. Consumers may display/copy it, never execute it.
@@ -218,10 +237,22 @@ impl ProviderRegistry {
     pub fn status(&self, tools: &ToolConfig) -> Vec<ProviderStatus> {
         self.providers
             .iter()
-            .map(|provider| ProviderStatus {
-                metadata: provider.metadata(),
-                installation: provider.installation(tools),
-                setup: provider.setup(),
+            .map(|provider| {
+                let metadata = provider.metadata();
+                let install = match crate::install::options(&metadata.id) {
+                    Some(opts) => ProviderInstallInfo {
+                        homebrew: opts.homebrew_formula.is_some(),
+                        managed_download: opts.managed_download_supported,
+                        official_installer_url: opts.official_installer_url.map(str::to_owned),
+                    },
+                    None => ProviderInstallInfo::default(),
+                };
+                ProviderStatus {
+                    installation: provider.installation(tools),
+                    setup: provider.setup(),
+                    install,
+                    metadata,
+                }
             })
             .collect()
     }
@@ -609,6 +640,8 @@ impl NativeDnsProvider {
 struct DnsReport {
     provider: String,
     records: Vec<DnsHostRecord>,
+    #[serde(default)]
+    reverse: Vec<DnsPtrRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -619,21 +652,70 @@ struct DnsHostRecord {
     outcome: DnsOutcome,
 }
 
+#[derive(Serialize, Deserialize)]
+struct DnsPtrRecord {
+    ip: String,
+    names: Vec<String>,
+    outcome: DnsOutcome,
+}
+
+/// Decide what to resolve for native DNS given chain inputs and the target. Forward
+/// lookups come from hostname-like inputs (Domain Recon subdomains); when there are
+/// none (direct DNS Recon) the target drives it: a URL contributes its host (forward
+/// for a hostname, reverse for an IP literal), an IP target is a reverse lookup, and a
+/// domain/hostname target is a forward lookup.
+fn native_dns_plan(inputs: &[Asset], target: &str) -> (Vec<String>, Vec<std::net::IpAddr>) {
+    let mut forward: Vec<String> = inputs
+        .iter()
+        .filter(|a| {
+            matches!(
+                a.asset_type,
+                AssetType::Subdomain | AssetType::Hostname | AssetType::Domain
+            )
+        })
+        .map(|a| a.canonical_identity.clone())
+        .collect();
+    forward.sort();
+    forward.dedup();
+    if !forward.is_empty() {
+        return (forward, Vec::new());
+    }
+    // Direct DNS Recon: classify the target (extract the host for a URL).
+    let host = if let Ok(url) = url::Url::parse(target) {
+        url.host_str()
+            .map(|h| h.trim_matches(['[', ']']).to_owned())
+            .unwrap_or_else(|| target.to_owned())
+    } else {
+        target.to_owned()
+    };
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        (Vec::new(), vec![ip])
+    } else {
+        (vec![host], Vec::new())
+    }
+}
+
 impl Provider for NativeDnsProvider {
     fn metadata(&self) -> ProviderMetadata {
         ProviderMetadata {
             id: "native_dns".into(),
             name: "Native DNS Resolver".into(),
-            description: "Built-in A/AAAA resolution using the host's system resolver.".into(),
+            description:
+                "Built-in DNS: A/AAAA forward resolution, and PTR reverse lookup for IP targets."
+                    .into(),
             version: "built-in".into(),
             risk_class: RiskClass::ActiveLowImpact,
             offline: true, // no external process; still active network I/O when live
             capabilities: vec![Capability::DnsResolution],
-            // Target classification has no Subdomain variant (subdomains are
-            // assets, not targets); a subdomain target classifies as a Domain or
-            // Hostname. The provider resolves Subdomain/Hostname/Domain assets
-            // from chain inputs regardless of the chain target type.
-            supported_target_types: vec![TargetType::Domain, TargetType::Hostname],
+            // Forward for Domain/Hostname (and URL hostnames); reverse PTR for an
+            // IPAddress target or a URL whose host is an IP literal. The provider also
+            // resolves Subdomain/Hostname/Domain assets from chain inputs.
+            supported_target_types: vec![
+                TargetType::Domain,
+                TargetType::Hostname,
+                TargetType::IPAddress,
+                TargetType::URL,
+            ],
         }
     }
 
@@ -648,28 +730,23 @@ impl Provider for NativeDnsProvider {
         inputs: &[Asset],
         ctx: &ProviderContext,
     ) -> Result<Execution> {
-        let started_at = crate::now();
-        // Resolve the hostname-like assets discovered earlier in this chain. Fall
-        // back to the chain target itself when no such inputs exist (direct use).
-        let mut hosts: Vec<String> = inputs
-            .iter()
-            .filter(|a| {
-                matches!(
-                    a.asset_type,
-                    AssetType::Subdomain | AssetType::Hostname | AssetType::Domain
-                )
-            })
-            .map(|a| a.canonical_identity.clone())
-            .collect();
-        hosts.sort();
-        hosts.dedup();
-        if hosts.is_empty() {
-            hosts.push(target.to_owned());
-        }
-        let resolutions = self.resolver.resolve(&hosts, ctx.deadline, ctx.cancelled);
         if ctx.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(CoreError::new("Cancelled", "DNS resolution cancelled."));
         }
+        let started_at = crate::now();
+        // Decide forward hosts and reverse IPs from inputs + target (see native_dns_plan).
+        let (hosts, reverse_ips) = native_dns_plan(inputs, target);
+        let resolutions = if hosts.is_empty() {
+            Vec::new()
+        } else {
+            self.resolver.resolve(&hosts, ctx.deadline, ctx.cancelled)
+        };
+        let reverse = if reverse_ips.is_empty() {
+            Vec::new()
+        } else {
+            self.resolver
+                .reverse(&reverse_ips, ctx.deadline, ctx.cancelled)
+        };
         let records = resolutions
             .into_iter()
             .map(|r| DnsHostRecord {
@@ -679,9 +756,18 @@ impl Provider for NativeDnsProvider {
                 outcome: r.outcome,
             })
             .collect();
+        let reverse = reverse
+            .into_iter()
+            .map(|r| DnsPtrRecord {
+                ip: r.ip.to_string(),
+                names: r.names,
+                outcome: r.outcome,
+            })
+            .collect();
         let stdout = serde_json::to_vec_pretty(&DnsReport {
             provider: "native_dns".into(),
             records,
+            reverse,
         })?;
         Ok(Execution {
             target: target.into(),
@@ -702,6 +788,17 @@ impl Provider for NativeDnsProvider {
             .map_err(|_| CoreError::new("ProviderFailure", "Native DNS output is malformed."))?;
         let mut discoveries = Vec::new();
         for record in report.records {
+            // A hostname extracted from a URL is not yet an asset. Persist that
+            // context before its A/AAAA relationship; the run retains the original URL.
+            if url::Url::parse(&execution.target).is_ok() {
+                discoveries.push(Discovery {
+                    asset_type: AssetType::Hostname,
+                    value: record.host.clone(),
+                    source: None,
+                    relationship: None,
+                    metadata: json!({"tool":"native_dns", "dns_outcome":record.outcome}),
+                });
+            }
             // Normalize the source host once; addresses are already de-duplicated
             // per host by the resolver, and IP asset identities dedupe on upsert.
             let mut push = |value: &str, family: &str| {
@@ -722,6 +819,35 @@ impl Provider for NativeDnsProvider {
             }
             for ip in &record.aaaa {
                 push(ip, "AAAA");
+            }
+        }
+        // Reverse (PTR): each PTR name is a Hostname asset linked from the IP by a
+        // ptr_record relationship. This is a PTR observation only (not forward-confirmed).
+        for record in report.reverse {
+            // Ensure the looked-up IP exists as an asset so the PTR name can link to it
+            // (a URL-with-IP target has no IPAddress asset otherwise).
+            discoveries.push(Discovery {
+                asset_type: AssetType::IPAddress,
+                value: record.ip.clone(),
+                source: None,
+                relationship: None,
+                metadata: json!({ "tool": "native_dns", "reverse_lookup": true, "dns_outcome": record.outcome }),
+            });
+            for name in &record.names {
+                let Ok(name) = crate::targets::domain(name) else {
+                    continue;
+                };
+                discoveries.push(Discovery {
+                    asset_type: AssetType::Hostname,
+                    value: name.clone(),
+                    source: Some(record.ip.clone()),
+                    relationship: Some(RelationshipType::PtrRecord),
+                    metadata: json!({
+                        "tool": "native_dns",
+                        "record_type": "PTR",
+                        "dns_outcome": record.outcome,
+                    }),
+                });
             }
         }
         Ok(discoveries)

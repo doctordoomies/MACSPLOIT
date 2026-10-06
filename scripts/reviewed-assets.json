@@ -4,6 +4,26 @@
       "path": "assets/Neon Rain Hacker Workspace.png",
       "sha256": "3c2cc2a7ebbe573af00b83d01a12e73cd163162df304f7df8a7ee146db925492",
       "reason": "Approved MACSPLOIT README hero artwork; manually reviewed and contains no assessment data or secrets."
+    },
+    {
+      "path": "apps/macos/Resources/MACSPLOIT-AppIcon-1024.png",
+      "sha256": "4f52334fa4a811c0e07a0f899a4f5dd4eb9cd2fba37568d884c847a20e60c0a1",
+      "reason": "Owner-approved MACSPLOIT logo supplied for the app icon and Welcome screen; visually reviewed artwork containing no assessment data or secrets."
+    },
+    {
+      "path": "apps/macos/Resources/MACSPLOIT.icns",
+      "sha256": "4bf9428e09ac277a9d08688b6fd5caaa42b4bd092ccc2ec9d204ae8fa130244f",
+      "reason": "Owner-approved MACSPLOIT logo supplied for the app icon and Welcome screen; visually reviewed artwork containing no assessment data or secrets."
+    },
+    {
+      "path": "apps/macos/Resources/MACSPLOIT-Logo-1024.png",
+      "sha256": "f5aef83547c394a25014c4bd276f4b1dd8c35c22642c5cc77ea590ea592e2907",
+      "reason": "Replacement owner-approved transparent MACSPLOIT logo; visually reviewed artwork containing no assessment data or secrets. Prior asset approvals are retained for full-history auditing."
+    },
+    {
+      "path": "apps/macos/Resources/MACSPLOIT-Logo.icns",
+      "sha256": "7cbc1eae1c5637ec775337bf3974a881173b0731d17c2aee4e3ef2927f92fabc",
+      "reason": "Replacement owner-approved transparent MACSPLOIT logo; visually reviewed artwork containing no assessment data or secrets. Prior asset approvals are retained for full-history auditing."
     }
   ]
 }

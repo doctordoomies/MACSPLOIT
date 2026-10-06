@@ -52,6 +52,25 @@ impl HostResolution {
     }
 }
 
+/// Result of a reverse (PTR) lookup for a single IP. `names` are de-duplicated,
+/// order-preserving PTR hostnames (trailing dots stripped).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReverseResolution {
+    pub ip: std::net::IpAddr,
+    pub names: Vec<String>,
+    pub outcome: DnsOutcome,
+}
+
+impl ReverseResolution {
+    pub fn empty(ip: std::net::IpAddr, outcome: DnsOutcome) -> Self {
+        Self {
+            ip,
+            names: Vec::new(),
+            outcome,
+        }
+    }
+}
+
 /// Bounded resolution parameters shared by resolver implementations.
 #[derive(Debug, Clone, Copy)]
 pub struct ResolveLimits {
@@ -77,6 +96,18 @@ pub trait DnsResolver: Send + Sync {
         deadline: Instant,
         cancelled: &AtomicBool,
     ) -> Vec<HostResolution>;
+    /// Bounded reverse (PTR) lookup. The default fails closed (ResolverFailure) so a
+    /// resolver that does not implement reverse lookup never silently returns "no PTR".
+    fn reverse(
+        &self,
+        ips: &[std::net::IpAddr],
+        _deadline: Instant,
+        _cancelled: &AtomicBool,
+    ) -> Vec<ReverseResolution> {
+        ips.iter()
+            .map(|ip| ReverseResolution::empty(*ip, DnsOutcome::ResolverFailure))
+            .collect()
+    }
     /// True for the built-in native resolver; false for external tools.
     fn built_in(&self) -> bool {
         true
@@ -102,6 +133,7 @@ pub fn resolver_from_env() -> Arc<dyn DnsResolver> {
 #[derive(Default, Clone)]
 pub struct StaticDnsResolver {
     table: HashMap<String, HostResolution>,
+    ptr: HashMap<std::net::IpAddr, ReverseResolution>,
 }
 
 impl StaticDnsResolver {
@@ -139,6 +171,36 @@ impl StaticDnsResolver {
                 outcome,
             },
         );
+        self
+    }
+
+    /// Program PTR (reverse) names for an IP (outcome Resolved, or NoRecords if empty).
+    pub fn with_ptr(mut self, ip: std::net::IpAddr, names: &[&str]) -> Self {
+        let mut deduped: Vec<String> = Vec::new();
+        for name in names {
+            let name = name.trim_end_matches('.').to_owned();
+            if !name.is_empty() && !deduped.contains(&name) {
+                deduped.push(name);
+            }
+        }
+        let outcome = if deduped.is_empty() {
+            DnsOutcome::NoRecords
+        } else {
+            DnsOutcome::Resolved
+        };
+        self.ptr.insert(
+            ip,
+            ReverseResolution {
+                ip,
+                names: deduped,
+                outcome,
+            },
+        );
+        self
+    }
+
+    pub fn with_ptr_outcome(mut self, ip: std::net::IpAddr, outcome: DnsOutcome) -> Self {
+        self.ptr.insert(ip, ReverseResolution::empty(ip, outcome));
         self
     }
 
@@ -193,6 +255,25 @@ impl DnsResolver for StaticDnsResolver {
                     .get(host)
                     .cloned()
                     .unwrap_or_else(|| HostResolution::empty(host, DnsOutcome::NxDomain))
+            })
+            .collect()
+    }
+
+    fn reverse(
+        &self,
+        ips: &[std::net::IpAddr],
+        _deadline: Instant,
+        cancelled: &AtomicBool,
+    ) -> Vec<ReverseResolution> {
+        ips.iter()
+            .map(|ip| {
+                if cancelled.load(Ordering::SeqCst) {
+                    return ReverseResolution::empty(*ip, DnsOutcome::Cancelled);
+                }
+                self.ptr
+                    .get(ip)
+                    .cloned()
+                    .unwrap_or_else(|| ReverseResolution::empty(*ip, DnsOutcome::NxDomain))
             })
             .collect()
     }
@@ -268,23 +349,179 @@ impl DnsResolver for SystemDnsResolver {
                 let semaphore = semaphore.clone();
                 tasks.push(tokio::spawn(async move {
                     let _permit = semaphore.acquire_owned().await.ok();
-                    resolve_one(&resolver, &host, per_query).await
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return HostResolution::empty(&host, DnsOutcome::Timeout);
+                    }
+                    resolve_one(&resolver, &host, per_query.min(remaining)).await
                 }));
             }
-            let mut results = Vec::with_capacity(tasks.len());
-            for task in tasks {
-                // A panicked/aborted task is simply dropped.
-                if let Ok(resolution) = task.await {
-                    results.push(resolution);
+            collect_dns_tasks(tasks, deadline, cancelled, |index, outcome| {
+                HostResolution::empty(&hosts[index], outcome)
+            })
+            .await
+        })
+    }
+
+    fn reverse(
+        &self,
+        ips: &[std::net::IpAddr],
+        deadline: Instant,
+        cancelled: &AtomicBool,
+    ) -> Vec<ReverseResolution> {
+        let limits = self.limits;
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return ips
+                .iter()
+                .map(|ip| ReverseResolution::empty(*ip, DnsOutcome::ResolverFailure))
+                .collect();
+        };
+        runtime.block_on(async move {
+            let resolver = match hickory_resolver::Resolver::builder_tokio().and_then(|b| b.build())
+            {
+                Ok(resolver) => Arc::new(resolver),
+                Err(_) => {
+                    return ips
+                        .iter()
+                        .map(|ip| ReverseResolution::empty(*ip, DnsOutcome::ResolverFailure))
+                        .collect()
                 }
+            };
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(limits.max_concurrency.max(1)));
+            let mut tasks = Vec::with_capacity(ips.len());
+            for ip in ips {
+                let ip = *ip;
+                if cancelled.load(Ordering::SeqCst) {
+                    tasks.push(ready_reverse(ReverseResolution::empty(
+                        ip,
+                        DnsOutcome::Cancelled,
+                    )));
+                    continue;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    tasks.push(ready_reverse(ReverseResolution::empty(
+                        ip,
+                        DnsOutcome::Timeout,
+                    )));
+                    continue;
+                }
+                let per_query = limits.per_query_timeout.min(remaining);
+                let resolver = resolver.clone();
+                let semaphore = semaphore.clone();
+                tasks.push(tokio::spawn(async move {
+                    let _permit = semaphore.acquire_owned().await.ok();
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return ReverseResolution::empty(ip, DnsOutcome::Timeout);
+                    }
+                    reverse_one(&resolver, ip, per_query.min(remaining)).await
+                }));
             }
-            results
+            collect_dns_tasks(tasks, deadline, cancelled, |index, outcome| {
+                ReverseResolution::empty(ips[index], outcome)
+            })
+            .await
         })
     }
 }
 
+// Polling here keeps the public resolver synchronous while promptly cancelling all
+// in-flight/queued futures; no borrowed cancellation flag enters a spawned task.
+async fn collect_dns_tasks<T>(
+    mut tasks: Vec<tokio::task::JoinHandle<T>>,
+    deadline: Instant,
+    cancelled: &AtomicBool,
+    empty: impl Fn(usize, DnsOutcome) -> T,
+) -> Vec<T> {
+    let mut results = Vec::with_capacity(tasks.len());
+    for index in 0..tasks.len() {
+        loop {
+            let stopped = if cancelled.load(Ordering::SeqCst) {
+                Some(DnsOutcome::Cancelled)
+            } else if Instant::now() >= deadline {
+                Some(DnsOutcome::Timeout)
+            } else {
+                None
+            };
+            if let Some(outcome) = stopped {
+                for task in &tasks {
+                    task.abort();
+                }
+                results.extend((index..tasks.len()).map(|i| empty(i, outcome)));
+                return results;
+            }
+            if let Ok(result) =
+                tokio::time::timeout(Duration::from_millis(20), &mut tasks[index]).await
+            {
+                results.push(result.unwrap_or_else(|_| empty(index, DnsOutcome::ResolverFailure)));
+                break;
+            }
+        }
+    }
+    results
+}
+
 fn ready_task(resolution: HostResolution) -> tokio::task::JoinHandle<HostResolution> {
     tokio::spawn(async move { resolution })
+}
+
+fn ready_reverse(resolution: ReverseResolution) -> tokio::task::JoinHandle<ReverseResolution> {
+    tokio::spawn(async move { resolution })
+}
+
+/// Build the reverse-DNS query name (`in-addr.arpa` / `ip6.arpa`) for an IP.
+fn reverse_dns_name(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            format!("{}.{}.{}.{}.in-addr.arpa.", o[3], o[2], o[1], o[0])
+        }
+        std::net::IpAddr::V6(v6) => {
+            let mut s = String::with_capacity(74);
+            for octet in v6.octets().iter().rev() {
+                s.push_str(&format!("{:x}.", octet & 0x0f));
+                s.push_str(&format!("{:x}.", (octet >> 4) & 0x0f));
+            }
+            s.push_str("ip6.arpa.");
+            s
+        }
+    }
+}
+
+async fn reverse_one(
+    resolver: &hickory_resolver::TokioResolver,
+    ip: std::net::IpAddr,
+    per_query: Duration,
+) -> ReverseResolution {
+    use hickory_resolver::proto::rr::RData;
+    use tokio::time::timeout;
+    let query = reverse_dns_name(ip);
+    match timeout(per_query, resolver.reverse_lookup(query.as_str())).await {
+        Ok(Ok(lookup)) => {
+            let mut names = Vec::new();
+            for record in lookup.answers() {
+                if let RData::PTR(ptr) = &record.data {
+                    let text = ptr.0.to_string();
+                    let text = text.trim_end_matches('.').to_owned();
+                    if !text.is_empty() && !names.contains(&text) {
+                        names.push(text);
+                    }
+                }
+            }
+            let outcome = if names.is_empty() {
+                DnsOutcome::NoRecords
+            } else {
+                DnsOutcome::Resolved
+            };
+            ReverseResolution { ip, names, outcome }
+        }
+        Ok(Err(error)) => ReverseResolution::empty(ip, classify(&error)),
+        Err(_) => ReverseResolution::empty(ip, DnsOutcome::Timeout),
+    }
 }
 
 async fn resolve_one(
@@ -400,6 +637,105 @@ mod tests {
         let cancelled = AtomicBool::new(true);
         let results = resolver.resolve(&hosts(&["x.example.test"]), Instant::now(), &cancelled);
         assert_eq!(results[0].outcome, DnsOutcome::Cancelled);
+    }
+
+    #[test]
+    fn static_reverse_returns_programmed_ptr_names() {
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let resolver = StaticDnsResolver::new().with_ptr(ip, &["localhost", "localhost."]);
+        let cancelled = AtomicBool::new(false);
+        let results = resolver.reverse(&[ip], Instant::now() + Duration::from_secs(5), &cancelled);
+        assert_eq!(results[0].outcome, DnsOutcome::Resolved);
+        assert_eq!(results[0].names, vec!["localhost".to_string()]); // trailing dot stripped, deduped
+    }
+
+    #[test]
+    fn static_reverse_unknown_ip_is_nxdomain_and_honors_cancellation() {
+        let ip: std::net::IpAddr = "198.51.100.9".parse().unwrap();
+        let resolver = StaticDnsResolver::new();
+        let ok = AtomicBool::new(false);
+        assert_eq!(
+            resolver.reverse(&[ip], Instant::now(), &ok)[0].outcome,
+            DnsOutcome::NxDomain
+        );
+        let cancelled = AtomicBool::new(true);
+        assert_eq!(
+            resolver.reverse(&[ip], Instant::now(), &cancelled)[0].outcome,
+            DnsOutcome::Cancelled
+        );
+    }
+
+    #[test]
+    fn default_reverse_fails_closed() {
+        // A resolver that does not override reverse must not silently return "no PTR".
+        struct ForwardOnly;
+        impl DnsResolver for ForwardOnly {
+            fn resolve(
+                &self,
+                hosts: &[String],
+                _d: Instant,
+                _c: &AtomicBool,
+            ) -> Vec<HostResolution> {
+                hosts
+                    .iter()
+                    .map(|h| HostResolution::empty(h, DnsOutcome::NoRecords))
+                    .collect()
+            }
+        }
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let r = ForwardOnly.reverse(&[ip], Instant::now(), &AtomicBool::new(false));
+        assert_eq!(r[0].outcome, DnsOutcome::ResolverFailure);
+    }
+
+    #[test]
+    fn pending_queries_are_cancelled_or_timed_out_without_network() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for cancel in [false, true] {
+            let cancelled = AtomicBool::new(cancel);
+            let result = runtime.block_on(async {
+                let tasks = vec![tokio::spawn(std::future::pending::<DnsOutcome>())];
+                collect_dns_tasks(
+                    tasks,
+                    Instant::now() + Duration::from_millis(30),
+                    &cancelled,
+                    |_, outcome| outcome,
+                )
+                .await
+            });
+            assert_eq!(
+                result,
+                vec![if cancel {
+                    DnsOutcome::Cancelled
+                } else {
+                    DnsOutcome::Timeout
+                }]
+            );
+        }
+        let ip = "::1".parse().unwrap();
+        assert_eq!(
+            StaticDnsResolver::new().with_ptr(ip, &[]).reverse(
+                &[ip],
+                Instant::now(),
+                &AtomicBool::new(false)
+            )[0]
+            .outcome,
+            DnsOutcome::NoRecords
+        );
+    }
+
+    #[test]
+    fn reverse_dns_name_matches_arpa_format() {
+        assert_eq!(
+            reverse_dns_name("127.0.0.1".parse().unwrap()),
+            "1.0.0.127.in-addr.arpa."
+        );
+        assert_eq!(
+            reverse_dns_name("::1".parse().unwrap()),
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa."
+        );
     }
 
     #[test]
