@@ -34,7 +34,7 @@ MACSPLOIT is a native macOS security workbench that connects specialist reconnai
 Instead of ending a scan with five terminals and a folder full of unrelated output, MACSPLOIT keeps the context together:
 
 ```text
-Authorized target
+Target
       ↓
 Specialist provider
       ↓
