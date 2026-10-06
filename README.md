@@ -1,292 +1,249 @@
-<table>
-<tr>
-<td width="60%" valign="middle">
-<h1>MACSPLOIT</h1>
-<h3>Separate tools. Connected evidence.<br>One native macOS workspace.</h3>
-<p>Connect reconnaissance tools through persistent assets, relationships, and evidence. Keep scope part of every workflow.</p>
-<p><strong>Public Beta</strong> · Open source · Authorized security research</p>
-<p><sub>Pre-1.0 interfaces and provider contracts may change.</sub></p>
-<p><a href="#quick-start"><strong>Try it offline →</strong></a> &nbsp; <a href="#workflows">Explore the workflows</a></p>
-</td>
-<td width="40%" valign="top" align="right">
-<img src="assets/Neon%20Rain%20Hacker%20Workspace.png" alt="MACSPLOIT concept artwork: a neon-lit security workstation" width="360">
-<sub>Concept artwork</sub>
-</td>
-</tr>
-</table>
+<div align="center">
 
-[![Build](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/ci.yml) [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111827?logo=apple)](#build) [![Rust core](https://img.shields.io/badge/core-Rust-111827?logo=rust)](#architecture) [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-111827?logo=swift)](#architecture) [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-111827)](LICENSE)
+<img src="apps/macos/Resources/MACSPLOIT-Logo-1024.png" alt="MACSPLOIT logo" width="170">
 
-**[Overview](#overview) · [Workflows](#workflows) · [Providers](#providers) · [Architecture](#architecture) · [Quick start](#quick-start) · [Build](#build) · [Safety](#safety) · [Roadmap](#roadmap) · [Contributing](#contributing)**
+# MACSPLOIT
 
-## Overview
+### A native macOS security workbench for turning recon tools into connected, reviewable evidence.
 
-MACSPLOIT is a native macOS security workbench that turns separate reconnaissance tools into **one persistent, scope-aware asset and evidence system**. Discover subdomains, resolve addresses, identify services, probe websites, crawl URLs, and inspect HTTP security metadata. Inspect the relationships and the provider output behind each observation in the same workspace.
+**SwiftUI interface · Rust core · Local-first · Scope-aware · Open source**
 
-**Provider output is not the product.** A directory of Subfinder results, Nmap XML, HTTPX JSON, screenshots, and notes still leaves the analyst to reconstruct what belongs together. MACSPLOIT gives structured discoveries a shared model:
+[![Build](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/doctordoomies/MACSPLOIT/actions/workflows/codeql.yml)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111827?logo=apple)
+![Rust](https://img.shields.io/badge/core-Rust-111827?logo=rust)
+![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-111827?logo=swift)
+[![License](https://img.shields.io/badge/license-Apache--2.0-111827)](LICENSE)
+
+**Public Beta** · Pre-1.0 · Native macOS security tooling
+
+[Quick start](#quick-start) · [What works today](#what-works-today) · [Architecture](#architecture) · [Contributing](#contributing) · [Roadmap](docs/roadmap.md)
+
+</div>
+
+---
+
+## What is MACSPLOIT?
+
+MACSPLOIT is a native macOS security workbench that connects specialist reconnaissance tools through a shared model of **targets, assets, relationships, observations, evidence, and provider runs**.
+
+| 🧭 Connected recon | 🔐 Evidence-first | 🧩 Provider-based | 🖥️ Native macOS |
+| --- | --- | --- | --- |
+| Findings from different tools live in one workspace. | Raw provider output stays linked to normalized results. | Built-in and external capabilities share one model. | SwiftUI front end with a Rust core. |
+
+Instead of ending a scan with five terminals and a folder full of unrelated output, MACSPLOIT keeps the context together:
 
 ```text
-Specialist providers → Normalized assets → Relationships + observations
-                                                       ↓
-                                          Evidence + provenance
-                                                       ↓
-                                           Persistent workspace
+Target
+      ↓
+Specialist provider
+      ↓
+Normalized discoveries
+      ↓
+Assets + relationships + observations
+      ↓
+Evidence + provenance
+      ↓
+Persistent local workspace
 ```
 
-| Follow the asset | Inspect the evidence | Keep the context |
-| --- | --- | --- |
-| Deduplicated identities and explicit relationships connect discoveries. | Raw output is saved before parsing and verified with SHA-256 when read. | Scope, provider runs, observations, and activity survive core restarts. |
+The goal is not to replace tools like Nmap, Subfinder, HTTPX, Katana, or ffuf. The goal is to make them work like parts of one coherent application.
 
-The app runs locally, with no telemetry or hosted assessment backend. Real providers make network requests when you launch their workflows; Synthetic Recon stays offline.
+> [!NOTE]
+>
+> **Provider output is not the product.** The useful part is understanding what was discovered, how it connects, which provider produced it, and where the original evidence came from.
 
-## Workflows
+MACSPLOIT runs locally on your Mac. There is no hosted assessment backend and no telemetry pipeline.
 
-Seven recon/analysis modes are available today. Each uses the same core orchestration, evidence, and persistence system. Workspace scope can be edited after creation, and the Rust core remains authoritative for every dispatch decision. The web modes (Web Analysis, Web Recon, Content Discovery) work equally against public sites and explicitly scoped local/private targets such as `http://localhost:3000` — see [Test a local application](#test-a-local-application).
+---
 
-### DNS Recon
+## Why build this?
 
-For a real authorized domain or hostname, **DNS Recon works out of the box** with no external scanner installation.
+Security reconnaissance is powerful, but the workflow is often fragmented:
 
-```mermaid
-flowchart LR
-    D["Domain / Hostname"] -->|Native DNS| I[IPAddress]
-```
+- one tool discovers subdomains;
+- another resolves them;
+- another scans ports;
+- another probes HTTP services;
+- another crawls URLs;
+- output formats differ;
+- provenance gets lost;
+- scope decisions live in the analyst's head;
+- revisiting a run means reconstructing what happened.
 
-The built-in resolver performs bounded A/AAAA resolution using the Mac's system resolver configuration, stores raw evidence, and creates scoped `resolves_to` relationships. This is the simplest live workflow to verify after installing MACSPLOIT. DNS Recon also accepts an **IP or an HTTP(S) URL**: a URL's host is used (forward lookup), while an IP target — or a URL whose host is an IP literal, e.g. `http://127.0.0.1/` — gets a **reverse (PTR)** lookup, recorded as `ptr_record` relationships (a PTR observation, not a forward-confirmed mapping). The target must still be in workspace scope.
+MACSPLOIT is built around a different idea:
 
-### Domain Recon
+| Principle | What it means in practice |
+| --- | --- |
+| **Scope is part of execution** | Active providers are dispatched only against assets the Rust core considers authorized. |
+| **Evidence first** | Provider output is captured and hashed before interpretation. |
+| **Normalized discoveries** | Repeated observations can reuse the same asset instead of creating disconnected records. |
+| **Provenance stays attached** | Observations retain provider-run and evidence references. |
+| **Local first** | Workspaces, SQLite state, and evidence remain on the Mac. |
+| **Explicit automation** | Recon stages do not silently launch unrelated follow-up workflows. |
+| **Bounded behavior** | Provider runtimes, output size, crawl depth, rates, and parsing are intentionally constrained. |
 
-Start with an authorized domain. The chain discovers subdomains, resolves their addresses, scans in-scope IPs, and probes discovered HTTP services.
+---
 
-```mermaid
-flowchart LR
-    D[Domain] -->|Subfinder| S[Subdomain]
-    S -->|Native DNS| I[IPAddress]
-    I -->|Nmap| P[Port / Service]
-    P -->|HTTPX| W[Website / Technology]
-```
+## What works today
 
-Subfinder, Nmap, and ProjectDiscovery HTTPX must be installed. DNS is built in. Nmap uses an unprivileged TCP-connect profile with service detection and the top 100 ports; no NSE scripts or root access. A hostname being in scope does **not** authorize scanning every IP it resolves to.
+MACSPLOIT is under active development, but the current beta already supports real workflows.
 
-### IP Recon
+> [!TIP]
+>
+> **Want to see the whole workbench without touching the network?** Start with **Synthetic Recon**. It exercises the orchestration, Assets, relationships, Evidence, Activity, and persistence path using invented targets only.
 
-Start from one explicitly authorized IPv4 or IPv6 address — no domain, no DNS step. The chain reuses the same Nmap and HTTPX providers as Domain Recon.
+| Workflow | Input | Provider(s) | Current behavior |
+| --- | --- | --- | --- |
+| **Synthetic Recon** | Demo domain | Built in | Fully offline end-to-end demonstration |
+| **DNS Recon** | Domain, hostname, IP, URL | Native DNS | A/AAAA forward lookup and PTR reverse lookup |
+| **Domain Recon** | Domain | Subfinder → Native DNS → Nmap → HTTPX | Subdomains, IPs, ports, services, websites, technologies |
+| **IP Recon** | IPv4 / IPv6 | Nmap → HTTPX | Direct port/service and HTTP discovery |
+| **Web Analysis** | HTTP(S) URL | Native HTTP Analysis | Headers, cookie security flags, CORS, redirects, robots metadata |
+| **Web Recon** | HTTP(S) URL | Katana | Bounded same-host URL discovery |
+| **Content Discovery** | HTTP(S) URL | ffuf | Bounded same-host path discovery using a user-selected wordlist |
 
-```mermaid
-flowchart LR
-    A[IPAddress] -->|Nmap| P[Port / Service]
-    P -->|HTTPX| W[Website / Technology]
-```
+### Core workbench
 
-Requires Nmap and HTTPX. Scope stays authoritative: an exact IP or a containing CIDR authorizes the run, but a CIDR is **never** expanded into a sweep — only the one selected IP is scanned, and unrelated workspace IPs are not. The Nmap profile is the same conservative TCP-connect scan; IPv6 adds `-6` and IPv6 probe URLs are bracketed (`http://[2001:db8::10]:443`). IP Recon stops at HTTP probing — no crawling, fuzzing, or vulnerability scanning follows automatically.
+- persistent workspaces;
+- editable authorization scope;
+- normalized assets and relationships;
+- provider runs and observations;
+- original Evidence with SHA-256 verification;
+- activity/event history;
+- provider readiness and version detection;
+- explicit provider installation;
+- guided first-run setup;
+- local/private target support;
+- IPv4, IPv6, localhost, private URLs, and custom ports;
+- cancellation and bounded provider execution.
 
-### Web Recon
+### Provider installation
 
-Select an in-scope HTTP(S) URL and explicitly launch a separate crawl. Domain Recon does not automatically launch Katana.
+Provider Center can detect missing tools and offer supported install methods.
 
-```mermaid
-flowchart LR
-    U["Selected HTTP(S) URL"] -->|Katana| V[Same-host URL assets]
-```
+For **Subfinder, HTTPX, Katana, and ffuf**, MACSPLOIT supports Homebrew or an app-managed install. **Nmap** remains Homebrew / official-installer only.
 
-Katana runs in standard, non-headless mode: depth **2**, a **20-second** crawl budget, a **5-second** request timeout, and bounded response/output sizes. Automatic form filling, authentication flows, and JavaScript crawling are not enabled. The parser accepts valid same-host URLs and drops duplicates and external-host results.
+See [provider documentation](docs/providers.md) for installation behavior and implementation details.
 
-### Web Analysis
+---
 
-Select an explicitly in-scope HTTP(S) URL and run the built-in **Native HTTP Analysis** provider. It does not require Katana or another external HTTP-analysis executable.
+## The asset and evidence model
 
-```mermaid
-flowchart LR
-    U["Selected HTTP(S) URL"] -->|Native HTTP Analysis| H["Headers · cookie flags · CORS · redirects · robots.txt"]
-```
+Every useful result should have context.
 
-The provider is `ACTIVE_LOW_IMPACT` and deliberately bounded. It accepts only HTTP/HTTPS targets, rejects credential-bearing URLs, keeps TLS validation enabled, caps response bodies at **256 KiB**, follows redirects itself, and scope-checks every redirect hop before continuing. Cookie **security attributes** are retained; cookie values are not persisted. The result enriches the Website asset through observations and hashed evidence rather than inventing asset types for individual headers or cookies.
-
-### Content Discovery
-
-Select an in-scope HTTP(S) URL, choose a wordlist, and explicitly launch bounded path discovery with **ffuf**.
-
-```mermaid
-flowchart LR
-    U["Selected HTTP(S) URL"] -->|ffuf + chosen wordlist| P["Same-host URL assets · has_endpoint"]
-```
-
-`ACTIVE` and bounded: the analyst picks the wordlist (nothing bundled or downloaded), which the Rust core validates (≤ 500 entries, ≤ 1 MiB, ≤ 512-byte lines; `#` comments and blanks ignored). ffuf runs with a fixed profile (top status codes, 10 threads, 10 req/s, 5 s timeout, **no redirect following, no recursion**). Accepted results become same-host `URL` assets with `has_endpoint` links; 404s create no asset; raw output is hashed evidence and the stored command redacts the local wordlist path to its file name.
-
-### Synthetic Recon
-
-Exercise the complete orchestration path using invented subdomains, documentation IP addresses, ports, and services. No scanner installation, DNS, or network requests are needed. [Try the offline walkthrough below.](#quick-start)
-
-All five modes feed the **asset graph, evidence, observations, and durable events**, persisted in the local workspace and presented in SwiftUI. See [Recon Chains](docs/recon-chain.md) for stage behavior and failure handling.
-
-## Assets with a history
-
-An asset has a normalized identity. A relationship describes how it connects to another asset. An observation records what a provider reported, retaining its run and evidence reference. Repeated discoveries can reuse the asset while adding observations.
+> [!NOTE]
+>
+> **Assets and observations are intentionally different.** An asset represents normalized identity; observations record what a provider reported during a particular run. Repeated discoveries can therefore add history without duplicating the asset.
 
 ```mermaid
 flowchart TD
-    A[Asset] --> R[Relationship to another asset]
+    T[Target] --> A[Asset]
+    A --> R[Relationship]
     A --> O[Observation]
-    O --> P[Provider run and version]
-    O --> E[Evidence reference]
-    E --> H[Raw output and SHA-256]
+    O --> P[Provider run]
+    O --> E[Evidence]
+    E --> H[SHA-256 verified raw output]
 ```
 
-Current workflows produce **Subdomain, IPAddress, Port, Service, Website, Technology, and URL** assets; domain and URL targets seed their chains. Hostname is also supported by the model. Endpoint and Certificate are model types, not a claim that endpoint analysis or certificate collection is implemented. The asset graph here means persisted data and relationships, not a shipped interactive graph canvas.
+Current workflows can produce:
 
-### How a discovery flows
+- Subdomain
+- Hostname
+- IPAddress
+- Port
+- Service
+- Website
+- Technology
+- URL
 
-Illustrative values only; these are not live results or targets to scan:
+Examples of relationships include:
+
+- `has_subdomain`
+- `resolves_to`
+- `ptr_record`
+- `exposes`
+- `serves`
+- `has_endpoint`
+- `uses_technology`
+
+This lets MACSPLOIT preserve a chain such as:
 
 ```text
 example.test
-  └─ Subfinder → api.example.test
-       └─ Native DNS → 192.0.2.42
-            ├─ Nmap → 443/tcp → https service
-            └─ HTTPX → https://192.0.2.42:443 → technology observations
-
-Explicitly add/select https://192.0.2.42:443 as an in-scope URL target:
-  ├─ Web Recon / Katana → https://192.0.2.42:443/swagger.json
-  └─ Web Analysis / Native HTTP → headers · cookie flags · CORS · redirects · robots.txt
+└─ api.example.test
+   └─ 192.0.2.42
+      ├─ 443/tcp
+      │  └─ HTTPS
+      └─ https://192.0.2.42:443
+         └─ nginx
 ```
 
-HTTPX currently builds probe URLs from IP-based service identities. A path such as `/swagger.json` is only discovered if the crawl actually returns it. Domain relationships and each run's evidence remain in the workspace; starting Web Recon or Web Analysis is an analyst action, not an automatic cross-chain handoff.
+without treating those discoveries as unrelated lines of scanner output.
 
-## Providers
-
-| Provider | Capability | Type | Risk class | Normalized output |
-| --- | --- | --- | --- | --- |
-| **Synthetic** | Offline demonstration | Built in | `PASSIVE` · offline | Subdomains, IPs, ports, services |
-| **Subfinder** | Subdomain discovery | External | `PASSIVE` | Subdomains |
-| **Native DNS** | A/AAAA resolution | Built in | `ACTIVE_LOW_IMPACT` | IP addresses; `resolves_to` links |
-| **Nmap** | Port/service discovery | External | `ACTIVE` | Ports and services; `exposes` / `serves` links |
-| **HTTPX** | HTTP probing and basic technology detection | External | `ACTIVE_LOW_IMPACT` | Websites and technologies |
-| **Katana** | Bounded same-host crawling | External | `ACTIVE_LOW_IMPACT` | URLs; `has_endpoint` links |
-| **Native HTTP Analysis** | HTTP/security metadata analysis | Built in | `ACTIVE_LOW_IMPACT` | Website observations; headers, cookie flags, CORS, redirects, robots evidence |
-| **ffuf** | Bounded path/content discovery | External | `ACTIVE` | Same-host URL assets; `has_endpoint` links |
-
-The app surfaces provider availability, version, and risk. Stages select capabilities through an internal provider contract; SwiftUI never parses scanner output. Native HTTP Analysis is built in and runs independently of Katana. [Provider details](docs/providers.md) · [Installation](#external-providers)
-
-## Evidence and provenance
-
-> **Keep the original result, not just the parser's interpretation.**
-
-```text
-Provider execution → Captured output → Evidence + SHA-256 → Parser
-                                                               ↓
-                                                    Normalized discoveries
-                                                               ↓
-                                              Observations → evidence reference
-```
-
-The core writes the returned execution envelope **before parsing**: provider identity and detected version, command, timings, exit status, and captured stdout/stderr. Evidence stays available when a returned execution reports failure or its parser fails. This preserves the inputs needed to examine or reproduce an interpretation; it does not promise a changing target will return the same result twice.
-
-Evidence is stored in the workspace and SHA-256 checked when opened. Asset observations link back to that evidence and provider run, making attribution inspectable rather than implicit. Evidence files are local and permission-restricted, **not encrypted**; broader redaction and retention controls remain future work.
+---
 
 ## Architecture
 
+MACSPLOIT keeps presentation and core execution concerns separated.
+
+> [!NOTE]
+>
+> **SwiftUI does not parse scanner output.** Provider execution, parsing, normalization, persistence, and Evidence handling stay behind the Rust core boundary.
+
 ```mermaid
 flowchart TD
-    UI["Native SwiftUI app / MACSPLOITKit<br/>Workspaces · Recon · Assets · Evidence · Activity"]
-    CORE["Rust core / macsploit-core<br/>Scope · Assets · Chains · Providers · Evidence · Events"]
-    UI <-->|"Versioned line-delimited JSON over stdin/stdout"| CORE
+    UI["SwiftUI / MACSPLOITKit<br/>Workspaces · Recon · Assets · Evidence · Activity"]
+    CORE["Rust core / macsploit-core<br/>Scope · Providers · Chains · Parsing · Persistence"]
+    UI <-->|"Versioned line-delimited JSON<br/>stdin / stdout"| CORE
     CORE --> DB[(Per-workspace SQLite)]
-    CORE --> FILES[Local evidence files]
-    CORE --> PROVIDERS[Provider registry]
-    PROVIDERS --> N[Built-in native providers<br/>DNS · HTTP Analysis]
-    PROVIDERS --> X[Supervised external tools]
-    PROVIDERS --> S[Offline synthetic provider]
+    CORE --> EV[Evidence files]
+    CORE --> NP[Built-in native providers]
+    CORE --> EP[Supervised external providers]
 ```
 
-| Component | Responsibility |
-| --- | --- |
-| **SwiftUI + MACSPLOITKit** | Native presentation, workspace navigation, recon controls, and typed core communication |
-| **Rust core** | Classification, scope decisions, normalized assets, chain execution, parsing, evidence, and events |
-| **SQLite + evidence files** | Durable workspace state, relationships, observations, run history, and original provider output |
-| **Providers** | Specialized capabilities behind separate metadata, installation, execution, and parsing operations |
+### SwiftUI
 
-The app owns a bundled Rust helper communicating over anonymous pipes; there is no network listener or background service that survives app quit. External processes use executable paths and argument arrays, bounded output, deadlines, and process-group cancellation.
+Responsible for presentation, navigation, workflow controls, setup, provider management, and typed communication with the core.
 
-[Architecture](docs/architecture.md) · [Internal protocol](schemas/internal-protocol-v1.md) · [Provider development](docs/provider-development.md)
+### Rust core
 
-## Safety
+Authoritative for:
 
-**Discovery does not equal authorization.** Scope is part of dispatch, not just a label on a result.
+- target classification;
+- scope decisions;
+- risk policy;
+- process supervision;
+- provider execution;
+- parser bounds;
+- normalized assets and relationships;
+- observations and evidence;
+- persistent chain state.
 
-```text
-Discovery → Scope check → Provider risk policy → Allowed or denied dispatch
-```
+### External tools
 
-Exact host rules, wildcard label boundaries, and IPv4/IPv6 CIDRs determine scope. Out-of-scope assets are not silently fed into active providers. In particular, DNS results are checked independently before Nmap runs, even when the parent domain is authorized.
+External providers are launched with executable paths and argument arrays—not shell command strings—and run through a bounded process supervisor with deadlines, output limits, and process-group cancellation.
 
-`PASSIVE` and `ACTIVE_LOW_IMPACT` providers run on in-scope targets. Launching Domain Recon explicitly authorizes its `ACTIVE` stage, still subject to per-asset scope checks. `VALIDATION` and `LAB_ONLY` are defined risk classes but rejected by current reconnaissance execution.
+Deep dives:
 
-Use MACSPLOIT only on systems you own or are explicitly authorized to assess. The development app runs as your user, is unsandboxed and ad-hoc signed, and is not notarized. [Security model](docs/security-model.md) · [Threat model](docs/threat-model.md)
+- [Architecture](docs/architecture.md)
+- [Security model](docs/security-model.md)
+- [Threat model](docs/threat-model.md)
+- [Recon chains](docs/recon-chain.md)
+- [Internal protocol](schemas/internal-protocol-v1.md)
+- [Provider development](docs/provider-development.md)
 
-### What MACSPLOIT is not
-
-MACSPLOIT is not an automatic exploitation framework, a replacement for every specialist tool, or a cloud service that uploads your assessments. Its role goes beyond launching shell commands: it organizes and correlates specialist tools in a local workbench.
+---
 
 ## Quick start
 
-### First launch
+### Option 1 — Try the complete workflow offline
 
-On first launch MACSPLOIT opens a short **guided setup** before the workbench: a welcome, a required authorization acknowledgement, an environment/provider check (Homebrew is optional — never required), appearance (System/Light/Dark), an interface-detail preference (Standard/Advanced), a dashboard preset (Minimal/Operator/Research), and an optional offline tutorial. Setup is resumable, remembers completion across restarts, and can be re-run anytime from **Settings → Setup & Environment** without affecting workspaces or evidence. Existing data is never touched.
+> [!TIP]
+>
+> **This is the recommended first run.** No external scanner, DNS lookup, or network request is required.
 
-### Run a real built-in workflow
-
-1. Create or select a workspace.
-2. Use **Edit Scope** and add only the domain/host/IP ranges you own or are authorized to assess.
-3. Add the domain as a target.
-4. Open **Recon → DNS Recon** and run it. No external CLI is required.
-5. For **Web Analysis**, add a full HTTP(S) URL target (the UI can create an HTTPS URL target from a selected domain) and run the built-in analyzer.
-
-Full **Domain Recon** additionally requires Subfinder, Nmap, and ProjectDiscovery HTTPX. **Web Recon** requires Katana. MACSPLOIT needs a compatible executable for each — it does **not** require Homebrew; Homebrew is just the recommended macOS install method, and an executable on PATH or an explicit override works too. **Provider Center** shows exactly how your tool environment is configured, and can **install a missing provider** on an explicit click — either with **Homebrew** (a shell-free `brew install`) or, for subfinder/httpx/katana/ffuf, **without Homebrew** via a verified app-managed direct download (a pinned, SHA-256-checked official release archive, extracted safely and installed atomically into MACSPLOIT's own providers directory). Nmap is Homebrew/official only. Every install is explicit and runs asynchronously with live status; MACSPLOIT never installs silently, never uses sudo, never installs Homebrew itself, never runs `curl | sh` or remote scripts, and never updates tools in the background. Recon routes you to Provider Center when something is missing.
-
-If you pick an authorized target that is not yet in workspace scope, Recon offers **Authorize & Run**: it adds only the narrowest exact scope entry (never a wildcard, CIDR, or sibling host), the Rust core re-checks authorization, and only then does the workflow start. Every live Run keeps a visible reminder to assess only systems you own or are explicitly permitted to test.
-
-
-
-### Test a local application
-
-MACSPLOIT does not require a site to be publicly deployed or publicly resolvable. Run an
-authorized app locally and assess it directly — no public DNS, no fake domain, and no
-Domain target first.
-
-```text
-npm run dev            # or: docker compose up  → publishes 127.0.0.1:8080
-# app now listening on localhost:3000
-```
-
-```text
-Workspace scope   localhost          # or 127.0.0.1 / ::1 / a private IP or CIDR / a dev hostname
-Target            http://localhost:3000
-```
-
-1. Create a workspace and, with **Edit Scope**, authorize the local host (the **Use Local
-   App Scope** button fills in `localhost`, `127.0.0.1`, `::1`). Authorizing a host is a
-   deliberate action — being local or private never authorizes a target by itself.
-2. Add a local URL target such as `http://localhost:3000`, `http://127.0.0.1:8080`, or
-   `http://[::1]:8080`. Custom ports and IPv6 URL syntax are supported; a **LOCAL TARGET**
-   tag appears (classification only — not a safety or authorization claim).
-3. Run **Web Analysis** (built in), **Web Recon** (needs Katana), or **Content Discovery**
-   (needs ffuf + a selected wordlist). Each produces the same assets, relationships, and
-   evidence as for a public target.
-
-Custom development names mapped in `/etc/hosts` (for example `127.0.0.1 target-company.test`)
-work through normal system resolution — authorize `target-company.test` in scope and use
-`http://target-company.test:3000`. A Docker Compose service published on `127.0.0.1:8080`
-is just the target `http://127.0.0.1:8080`; MACSPLOIT does not manage containers.
-
-Safety is unchanged for local targets: scope is enforced by the Rust core; `localhost`,
-`127.0.0.1`, and `::1` are distinct authorization identities; cross-host redirects and
-off-host crawl/ffuf results are fail-closed; TLS validation stays on (a self-signed
-`https://localhost` currently surfaces a clear TLS failure — use plain HTTP locally for
-now); and cloud-metadata hosts such as `169.254.169.254` are never auto-added or probed.
-
-### Try MACSPLOIT without touching the network
-
-[Build and launch the app](#build), then use **Synthetic Recon**. No external providers are required for this walkthrough.
+Build and launch the app, create a workspace, then use:
 
 ```text
 Workspace   Test Assessment
@@ -296,27 +253,65 @@ Scope       example.test
             192.0.2.0/24
 ```
 
-1. Create **Test Assessment**, keeping the suggested scope entries above, one per line.
-2. Add `example.test` in the target bar; it should classify as **Domain**.
-3. Open **Recon**, select **Synthetic Recon** and the target, then click **Run**.
-4. Inspect **Assets** and their relationships/observations. Open linked **Evidence** to read verified JSON, and **Activity** to see persisted events. Recon retains stage status and run history.
-5. Quit and reopen the app. The workspace and results should remain; repeat the run to add observations without duplicating normalized assets.
+Open **Recon → Synthetic Recon → Run**.
 
-The first complete synthetic run produces **11 assets, 10 relationships, and 3 evidence records**. Automated bridge tests cover core shutdown/restart persistence. The full on-screen quit/reopen acceptance walkthrough is still pending; see the [verification record](docs/phase-0-verification.md).
+Then inspect:
 
-## Build
+1. **Assets** — normalized discoveries and relationships;
+2. **Evidence** — the original provider output;
+3. **Activity** — durable execution events;
+4. the selected run's stage history.
 
-### Required development tools
+Synthetic Recon uses invented domains and documentation IP ranges only.
 
-| Requirement | Details |
+### Option 2 — Run a built-in real workflow
+
+> [!NOTE]
+>
+> **DNS Recon** and **Web Analysis** are built in, so you can try live workflows before installing any external provider.
+
+For example:
+
+1. Create a workspace.
+2. Add the target and workspace scope.
+3. Open **Recon → DNS Recon**.
+4. Run the workflow.
+5. Inspect the resulting Assets and Evidence.
+
+### Option 3 — Test a local app
+
+> [!TIP]
+>
+> Developing a web app locally? You can point MACSPLOIT directly at `localhost`, loopback, private IPs, custom ports, or development hostnames.
+
+MACSPLOIT works with local and private targets without public DNS.
+
+```text
+Scope    localhost
+Target   http://localhost:3000
+```
+
+You can then explicitly run Web Analysis, Web Recon, or Content Discovery as appropriate.
+
+
+---
+
+## Build from source
+
+### Requirements
+
+| Requirement | Baseline |
 | --- | --- |
-| **macOS** | App deployment target: **13+**. The verified Swift Testing runtime requires **14+** to run the test suite. |
-| **Swift** | **6+**, supplied by Xcode or Apple Command Line Tools; scripts use SwiftPM |
-| **Rust + Cargo** | Stable, **1.90+** baseline for the committed dependency lock |
-| **Git + Python** | Git for the checkout; **Python 3.10+** for repository hooks and policy tests |
-| **GitHub CLI** | Authenticated `gh` is needed for destination verification when pushing, not to launch the app |
+| macOS | App deployment target: **13+** |
+| Swift | **6+** |
+| Rust | Stable, **1.90+** |
+| Python | **3.10+** for repository policy tests |
+| Git | Required |
+| GitHub CLI | Required only for push/destination verification |
 
-Apple Silicon is the primary verified target. Intel builds and older supported macOS versions need separate verification. Initial dependency downloads need network access; automated provider tests use offline fixtures.
+> [!NOTE]
+>
+> **Apple Silicon is the primary verified target.** Intel builds and older supported macOS versions may work, but they need separate verification.
 
 ```sh
 git clone https://github.com/doctordoomies/MACSPLOIT.git
@@ -325,72 +320,155 @@ cd MACSPLOIT
 ./scripts/setup-hooks.sh
 ./scripts/test.sh
 ./scripts/build-macos.sh
+
 open build/MACSPLOIT.app
 ```
 
-For later development launches, `./scripts/run.sh` builds and opens the app. The build script bundles the Rust helper and ad-hoc signs `build/MACSPLOIT.app`. See [development setup](docs/development.md) for toolchain details.
+For later development launches:
 
-Workspace databases and evidence default to `~/Library/Application Support/MACSPLOIT/`, outside the checkout. Build artifacts stay in ignored directories. No external scanner is required to build, launch, or run Synthetic Recon.
+```sh
+./scripts/run.sh
+```
 
-### External providers
+The build script bundles the Rust helper into the app and ad-hoc signs the development build.
 
-Install only the tools needed for the workflows you intend to run. MACSPLOIT detects providers but **does not silently install them**. Synthetic Recon, **DNS Recon**, and Native HTTP Analysis require nothing extra. The Recon screen shows missing external providers, their Homebrew command, and a provider refresh control.
+Workspace data defaults to:
 
-| Workflow | Optional installation commands | Homebrew formula reference |
-| --- | --- | --- |
-| DNS Recon | None — built in | Native DNS resolver |
-| Domain Recon | `brew install subfinder nmap httpx` | [Subfinder](https://formulae.brew.sh/formula/subfinder) · [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
-| IP Recon | `brew install nmap httpx` | [Nmap](https://formulae.brew.sh/formula/nmap) · [HTTPX](https://formulae.brew.sh/formula/httpx) |
-| Web Recon | `brew install katana` | [Katana](https://formulae.brew.sh/formula/katana) |
-| Web Analysis | None — built in | Native provider |
-| Content Discovery | `brew install ffuf` | [ffuf](https://formulae.brew.sh/formula/ffuf) |
+```text
+~/Library/Application Support/MACSPLOIT/
+```
 
-HTTPX here is **ProjectDiscovery's CLI**, not the Python HTTP client. Formula availability and OS support follow Homebrew's current support policy. For executable discovery and explicit path overrides, see [providers](docs/providers.md).
-
-## Roadmap
-
-Build a useful baseline across workbench categories, then deepen provider coverage. **Implemented, planned, and future are distinct:** the [feature matrix](docs/features.md) is authoritative.
-
-| Area | State | What that means today |
-| --- | --- | --- |
-| Workspaces, scope, asset model, evidence, events | **STABLE** | Implemented persistent foundation |
-| Synthetic Recon | **STABLE** | Full offline demonstration |
-| DNS Recon | **BETA** | Built-in A/AAAA resolution for an in-scope Domain/Hostname |
-| Domain Recon providers | **BETA** | Subfinder → DNS → Nmap → HTTPX |
-| IP Recon | **BETA** | One in-scope IPv4/IPv6 → Nmap → HTTPX; no DNS; no CIDR expansion |
-| Web Recon | **BETA** | Bounded Katana crawling |
-| Native HTTP Analysis | **BETA** | Built-in headers, cookie flags, CORS, redirects, and robots analysis |
-| Content Discovery | **BETA** | Bounded ffuf path discovery with a user-selected wordlist |
-| Technology detection | **BETA** | Basic HTTPX fingerprints |
-| JavaScript analysis | **PLANNED** | Deeper web analysis |
-| Historical URLs and JavaScript analysis | **PLANNED** | gau/waybackurls collection; bounded static JS analysis |
-| API discovery and screenshots | **PLANNED** | Web reconnaissance expansion |
-| TLS, vulnerability assessment, findings | **PLANNED** | Conservative detection and evidence-backed correlation |
-| OSINT | **PLANNED** | Username, email, phone, and domain research |
-| Tool Manager | **BETA** | Provider status, version, path, and copy-only setup help |
-| Reporting | **PLANNED** | Exports |
-| Provider SDK | **EXPERIMENTAL** | Documented internal trait; no stable public plugin ABI |
-| Source/secret analysis, cloud/containers | **FUTURE** | Outside the current implementation |
-| Authorized lab, hardware, wireless | **FUTURE** | Separate from normal reconnaissance |
-
-The next documented breadth step is **historical URL intelligence** (gau/waybackurls), followed by JavaScript analysis. The broader sequence then continues through **vulnerability assessment → OSINT → reporting → provider SDK**. These are development directions, not release dates. See the [full roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md).
-
-## Contributing
-
-Help improve a provider or parser, refine normalized asset modeling, polish SwiftUI, add offline fixtures, clarify documentation, or review a security boundary. Start with the [contributing guide](CONTRIBUTING.md), [provider development guide](docs/provider-development.md), [architecture](docs/architecture.md), and [security model](docs/security-model.md).
-
-**Automated security-provider tests must use fixtures, synthetic data, or fake executables.** Keep real assessment data and secrets out of code, tests, issues, and pull requests.
-
-## Security reporting
-
-For a vulnerability **in MACSPLOIT**, use [GitHub private vulnerability reporting](https://github.com/doctordoomies/MACSPLOIT/security/advisories/new) and follow [SECURITY.md](SECURITY.md). Do not open a public issue for an undisclosed vulnerability.
-
-Findings produced while assessing another system belong with that system's authorized reporting process, not the MACSPLOIT issue tracker.
-
-## License
-
-Open source under the [Apache License 2.0](LICENSE).
+See [development setup](docs/development.md) for the full environment.
 
 ---
 
-**MACSPLOIT** · Separate tools. Connected evidence. One workspace.
+## External providers
+
+> [!TIP]
+>
+> You do **not** need every external provider to use MACSPLOIT. Synthetic Recon, DNS Recon, and Native HTTP Analysis work without them.
+
+Install only what you need.
+
+| Workflow | External requirements |
+| --- | --- |
+| Synthetic Recon | None |
+| DNS Recon | None |
+| Web Analysis | None |
+| Domain Recon | Subfinder, Nmap, HTTPX |
+| IP Recon | Nmap, HTTPX |
+| Web Recon | Katana |
+| Content Discovery | ffuf |
+
+Provider Center can detect versions and supported install methods.
+
+HTTPX refers to **ProjectDiscovery HTTPX**, not the Python HTTP client.
+
+---
+
+## Security model
+
+MACSPLOIT's scope, provider risk, evidence, process, and threat boundaries are documented separately so the README can stay focused on the product.
+
+- [Security model](docs/security-model.md)
+- [Threat model](docs/threat-model.md)
+- [Security reporting](SECURITY.md)
+
+---
+
+## Project status
+
+> [!WARNING]
+>
+> MACSPLOIT is **public beta / pre-1.0**. Current workflows are real and tested, but provider contracts, internal protocol details, and parts of the UI can still change before a stable release.
+
+That means:
+
+- the architecture is real and actively tested;
+- workspaces/evidence are persistent;
+- current recon providers are functional;
+- provider and protocol contracts may still change;
+- UI/UX is still being refined;
+- features marked planned or future are not implied to exist.
+
+The current product focus is making real-target workflows easier to understand after execution—especially clear, run-specific Results and final real-target acceptance—before advancing into the later Findings/vulnerability-analysis milestones.
+
+For the source of truth, see:
+
+- [Roadmap](docs/roadmap.md)
+- [Feature matrix](docs/features.md)
+- [Changelog](CHANGELOG.md)
+
+---
+
+## Contributing
+
+Contributions are welcome, especially from people interested in **Rust, Swift/SwiftUI, macOS development, security tooling, parser hardening, testing, and technical documentation**.
+
+> [!TIP]
+>
+> **You do not need to add a whole new scanner to contribute.** Focused UI fixes, parser edge cases, offline fixtures, documentation, migration tests, accessibility work, and security review are all useful.
+
+### Good ways to help
+
+| Area | Example contributions |
+| --- | --- |
+| **SwiftUI / UX** | Workbench polish, accessibility, result presentation, responsive layouts |
+| **Rust core** | Persistence, typed APIs, parser bounds, process supervision, tests |
+| **Providers** | New integrations or improvements to existing provider normalization |
+| **Security review** | Scope boundaries, evidence handling, installer hardening, protocol review |
+| **Testing** | Offline fixtures, malformed-output cases, migration tests, Swift bridge tests |
+| **Docs** | Provider guides, diagrams, tutorials, troubleshooting, screenshots |
+
+### Start here
+
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md).
+2. Skim the [architecture](docs/architecture.md) and [security model](docs/security-model.md).
+3. Check the [open issues](https://github.com/doctordoomies/MACSPLOIT/issues).
+4. Comment on an issue before starting a large architectural change.
+5. Keep automated security-tool tests offline.
+
+A provider contribution should include its risk class, supported targets, scope behavior, machine-readable parsing, bounded execution, evidence handling, and offline fixtures.
+
+> [!NOTE]
+>
+> New ideas are welcome, but MACSPLOIT follows a milestone roadmap. Opening an issue does not automatically make a feature the next implementation task.
+
+---
+
+## Repository map
+
+```text
+MACSPLOIT/
+├── apps/macos/        SwiftUI application + MACSPLOITKit
+├── core/              Rust core, persistence, providers, orchestration
+├── providers/         Provider-related project assets/configuration
+├── schemas/           Versioned internal protocol
+├── fixtures/          Offline provider/test fixtures
+├── tests/             Repository/integration tests
+├── scripts/           Build, test, audit, and policy scripts
+├── docs/              Architecture, roadmap, security, provider docs
+└── assets/            README/project artwork
+```
+
+---
+
+## Security reporting
+
+For vulnerabilities in MACSPLOIT itself, see [SECURITY.md](SECURITY.md).
+
+---
+
+## License
+
+MACSPLOIT is open source under the [Apache License 2.0](LICENSE).
+
+---
+
+<div align="center">
+
+**Separate tools. Connected evidence. One native macOS workspace.**
+
+Built in public at [doctordoomies/MACSPLOIT](https://github.com/doctordoomies/MACSPLOIT).
+
+</div>
