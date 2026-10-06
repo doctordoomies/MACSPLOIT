@@ -27,6 +27,10 @@
 
 MACSPLOIT is a native macOS security workbench that connects specialist reconnaissance tools through a shared model of **targets, assets, relationships, observations, evidence, and provider runs**.
 
+| 🧭 Scope-aware | 🔐 Evidence-first | 🧩 Provider-based | 🖥️ Native macOS |
+| --- | --- | --- | --- |
+| Authorization stays part of dispatch. | Raw provider output is preserved before interpretation. | Built-in and external capabilities share one model. | SwiftUI front end with a Rust core. |
+
 Instead of ending a scan with five terminals and a folder full of unrelated output, MACSPLOIT keeps the context together:
 
 ```text
@@ -45,7 +49,9 @@ Persistent local workspace
 
 The goal is not to replace tools like Nmap, Subfinder, HTTPX, Katana, or ffuf. The goal is to make them work like parts of one coherent application.
 
-> **Provider output is not the product.** The product is being able to understand what was discovered, how it connects, which tool produced it, and where the original evidence came from.
+> [!NOTE]
+>
+> **Provider output is not the product.** The useful part is understanding what was discovered, how it connects, which provider produced it, and where the original evidence came from.
 
 MACSPLOIT runs locally on your Mac. There is no hosted assessment backend and no telemetry pipeline.
 
@@ -83,6 +89,10 @@ MACSPLOIT is built around a different idea:
 
 MACSPLOIT is under active development, but the current beta already supports real workflows.
 
+> [!TIP]
+>
+> **Want to see the whole workbench without touching the network?** Start with **Synthetic Recon**. It exercises the orchestration, Assets, relationships, Evidence, Activity, and persistence path using invented targets only.
+
 | Workflow | Input | Provider(s) | Current behavior |
 | --- | --- | --- | --- |
 | **Synthetic Recon** | Demo domain | Built in | Fully offline end-to-end demonstration |
@@ -110,6 +120,10 @@ MACSPLOIT is under active development, but the current beta already supports rea
 
 ### Provider installation
 
+> [!IMPORTANT]
+>
+> Provider installation is always explicit. MACSPLOIT never installs a scanner in the background, never installs Homebrew for you, and never turns a missing provider into a hidden setup action.
+
 Provider Center can install supported missing tools only after an explicit user action.
 
 For **Subfinder, HTTPX, Katana, and ffuf**, MACSPLOIT supports:
@@ -128,6 +142,10 @@ See [provider documentation](docs/providers.md).
 ## The asset and evidence model
 
 Every useful result should have context.
+
+> [!NOTE]
+>
+> **Assets and observations are intentionally different.** An asset represents normalized identity; observations record what a provider reported during a particular run. Repeated discoveries can therefore add history without duplicating the asset.
 
 ```mermaid
 flowchart TD
@@ -180,6 +198,10 @@ without treating those discoveries as unrelated lines of scanner output.
 
 MACSPLOIT deliberately keeps the GUI and security-sensitive execution logic separated.
 
+> [!IMPORTANT]
+>
+> **SwiftUI does not parse scanner output.** Provider execution, scope policy, parsing, normalization, persistence, and Evidence handling stay behind the Rust core boundary.
+
 ```mermaid
 flowchart TD
     UI["SwiftUI / MACSPLOITKit<br/>Workspaces · Recon · Assets · Evidence · Activity"]
@@ -228,6 +250,10 @@ Deep dives:
 
 ### Option 1 — Try the complete workflow offline
 
+> [!TIP]
+>
+> This is the recommended first run. No external scanner, DNS lookup, or network request is required.
+
 This is the safest way to see how MACSPLOIT works without installing any external scanners or making a network request.
 
 Build and launch the app, create a workspace, then use:
@@ -253,6 +279,10 @@ Synthetic Recon uses invented domains and documentation IP ranges only.
 
 ### Option 2 — Run a built-in real workflow
 
+> [!NOTE]
+>
+> **DNS Recon** and **Web Analysis** are built in. You can test real authorized targets before installing any external provider.
+
 **DNS Recon** and **Web Analysis** require no external provider installation.
 
 For example:
@@ -265,6 +295,10 @@ For example:
 6. Inspect the resulting Assets and Evidence.
 
 ### Option 3 — Test a local app
+
+> [!TIP]
+>
+> Developing a web app locally? You can point MACSPLOIT directly at `localhost`, loopback, private IPs, custom ports, or development hostnames—as long as you explicitly authorize them in workspace scope.
 
 MACSPLOIT works with local and private targets without public DNS.
 
@@ -292,7 +326,9 @@ Local/private classification does **not** imply authorization; the target must s
 | Git | Required |
 | GitHub CLI | Required only for push/destination verification |
 
-Apple Silicon is the primary verified target.
+> [!NOTE]
+>
+> **Apple Silicon is the primary verified target.** Intel builds and older supported macOS versions may work, but they need separate verification.
 
 ```sh
 git clone https://github.com/doctordoomies/MACSPLOIT.git
@@ -325,6 +361,10 @@ See [development setup](docs/development.md) for the full environment.
 
 ## External providers
 
+> [!TIP]
+>
+> You do **not** need every external provider to use MACSPLOIT. Synthetic Recon, DNS Recon, and Native HTTP Analysis work without them.
+
 Install only what you need.
 
 | Workflow | External requirements |
@@ -344,6 +384,10 @@ HTTPX refers to **ProjectDiscovery HTTPX**, not the Python HTTP client.
 ---
 
 ## Safety and authorization
+
+> [!CAUTION]
+>
+> **Discovery is not authorization.** MACSPLOIT is built for systems you own or are explicitly authorized to assess. A discovered hostname, IP, URL, or service is not automatically eligible for an active follow-up step.
 
 MACSPLOIT is built for **systems you own or are explicitly authorized to assess**.
 
@@ -377,6 +421,10 @@ See [Security model](docs/security-model.md).
 
 ## Project status
 
+> [!WARNING]
+>
+> MACSPLOIT is **public beta / pre-1.0**. Current workflows are real and tested, but provider contracts, internal protocol details, and parts of the UI can still change before a stable release.
+
 MACSPLOIT is a **public beta** and is still pre-1.0.
 
 That means:
@@ -402,6 +450,14 @@ For the source of truth, see:
 
 Contributions are welcome, especially from people interested in **Rust, Swift/SwiftUI, macOS development, security tooling, parser hardening, testing, and technical documentation**.
 
+> [!TIP]
+>
+> **You do not need to add a whole new scanner to contribute.** Focused UI fixes, parser edge cases, offline fixtures, documentation, migration tests, accessibility work, and security review are all useful.
+
+> [!IMPORTANT]
+>
+> Automated security-tool tests stay **offline**. Use fixtures, fake executables, synthetic targets, and deterministic local test infrastructure—never real internet assessment data.
+
 ### Good ways to help
 
 | Area | Example contributions |
@@ -423,6 +479,8 @@ Contributions are welcome, especially from people interested in **Rust, Swift/Sw
 
 A provider contribution should include its risk class, supported targets, scope behavior, machine-readable parsing, bounded execution, evidence handling, and offline fixtures.
 
+> [!NOTE]
+>
 > New ideas are welcome, but MACSPLOIT follows a milestone roadmap. Opening an issue does not automatically make a feature the next implementation task.
 
 ---
@@ -448,7 +506,9 @@ MACSPLOIT/
 
 Found a vulnerability **in MACSPLOIT itself**?
 
-Please do **not** open a public issue with undisclosed vulnerability details.
+> [!IMPORTANT]
+>
+> Please do **not** open a public issue containing undisclosed vulnerability details, exploit material, credentials, or real assessment data.
 
 Use [GitHub Private Vulnerability Reporting](https://github.com/doctordoomies/MACSPLOIT/security/advisories/new) and follow [SECURITY.md](SECURITY.md).
 
