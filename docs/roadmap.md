@@ -334,6 +334,18 @@ them manually from raw evidence or the full workspace asset list.
 M1.5 therefore combines the final real-target acceptance matrix with a dedicated
 run-scoped Results experience.
 
+#### M1.5 implementation order
+
+Implementation must proceed data-first:
+
+1. **Issue #50** — persist run-specific discovery metadata on Observations so repeated canonical assets retain what each provider run actually observed.
+2. **Issue #49** — make PARTIAL/FAILED/CANCELLED semantics and durable failure detail accurate.
+3. Expose chain-scoped ProviderRun → Observation / relationship_observations → Evidence provenance through a typed read-only core query.
+4. Add Swift state and workflow-specific Run Results presentation.
+5. Complete the real-target acceptance matrix and owner walkthrough.
+
+Do not build the polished Results UI first and then retrofit provenance.
+
 ### Run-scoped Results requirements
 
 After a run completes, the analyst must be able to answer:
