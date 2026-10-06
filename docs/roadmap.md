@@ -168,6 +168,7 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 ## Important gaps discovered during the product review
 
 - Milestone 1 owner testing exposed provider-setup, authorization-flow, and responsive Recon UI usability gaps tracked by Issue #36;
+- M1.4 owner testing exposed a remaining product gap: scans can complete with correct Evidence while the primary workbench still does not clearly present the discoveries from that run; Issue #45 makes run-results usability part of the M1 exit gate;
 - bug bounty program context is not modeled;
 - there is no Findings system yet;
 - OSINT target types exist, but OSINT providers are not implemented;
@@ -214,9 +215,8 @@ dependencies such as requiring public DNS first.
 ## 1.1 Localhost and private targets
 
 **Issue #20 — DONE via PR #31.** Local/private web-target support is merged and verified.
-Direct IP Recon (1.2) is also complete via PR #35. Milestone 1 remains active because the
-owner-discovered UX stabilization pass (1.3) and the real-target acceptance matrix (1.4)
-are still outstanding.
+Direct IP Recon (1.2) is also complete via PR #35. Milestone 1 remains active because
+M1.5 real-target acceptance and run-results usability are still outstanding.
 
 Support first-class, explicitly scoped web targets such as:
 
@@ -295,9 +295,8 @@ or begin Milestone 2 work as part of this issue.
 
 ## 1.4 First-run setup and onboarding
 
-**Issue #38 — ACTIVE (implemented in an open PR, MERGE GATE; not yet merged).** A fresh
-MACSPLOIT install should guide the user through environment readiness before exposing the
-full workbench.
+**Issue #38 — DONE via PR #41.** Owner-accepted and merged. A fresh MACSPLOIT install
+guides the user through environment readiness before exposing the full workbench.
 
 Required outcomes:
 
@@ -325,9 +324,46 @@ provider-platform decision and is intentionally out of scope. Research/news back
 implementation is not required merely because setup can choose a Research-oriented
 dashboard preset.
 
-## 1.5 Real-target acceptance matrix
+## 1.5 Real-target acceptance and Run Results UX
 
-After Issues #36 and #38 land and receive owner acceptance, add/maintain an acceptance matrix covering at minimum:
+**Issue #45 — ACTIVE.** Owner testing after M1.4 showed that provider execution and raw
+Evidence are not enough: after a scan completes, the primary workbench must make the
+discoveries from that specific run understandable without forcing the user to reconstruct
+them manually from raw evidence or the full workspace asset list.
+
+M1.5 therefore combines the final real-target acceptance matrix with a dedicated
+run-scoped Results experience.
+
+### Run-scoped Results requirements
+
+After a run completes, the analyst must be able to answer:
+
+- what this run discovered;
+- which provider/stage produced each discovery;
+- what relationships were created;
+- whether the run produced zero, partial, failed, or cancelled results;
+- where the relevant Asset and Evidence records are.
+
+The Results surface must:
+
+- be scoped to the selected chain/run rather than merely showing all workspace assets;
+- reconstruct results from durable normalized state/provenance rather than creating a
+  second competing result database;
+- group discoveries meaningfully for DNS, Domain, IP, Web Recon, Web Analysis, and
+  Content Discovery;
+- link discoveries directly to the Asset inspector and Evidence;
+- remain useful after navigating away and reopening the workspace;
+- keep the bounded `ProviderResults` event as a live-console preview rather than turning
+  it into an unbounded results payload;
+- avoid Findings/severity/vulnerability conclusions, which remain Milestone 2 work.
+
+If existing persistence cannot reliably attribute discoveries to a chain/run, add the
+minimal typed provenance necessary. Do not infer durable run ownership from timestamps
+alone when provider-run/observation/evidence relationships can represent it directly.
+
+### Real-target acceptance matrix
+
+Owner acceptance covers at minimum:
 
 - domain;
 - hostname;
@@ -338,14 +374,27 @@ After Issues #36 and #38 land and receive owner acceptance, add/maintain an acce
 - IPv6;
 - custom port.
 
-Automated tests remain offline/fake-provider based. Manual acceptance uses only owned or
-explicitly authorized targets.
+For each applicable workflow, verify that authorization/readiness is understandable,
+execution starts/cancels correctly, completion state is accurate, results are visible and
+understandable, Evidence can be opened, and relevant assets/relationships can be
+inspected. Automated tests remain offline/fake-provider based. Manual acceptance uses only
+owned or explicitly authorized targets.
+
+### Non-goals
+
+Do not pull M2+ work forward merely to make results look richer. In particular, no
+Findings/severity model, Nuclei, CVE conclusions, historical URL provider, AI analyst,
+automatic exploitation/validation, hidden follow-on scans, or broad CIDR scanning.
+
+M1.5 answers **“What did this run discover?”** Milestone 2 Findings answers
+**“What does this mean, and what should become a finding?”**
 
 ## Exit condition
 
-An analyst can begin from an authorized **domain, URL, IP, or local application** and
-reach an appropriate real workflow without creating an artificial public deployment or
-DNS dependency.
+An analyst can begin from an authorized **domain, URL, IP, or local application**, run
+the appropriate real workflow without an artificial public-deployment/DNS dependency,
+and immediately understand the discoveries produced by that run with direct paths to
+Assets and Evidence.
 
 ---
 
@@ -1035,8 +1084,8 @@ After the agent finishes:
 | Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
 | Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
 | Issue #36 — UX stabilization | Milestone 1.3 — DONE via PR #39 |
-| Issue #38 — first-run setup and onboarding | Milestone 1.4 — ACTIVE (MERGE GATE) |
-| Real-target acceptance matrix | Milestone 1.5 — after Issues #36 and #38 |
+| Issue #38 / PR #41 — first-run setup and onboarding | Milestone 1.4 — DONE |
+| Issue #45 — real-target acceptance + Run Results UX | Milestone 1.5 — ACTIVE |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
@@ -1095,13 +1144,13 @@ formal release gate around Core 1.0.
 
 Do **not** start Historical URL Intelligence yet.
 
-M0 is complete; Milestones 1.1 (PR #31), 1.2 (PR #35), and 1.3 UX Stabilization (PR #39)
-are merged with green post-merge CI and Advanced CodeQL. The next execution sequence is:
+M0 is complete; Milestones 1.1 (PR #31), 1.2 (PR #35), 1.3 UX Stabilization (PR #39),
+and 1.4 Setup & Onboarding (PR #41) are merged and owner-accepted. The next execution
+sequence is:
 
-1. complete Issue #38 — Milestone 1.4 First-run Setup & Onboarding (in progress);
-2. complete the Milestone 1.5 real-target acceptance matrix;
-3. owner full-product walkthrough and fix any acceptance bugs;
-4. reach the Milestone 1 exit condition;
-5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
+1. complete Issue #45 — Milestone 1.5 Run Results UX + real-target acceptance;
+2. owner full-product walkthrough and fix any acceptance bugs;
+3. reach the Milestone 1 exit condition;
+4. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
 
 That sequence remains authoritative until this roadmap is deliberately changed.
