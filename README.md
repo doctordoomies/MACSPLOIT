@@ -252,9 +252,7 @@ Deep dives:
 
 > [!TIP]
 >
-> This is the recommended first run. No external scanner, DNS lookup, or network request is required.
-
-This is the safest way to see how MACSPLOIT works without installing any external scanners or making a network request.
+> **This is the recommended first run.** No external scanner, DNS lookup, or network request is required.
 
 Build and launch the app, create a workspace, then use:
 
@@ -389,8 +387,6 @@ HTTPX refers to **ProjectDiscovery HTTPX**, not the Python HTTP client.
 >
 > **Discovery is not authorization.** MACSPLOIT is built for systems you own or are explicitly authorized to assess. A discovered hostname, IP, URL, or service is not automatically eligible for an active follow-up step.
 
-MACSPLOIT is built for **systems you own or are explicitly authorized to assess**.
-
 ```text
 Discovery
    ↓
@@ -424,8 +420,6 @@ See [Security model](docs/security-model.md).
 > [!WARNING]
 >
 > MACSPLOIT is **public beta / pre-1.0**. Current workflows are real and tested, but provider contracts, internal protocol details, and parts of the UI can still change before a stable release.
-
-MACSPLOIT is a **public beta** and is still pre-1.0.
 
 That means:
 
