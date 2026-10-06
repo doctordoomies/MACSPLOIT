@@ -380,6 +380,15 @@ understandable, Evidence can be opened, and relevant assets/relationships can be
 inspected. Automated tests remain offline/fake-provider based. Manual acceptance uses only
 owned or explicitly authorized targets.
 
+### Acceptance blockers discovered during owner testing
+
+Two continuous correctness issues are explicit Milestone 1 exit blockers:
+
+- **Issue #47** — managed-provider duplicate install / rediscovery regression. An already-current managed provider must not trigger a long unnecessary re-download, and managed binaries must remain discoverable across refresh/restart/app replacement.
+- **Issue #48** — provider network-activity metadata/labeling. Provider Center must not describe network-active built-in providers such as Native DNS as "No network activity."
+
+These are not new product milestones and must not displace M1.5 Run Results work. They may be fixed in low-conflict maintenance PRs or alongside M1.5 when appropriate, but both require owner acceptance before Milestone 1 exits.
+
 ### Non-goals
 
 Do not pull M2+ work forward merely to make results look richer. In particular, no
