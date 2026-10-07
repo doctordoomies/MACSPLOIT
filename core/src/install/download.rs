@@ -217,47 +217,46 @@ pub struct UreqTransport {
 
 impl Default for UreqTransport {
     fn default() -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout_connect(std::time::Duration::from_secs(20))
-            .timeout_read(std::time::Duration::from_secs(60))
+        let config = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_connect(Some(std::time::Duration::from_secs(20)))
+            .timeout_recv_response(Some(std::time::Duration::from_secs(60)))
+            .timeout_recv_body(Some(std::time::Duration::from_secs(60)))
             .build();
+        let agent = ureq::Agent::new_with_config(config);
         Self { agent }
     }
 }
 
 impl DownloadTransport for UreqTransport {
     fn get(&self, url: &str, _deadline: Instant, _cancelled: &AtomicBool) -> Result<FetchResponse> {
-        let result = self.agent.get(url).call();
-        let response = match result {
-            Ok(response) => response,
-            // ureq surfaces >= 400 as Error::Status; normalize into a FetchResponse
-            // so the caller's status handling (and failure path) stays uniform.
-            Err(ureq::Error::Status(code, response)) => {
-                return Ok(FetchResponse {
-                    status: code,
-                    location: response.header("location").map(str::to_owned),
-                    content_length: None,
-                    body: Box::new(std::io::empty()),
-                });
-            }
-            Err(error) => {
-                return Err(CoreError::new(
-                    "DownloadFailed",
-                    &format!("Download request failed: {error}"),
-                ))
-            }
-        };
-        let status = response.status();
-        let location = response.header("location").map(str::to_owned);
+        // HTTP status codes are returned as responses; transport/protocol failures
+        // remain errors. Redirects are disabled on the Agent so every hop is
+        // validated by download_inner before another request is made.
+        let response = self.agent.get(url).call().map_err(|error| {
+            CoreError::new(
+                "DownloadFailed",
+                &format!("Download request failed: {error}"),
+            )
+        })?;
+        let status = response.status().as_u16();
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let content_length = response
-            .header("content-length")
-            .and_then(|v| v.parse::<u64>().ok());
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        let body = response.into_body().into_reader();
         Ok(FetchResponse {
             status,
             location,
             content_length,
-            body: Box::new(response.into_reader()),
+            body: Box::new(body),
         })
     }
 }

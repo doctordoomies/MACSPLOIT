@@ -216,32 +216,29 @@ impl WebTransport for UreqTransport {
                 "Web analysis deadline exceeded.",
             ));
         }
-        // redirects(0): the provider follows redirects so every hop is scope-checked.
-        // TLS validation is left at ureq's secure default (never disabled).
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout(budget.min(Duration::from_secs(20)))
+        // The provider follows redirects itself so every hop is scope-checked.
+        // HTTP statuses remain normal responses; only transport/protocol failures
+        // become errors. TLS validation stays at ureq's secure default.
+        let config = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_global(Some(budget.min(Duration::from_secs(20))))
             .build();
-        let response = match agent.request("GET", url).call() {
-            Ok(response) => response,
-            // ureq returns 3xx/4xx/5xx as Error::Status with the response attached.
-            Err(ureq::Error::Status(_, response)) => response,
-            Err(ureq::Error::Transport(transport)) => {
-                return Err(CoreError::new(
-                    "ProviderFailure",
-                    &format!("HTTP transport error: {transport}"),
-                ))
-            }
-        };
-        let status = response.status();
+        let agent = ureq::Agent::new_with_config(config);
+        let response = agent.get(url).call().map_err(|error| {
+            CoreError::new("ProviderFailure", &format!("HTTP transport error: {error}"))
+        })?;
+        let status = response.status().as_u16();
         let mut headers = Vec::new();
-        for name in response.headers_names() {
-            for value in response.all(&name) {
-                headers.push((name.clone(), value.to_owned()));
-            }
+        for (name, value) in response.headers() {
+            headers.push((
+                name.as_str().to_owned(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            ));
         }
         let mut body = Vec::new();
         let _ = response
+            .into_body()
             .into_reader()
             .take(self.body_cap as u64)
             .read_to_end(&mut body);

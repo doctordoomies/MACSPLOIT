@@ -18,7 +18,7 @@ time = { version = "0.3", features = ["formatting"] }
 hickory-resolver = "0.26"
 tokio = { version = "1", features = ["rt", "time", "net", "sync"] }
 roxmltree = "0.21"
-ureq = "2"
+ureq = "3"
 tempfile = "3"
 # Managed provider installation: extract exactly one reviewed executable from a
 # pinned, checksum-verified upstream archive. Minimal feature sets only.
