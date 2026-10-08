@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 public enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", evidence = "Evidence", activity = "Activity"
+    case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", osint = "OSINT", evidence = "Evidence", activity = "Activity"
     case toolManager = "Tool Manager"
     public var id: String { rawValue }
     public var symbol: String {
@@ -11,6 +11,7 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .targets: return "scope"
         case .assets: return "square.stack.3d.up"
         case .recon: return "point.3.connected.trianglepath.dotted"
+        case .osint: return "person.crop.rectangle.stack"
         case .evidence: return "doc.text.magnifyingglass"
         case .activity: return "waveform.path"
         case .toolManager: return "wrench.and.screwdriver"
@@ -59,6 +60,7 @@ public final class WorkspaceModel: ObservableObject {
     public func selectWorkspace(_ id: String) async {
         selectedWorkspaceId = id.isEmpty ? nil : id; snapshot = nil
         selectedTargetId = nil; selectedAssetId = nil; selectedChainId = nil; selectedEvidenceId = nil
+        selectedOSINTChainId = nil; osintTargetId = nil
         lastTargetType = nil; evidenceText = "Select evidence to inspect its verified raw JSON."
         do { try await refresh() } catch { errorMessage = error.localizedDescription }
     }
@@ -71,6 +73,7 @@ public final class WorkspaceModel: ObservableObject {
         if let index = workspaces.firstIndex(where: { $0.id == id }) { workspaces[index] = updated.workspace }
         if selectedTargetId == nil { selectedTargetId = updated.targets.first?.id }
         if selectedChainId == nil { selectedChainId = updated.chains.last?.id }
+        if selectedOSINTChainId == nil { selectedOSINTChainId = updated.osintChains.first?.id }
     }
 
     public func pollOnce() async {
@@ -296,6 +299,88 @@ public final class WorkspaceModel: ObservableObject {
     public var katana: ProviderStatus? { provider("katana") }
     public var nativeHttp: ProviderStatus? { provider("native_http") }
     public var ffuf: ProviderStatus? { provider("ffuf") }
+
+    // MARK: OSINT
+
+    /// Selected OSINT workflow, subject target, and provider. Nothing runs until
+    /// `runOSINT()` is called from an explicit user action; adding a target never
+    /// launches OSINT.
+    @Published public var osintMode: OSINTMode = .username
+    @Published public var osintTargetId: String?
+    @Published public var osintProviderId: String?
+    @Published public var selectedOSINTChainId: String?
+
+    /// Registered providers compatible with the selected OSINT workflow.
+    public var osintProviders: [ProviderStatus] { osintMode.compatibleProviders(providerStatuses) }
+
+    /// The provider that will run: the explicit choice if still compatible, otherwise
+    /// the first compatible provider.
+    public var effectiveOSINTProvider: ProviderStatus? {
+        let providers = osintProviders
+        return providers.first { $0.id == osintProviderId } ?? providers.first
+    }
+
+    /// Workspace targets compatible with the selected OSINT workflow.
+    public var osintTargets: [Target] { osintMode.compatibleTargets(snapshot?.targets ?? []) }
+
+    /// The selected subject, if it is compatible with the selected workflow.
+    public var osintTarget: Target? {
+        let targets = osintTargets
+        return targets.first { $0.id == osintTargetId } ?? targets.first
+    }
+
+    /// Results for the selected OSINT run, from durable core state.
+    public var osintResults: OSINTRunResults? {
+        guard let snapshot else { return nil }
+        return OSINTRunResults.make(snapshot: snapshot, chainId: selectedOSINTChainId)
+    }
+
+    /// Why Run is unavailable, or nil when an explicit run can start.
+    public var osintRunBlocker: String? {
+        if !isConnected { return "The Rust core is not connected." }
+        if snapshot?.chains.contains(where: \.isRunning) == true { return "Another run is in progress. Wait or cancel it." }
+        if osintTarget == nil { return osintMode.targetHint }
+        guard let provider = effectiveOSINTProvider else {
+            return "No registered provider supports \(osintMode.rawValue)."
+        }
+        if !provider.installation.isAvailable {
+            return "\(provider.name) is \(provider.installation.summary.lowercased()). Open Provider Center for setup details, then Refresh."
+        }
+        return nil
+    }
+
+    /// Start one bounded OSINT run for the selected subject with the selected provider.
+    public func runOSINT() async {
+        guard let id = selectedWorkspaceId, let target = osintTarget, osintRunBlocker == nil else {
+            if let blocker = osintRunBlocker { errorMessage = blocker }
+            return
+        }
+        isBusy = true; defer { isBusy = false }
+        var options: [String: JSONValue] = [:]
+        if let provider = effectiveOSINTProvider { options["provider_id"] = .string(provider.id) }
+        do {
+            let chain = try await client.startChain(workspace: id, target: target.id, chain: osintMode.chainKind, options: .object(options))
+            guard selectedWorkspaceId == id else { return }
+            selectedOSINTChainId = chain.id
+            section = .osint
+            try await refresh()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Cancel the selected OSINT run (the core kills the provider process group).
+    public func cancelOSINT() async {
+        guard let id = selectedWorkspaceId, let chain = selectedOSINTChainId else { return }
+        do { try await client.cancelChain(workspace: id, chain: chain); try await refresh() }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Console lines for the selected OSINT run.
+    public var osintConsoleLines: [ConsoleLine] {
+        guard let snapshot, let chain = selectedOSINTChainId else { return [] }
+        return reconConsoleLines(snapshot: snapshot, chainId: chain)
+    }
+
+    public var userScanner: ProviderStatus? { provider("user_scanner") }
 
     public func cancelRecon() async {
         guard let id = selectedWorkspaceId, let chain = selectedChainId else { return }

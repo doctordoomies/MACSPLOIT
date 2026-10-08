@@ -119,7 +119,10 @@ private struct ProviderCard: View {
                 if let setup = provider.setup {
                     if let command = setup.installCommand {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Recommended on macOS: Homebrew (optional)").font(.caption).foregroundStyle(.secondary)
+                            Text(command.hasPrefix("brew ")
+                                 ? "Recommended on macOS: Homebrew (optional)"
+                                 : "Recommended install — run it yourself in Terminal, then Refresh. MACSPLOIT never installs this provider.")
+                                .font(.caption).foregroundStyle(.secondary)
                             HStack {
                                 Text(command).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                                 Button {
@@ -173,7 +176,10 @@ private struct ProviderCard: View {
                     }.controlSize(.small)
                 }
             }
-            if provider.managedDownloadSupported {
+            if !provider.homebrewSupported && !provider.managedDownloadSupported {
+                Text("MACSPLOIT has no in-app install for this provider. Run the recommended command below yourself (for user-scanner, pipx places it in ~/.local/bin, which MACSPLOIT checks), use an existing executable on PATH, or set a provider override; then Refresh.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            } else if provider.managedDownloadSupported {
                 Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). “Install without Homebrew” downloads the verified, checksummed official release into MACSPLOIT’s own providers directory. Or use an existing executable on PATH / a provider override.")
                     .font(.caption2).foregroundStyle(.tertiary)
             } else {

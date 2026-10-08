@@ -59,11 +59,17 @@ private struct AssetInspector: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(observation.discoveredBy).font(.callout.weight(.medium))
                         Text(observation.observedValue).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                        Text(displayTime(observation.timestamp)).font(.caption2).foregroundStyle(.secondary)
+                        Text("\(displayTime(observation.timestamp)) · confidence \(observation.confidence)").font(.caption2).foregroundStyle(.secondary)
                         if let source = observation.sourceAssetId { Text("Source: \(model.assetName(source))").font(.caption) }
                         if let evidence = observation.evidenceId {
                             Button("Open raw evidence") { model.showEvidence(evidence) }.buttonStyle(.link)
                         } else { Text("Analyst-provided target").font(.caption).foregroundStyle(.secondary) }
+                        if let metadata = observation.metadata, metadata != .null {
+                            DisclosureGroup("Run details") {
+                                Text(metadata.pretty).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                            }.font(.caption)
+                        }
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
                 }

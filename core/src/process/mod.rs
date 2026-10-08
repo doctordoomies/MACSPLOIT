@@ -92,6 +92,13 @@ impl ToolConfig {
     /// directory. Only regular, owner-executable files qualify; symlinks are
     /// rejected to avoid surprising indirection.
     pub fn locate(&self, tool: &str) -> Option<PathBuf> {
+        self.locate_in(tool, &[])
+    }
+
+    /// [`locate`](Self::locate) plus provider-specific fallback directories searched
+    /// last (e.g. pipx's `~/.local/bin`, which the app's minimal helper `PATH` omits).
+    /// An explicit override still wins and is never combined with a fallback.
+    pub fn locate_in(&self, tool: &str, fallback: &[PathBuf]) -> Option<PathBuf> {
         if let Some(path) = self.overrides.get(tool) {
             return usable_executable(path);
         }
@@ -105,6 +112,7 @@ impl ToolConfig {
         if let Some(managed) = &self.managed_dir {
             directories.push(managed.clone());
         }
+        directories.extend(fallback.iter().cloned());
         directories
             .into_iter()
             .find_map(|directory| usable_executable(&directory.join(tool)))
@@ -359,6 +367,34 @@ mod tests {
     fn write_exec(path: &Path) {
         std::fs::write(path, "#!/bin/sh\necho hi\n").unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn locate_in_searches_fallback_directories_but_override_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = dir.path().join("pipx-bin");
+        std::fs::create_dir_all(&fallback).unwrap();
+        let tool = fallback.join("macsploit-fallbacktool-xyz");
+        write_exec(&tool);
+        let config = ToolConfig::default();
+        assert_eq!(config.locate("macsploit-fallbacktool-xyz"), None);
+        assert_eq!(
+            config.locate_in(
+                "macsploit-fallbacktool-xyz",
+                std::slice::from_ref(&fallback)
+            ),
+            Some(tool.canonicalize().unwrap())
+        );
+        let mut pinned = ToolConfig::default();
+        pinned.overrides.insert(
+            "macsploit-fallbacktool-xyz".into(),
+            dir.path().join("absent"),
+        );
+        assert_eq!(
+            pinned.locate_in("macsploit-fallbacktool-xyz", &[fallback]),
+            None,
+            "an explicit override is never silently replaced by a fallback"
+        );
     }
 
     #[test]

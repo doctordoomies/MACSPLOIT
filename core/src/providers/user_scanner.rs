@@ -98,6 +98,23 @@ impl UserScannerProvider {
         ]
     }
 
+    /// pipx installs console scripts into `$PIPX_BIN_DIR` or `~/.local/bin`; the
+    /// app starts the core with a minimal `PATH`, so search those last.
+    fn pipx_directories() -> Vec<std::path::PathBuf> {
+        let mut directories = Vec::new();
+        if let Some(dir) = std::env::var_os("PIPX_BIN_DIR") {
+            directories.push(std::path::PathBuf::from(dir));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            directories.push(std::path::PathBuf::from(home).join(".local/bin"));
+        }
+        directories
+    }
+
+    fn locate(tools: &ToolConfig) -> Option<std::path::PathBuf> {
+        tools.locate_in(USER_SCANNER_TOOL, &Self::pipx_directories())
+    }
+
     fn subject_for(target: &str, capability: Capability) -> Result<Subject> {
         let kind = match capability {
             Capability::UsernameOsint => TargetType::Username,
@@ -279,7 +296,7 @@ impl Provider for UserScannerProvider {
     }
 
     fn installation(&self, tools: &ToolConfig) -> Installation {
-        let Some(executable) = tools.locate(USER_SCANNER_TOOL) else {
+        let Some(executable) = Self::locate(tools) else {
             return Installation::Missing;
         };
         let Ok(dir) = Self::private_run_dir() else {
@@ -341,7 +358,7 @@ impl Provider for UserScannerProvider {
         let started_at = crate::now();
         // Re-validate in the provider — the core is the security boundary.
         let subject = Self::subject_for(target, capability)?;
-        let executable = ctx.tools.locate(USER_SCANNER_TOOL).ok_or_else(|| {
+        let executable = Self::locate(ctx.tools).ok_or_else(|| {
             CoreError::new(
                 "ProviderMissing",
                 "user-scanner is not installed. Install it (pipx install user-scanner) and refresh providers.",

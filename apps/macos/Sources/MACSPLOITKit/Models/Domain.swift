@@ -29,6 +29,11 @@ public enum JSONValue: Codable, Sendable, Equatable {
         return .null
     }
     public var string: String? { if case .string(let value) = self { return value }; return nil }
+    public var number: Double? { if case .number(let value) = self { return value }; return nil }
+    public var int: Int? { number.flatMap { $0.isFinite ? Int(exactly: $0.rounded()) : nil } }
+    public var bool: Bool? { if case .bool(let value) = self { return value }; return nil }
+    public var array: [JSONValue] { if case .array(let value) = self { return value }; return [] }
+    public var object: [String: JSONValue] { if case .object(let value) = self { return value }; return [:] }
     public var isFalse: Bool { self == .bool(false) }
     public var pretty: String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -100,6 +105,18 @@ public struct Relationship: Codable, Identifiable, Sendable, Equatable {
 public struct Observation: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetId: String, discoveredBy: String, observedValue: String, timestamp: String, confidence: String
     public let sourceAssetId: String?, providerRunId: String?, evidenceId: String?
+    /// Per-run provider facts (e.g. OSINT upstream status and bounded profile fields).
+    /// Absent for legacy observations and for providers that do not record any.
+    public let metadata: JSONValue?
+
+    public init(id: String, workspaceId: String, assetId: String, discoveredBy: String, observedValue: String,
+                timestamp: String, confidence: String, sourceAssetId: String?, providerRunId: String?,
+                evidenceId: String?, metadata: JSONValue? = nil) {
+        self.id = id; self.workspaceId = workspaceId; self.assetId = assetId; self.discoveredBy = discoveredBy
+        self.observedValue = observedValue; self.timestamp = timestamp; self.confidence = confidence
+        self.sourceAssetId = sourceAssetId; self.providerRunId = providerRunId; self.evidenceId = evidenceId
+        self.metadata = metadata
+    }
 }
 public struct ChainRun: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, targetId: String, name: String, status: String, createdAt: String, updatedAt: String

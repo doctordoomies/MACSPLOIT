@@ -55,7 +55,7 @@ public final class PipeTransport: CoreTransport, @unchecked Sendable {
         var environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
         // MACSPLOIT_DOWNLOAD_FAKE forces the offline managed-download transport; it is
         // only ever set by the test harness, never in production.
-        for key in ["MACSPLOIT_SUBFINDER", "MACSPLOIT_NMAP", "MACSPLOIT_HTTPX", "MACSPLOIT_KATANA", "MACSPLOIT_FFUF", "MACSPLOIT_FFUF_WORDLIST", "MACSPLOIT_WEB_FIXTURE", "MACSPLOIT_TOOLS_DIR", "MACSPLOIT_DNS_FAKE", "MACSPLOIT_DOWNLOAD_FAKE"] {
+        for key in ["MACSPLOIT_SUBFINDER", "MACSPLOIT_NMAP", "MACSPLOIT_HTTPX", "MACSPLOIT_KATANA", "MACSPLOIT_FFUF", "MACSPLOIT_FFUF_WORDLIST", "MACSPLOIT_USER_SCANNER", "MACSPLOIT_WEB_FIXTURE", "MACSPLOIT_TOOLS_DIR", "MACSPLOIT_DNS_FAKE", "MACSPLOIT_DOWNLOAD_FAKE"] {
             if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
         }
         child.environment = environment
