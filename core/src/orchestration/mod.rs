@@ -40,6 +40,8 @@ pub struct ChainRun {
     pub created_at: String,
     pub updated_at: String,
     pub error_code: Option<String>,
+    /// Bounded presentation-safe failure detail retained across restart.
+    pub error_message: Option<String>,
     /// Per-run options (e.g. the validated content-discovery wordlist path). Held
     /// in memory for the live worker only; not persisted (content-discovery runs are
     /// not resumed after a restart), so snapshots default it to Null.
@@ -129,7 +131,7 @@ pub struct Snapshot {
     pub last_sequence: i64,
 }
 
-const CHAIN_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'target_id',target_id,'name',name,'status',status,'created_at',created_at,'updated_at',updated_at,'error_code',error_code) FROM chain_runs";
+const CHAIN_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'target_id',target_id,'name',name,'status',status,'created_at',created_at,'updated_at',updated_at,'error_code',error_code,'error_message',error_message) FROM chain_runs";
 const STAGE_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'position',position,'name',name,'capability',capability,'status',status,'started_at',started_at,'ended_at',ended_at,'provider_id',provider_id) FROM chain_stages";
 
 impl Store {
@@ -390,10 +392,13 @@ impl Store {
             created_at: crate::now(),
             updated_at: crate::now(),
             error_code: None,
+            error_message: None,
             options,
         };
         tx.execute(
-            "INSERT INTO chain_runs VALUES(?1,?2,?3,?4,'PENDING',?5,?5,NULL)",
+            "INSERT INTO chain_runs(
+                id,workspace_id,target_id,name,status,created_at,updated_at,error_code,error_message
+             ) VALUES(?1,?2,?3,?4,'PENDING',?5,?5,NULL,NULL)",
             params![
                 chain.id.to_string(),
                 workspace.to_string(),
@@ -474,33 +479,60 @@ impl Store {
         Ok(())
     }
 
+    fn failure_status(&self, workspace: Id, chain: Id) -> Result<ChainStatus> {
+        let conn = self.connect(workspace)?;
+        let completed_provider_runs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM provider_runs
+             WHERE workspace_id=?1 AND chain_id=?2 AND status='COMPLETED'",
+            params![workspace.to_string(), chain.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(if completed_provider_runs > 0 {
+            ChainStatus::Partial
+        } else {
+            ChainStatus::Failed
+        })
+    }
+
     fn finish_chain(
         &self,
         workspace: Id,
         chain: Id,
         status: ChainStatus,
-        error: Option<&str>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
     ) -> Result<()> {
         let mut conn = self.connect(workspace)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let changed=tx.execute("UPDATE chain_runs SET status=?1,updated_at=?2,error_code=?3 WHERE workspace_id=?4 AND id=?5 AND status IN ('PENDING','RUNNING')",
-            params![encoded(&status),crate::now(),error,workspace.to_string(),chain.to_string()])?;
+        let error_message = error_message
+            .map(presentation_error_message)
+            .filter(|message| !message.is_empty());
+        let changed=tx.execute("UPDATE chain_runs SET status=?1,updated_at=?2,error_code=?3,error_message=?4 WHERE workspace_id=?5 AND id=?6 AND status IN ('PENDING','RUNNING')",
+            params![
+                encoded(&status),
+                crate::now(),
+                error_code,
+                error_message.as_deref(),
+                workspace.to_string(),
+                chain.to_string()
+            ])?;
         if changed == 0 {
             return Ok(());
         }
+
+        // Only stages that actually started receive a failure/cancellation terminal
+        // state. QUEUED stages remain QUEUED to mean "not run because the chain ended".
         let task_status = if status == ChainStatus::Cancelled {
             "CANCELLED"
         } else {
             "FAILED"
         };
-        let unfinished: Vec<Stage> = rows(
+        let started_unfinished: Vec<Stage> = rows(
             &tx,
-            &format!(
-                "{STAGE_SELECT} WHERE chain_id=?1 AND status IN ('QUEUED','RUNNING','PAUSED')"
-            ),
+            &format!("{STAGE_SELECT} WHERE chain_id=?1 AND status IN ('RUNNING','PAUSED')"),
             [chain.to_string()],
         )?;
-        for stage in unfinished {
+        for stage in started_unfinished {
             tx.execute(
                 "UPDATE chain_stages SET status=?1,ended_at=?2 WHERE id=?3",
                 params![task_status, crate::now(), stage.id.to_string()],
@@ -516,17 +548,22 @@ impl Store {
                 json!({"stage_id":stage.id,"status":task_status}),
             )?;
         }
+
+        // Provider runs that actually started must also reach a truthful terminal
+        // state. Do not fabricate an exit code when execution never produced one.
         let active_runs: Vec<String> = {
-            let mut statement =
-                tx.prepare("SELECT id FROM provider_runs WHERE chain_id=?1 AND status='RUNNING'")?;
+            let mut statement = tx.prepare(
+                "SELECT id FROM provider_runs
+                 WHERE chain_id=?1 AND status IN ('RUNNING','PAUSED')",
+            )?;
             let values = statement
-                .query_map([chain.to_string()], |r| r.get(0))?
+                .query_map([chain.to_string()], |row| row.get(0))?
                 .collect::<std::result::Result<_, _>>()?;
             values
         };
         for run in active_runs {
             tx.execute(
-                "UPDATE provider_runs SET status=?1,end_time=?2,exit_status=1 WHERE id=?3",
+                "UPDATE provider_runs SET status=?1,end_time=?2 WHERE id=?3",
                 params![task_status, crate::now(), run],
             )?;
             emit(
@@ -536,6 +573,7 @@ impl Store {
                 json!({"provider_run_id":run,"status":task_status}),
             )?;
         }
+
         emit(
             &tx,
             workspace,
@@ -544,7 +582,12 @@ impl Store {
             } else {
                 EventType::ChainCompleted
             },
-            json!({"chain_id":chain,"status":status,"error_code":error}),
+            json!({
+                "chain_id":chain,
+                "status":status,
+                "error_code":error_code,
+                "error_message":error_message,
+            }),
         )?;
         if status == ChainStatus::Cancelled {
             audit(&tx, workspace, "ReconCancelled", chain)?;
@@ -830,6 +873,7 @@ impl Engine {
                     chain.id,
                     ChainStatus::Failed,
                     Some("Interrupted"),
+                    Some("The previous MACSPLOIT session ended before this Recon Chain completed."),
                 )?;
                 let mut conn = engine.store.connect(workspace.id)?;
                 let tx = conn.transaction()?;
@@ -885,13 +929,17 @@ impl Engine {
                     let state = if error.code == "Cancelled" {
                         ChainStatus::Cancelled
                     } else {
-                        ChainStatus::Failed
+                        engine
+                            .store
+                            .failure_status(workspace, worker_chain.id)
+                            .unwrap_or(ChainStatus::Failed)
                     };
                     let _ = engine.store.finish_chain(
                         workspace,
                         worker_chain.id,
                         state,
                         Some(&error.code),
+                        Some(&error.message),
                     );
                 }
                 Err(_) => {
@@ -900,6 +948,7 @@ impl Engine {
                         worker_chain.id,
                         ChainStatus::Failed,
                         Some("InternalError"),
+                        Some("The Recon Chain failed unexpectedly."),
                     );
                 }
             }
@@ -1086,7 +1135,7 @@ impl Engine {
                 .stage_transition(workspace, stage.id, TaskStatus::Completed)?;
         }
         self.store
-            .finish_chain(workspace, chain.id, ChainStatus::Completed, None)
+            .finish_chain(workspace, chain.id, ChainStatus::Completed, None, None)
     }
 
     fn check_budget(&self, cancelled: &AtomicBool, started: Instant) -> Result<()> {
@@ -1333,6 +1382,288 @@ impl Engine {
         )?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+const CHAIN_ERROR_MESSAGE_MAX_BYTES: usize = 512;
+
+fn presentation_error_message(message: &str) -> String {
+    let normalized: String = message
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let sanitized = normalized
+        .split_whitespace()
+        .map(crate::sanitize::sanitize_display_arg)
+        .collect::<Vec<_>>()
+        .join(" ");
+    clip(&sanitized, CHAIN_ERROR_MESSAGE_MAX_BYTES)
+}
+
+#[cfg(test)]
+mod terminal_state_tests {
+    use super::*;
+
+    fn setup_chain() -> (tempfile::TempDir, Store, Id, ChainRun, Vec<Stage>) {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        let workspace = store
+            .create_workspace(
+                "Terminal state",
+                &["example.test".into(), "*.example.test".into()],
+            )
+            .unwrap();
+        let target = store.add_target(workspace.id, "example.test").unwrap();
+        let chain = store
+            .create_chain(
+                workspace.id,
+                target.id,
+                ChainKind::Synthetic,
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        let stages = store
+            .snapshot(workspace.id)
+            .unwrap()
+            .stages
+            .into_iter()
+            .filter(|stage| stage.chain_id == chain.id)
+            .collect();
+        (temp, store, workspace.id, chain, stages)
+    }
+
+    fn insert_provider_run(
+        store: &Store,
+        workspace: Id,
+        chain: Id,
+        stage: Id,
+        status: &str,
+        exit_status: Option<i32>,
+    ) -> Id {
+        let id = Id::new_v4();
+        let conn = store.connect(workspace).unwrap();
+        conn.execute(
+            "INSERT INTO provider_runs(
+                id,workspace_id,chain_id,stage_id,provider_id,provider_version,target,
+                start_time,end_time,status,raw_output_reference,exit_status
+             ) VALUES(?1,?2,?3,?4,'synthetic','test','example.test','t',?5,?6,NULL,?7)",
+            params![
+                id.to_string(),
+                workspace.to_string(),
+                chain.to_string(),
+                stage.to_string(),
+                if status == "COMPLETED" { Some("t") } else { None },
+                status,
+                exit_status
+            ],
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn first_provider_failure_is_failed_and_unstarted_stages_stay_queued() {
+        let (_temp, store, workspace, chain, stages) = setup_chain();
+        let first_provider = stages.iter().find(|stage| stage.provider_id.is_some()).unwrap();
+        store
+            .stage_transition(workspace, first_provider.id, TaskStatus::Running)
+            .unwrap();
+
+        let status = store.failure_status(workspace, chain.id).unwrap();
+        assert_eq!(status, ChainStatus::Failed);
+        store
+            .finish_chain(
+                workspace,
+                chain.id,
+                status,
+                Some("ProviderMissing"),
+                Some("The provider tool is not installed."),
+            )
+            .unwrap();
+
+        let snapshot = store.snapshot(workspace).unwrap();
+        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        assert_eq!(persisted.status, ChainStatus::Failed);
+        assert_eq!(persisted.error_code.as_deref(), Some("ProviderMissing"));
+        assert_eq!(
+            persisted.error_message.as_deref(),
+            Some("The provider tool is not installed.")
+        );
+        assert_eq!(
+            snapshot
+                .stages
+                .iter()
+                .find(|stage| stage.id == first_provider.id)
+                .unwrap()
+                .status,
+            TaskStatus::Failed
+        );
+        assert!(snapshot
+            .stages
+            .iter()
+            .filter(|stage| stage.position > first_provider.position)
+            .all(|stage| stage.status == TaskStatus::Queued));
+    }
+
+    #[test]
+    fn completed_zero_result_provider_then_failure_is_partial_and_survives_reopen() {
+        let (temp, store, workspace, chain, stages) = setup_chain();
+        let provider_stages: Vec<_> = stages
+            .iter()
+            .filter(|stage| stage.provider_id.is_some())
+            .collect();
+        let completed = provider_stages[0];
+        let failing = provider_stages[1];
+
+        store
+            .stage_transition(workspace, completed.id, TaskStatus::Running)
+            .unwrap();
+        store
+            .stage_transition(workspace, completed.id, TaskStatus::Completed)
+            .unwrap();
+        let completed_run =
+            insert_provider_run(&store, workspace, chain.id, completed.id, "COMPLETED", Some(0));
+
+        store
+            .stage_transition(workspace, failing.id, TaskStatus::Running)
+            .unwrap();
+        let failing_run =
+            insert_provider_run(&store, workspace, chain.id, failing.id, "RUNNING", None);
+
+        let status = store.failure_status(workspace, chain.id).unwrap();
+        assert_eq!(status, ChainStatus::Partial);
+        store
+            .finish_chain(
+                workspace,
+                chain.id,
+                status,
+                Some("ProviderFailure"),
+                Some("Later provider failed."),
+            )
+            .unwrap();
+
+        let snapshot = store.snapshot(workspace).unwrap();
+        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        assert_eq!(persisted.status, ChainStatus::Partial);
+        assert_eq!(persisted.error_message.as_deref(), Some("Later provider failed."));
+        assert_eq!(
+            snapshot
+                .provider_runs
+                .iter()
+                .find(|run| run.id == completed_run)
+                .unwrap()
+                .status,
+            TaskStatus::Completed
+        );
+        let failed_run = snapshot
+            .provider_runs
+            .iter()
+            .find(|run| run.id == failing_run)
+            .unwrap();
+        assert_eq!(failed_run.status, TaskStatus::Failed);
+        assert!(failed_run.end_time.is_some());
+        assert_eq!(failed_run.exit_status, None);
+        assert!(snapshot
+            .stages
+            .iter()
+            .filter(|stage| stage.position > failing.position)
+            .all(|stage| stage.status == TaskStatus::Queued));
+
+        drop(store);
+        let reopened = Store::open(temp.path()).unwrap();
+        let reopened_snapshot = reopened.snapshot(workspace).unwrap();
+        let reopened_chain = reopened_snapshot
+            .chains
+            .iter()
+            .find(|run| run.id == chain.id)
+            .unwrap();
+        assert_eq!(reopened_chain.status, ChainStatus::Partial);
+        assert_eq!(
+            reopened_chain.error_code.as_deref(),
+            Some("ProviderFailure")
+        );
+        assert_eq!(
+            reopened_chain.error_message.as_deref(),
+            Some("Later provider failed.")
+        );
+    }
+
+    #[test]
+    fn cancellation_preserves_completed_progress_and_marks_only_started_work_cancelled() {
+        let (_temp, store, workspace, chain, stages) = setup_chain();
+        let provider_stages: Vec<_> = stages
+            .iter()
+            .filter(|stage| stage.provider_id.is_some())
+            .collect();
+        let completed = provider_stages[0];
+        let active = provider_stages[1];
+
+        store
+            .stage_transition(workspace, completed.id, TaskStatus::Running)
+            .unwrap();
+        store
+            .stage_transition(workspace, completed.id, TaskStatus::Completed)
+            .unwrap();
+        insert_provider_run(&store, workspace, chain.id, completed.id, "COMPLETED", Some(0));
+        store
+            .stage_transition(workspace, active.id, TaskStatus::Running)
+            .unwrap();
+        let active_run =
+            insert_provider_run(&store, workspace, chain.id, active.id, "RUNNING", None);
+
+        store
+            .finish_chain(
+                workspace,
+                chain.id,
+                ChainStatus::Cancelled,
+                Some("Cancelled"),
+                Some("Recon Chain cancelled."),
+            )
+            .unwrap();
+
+        let snapshot = store.snapshot(workspace).unwrap();
+        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        assert_eq!(persisted.status, ChainStatus::Cancelled);
+        assert_eq!(
+            snapshot
+                .provider_runs
+                .iter()
+                .find(|run| run.id == active_run)
+                .unwrap()
+                .status,
+            TaskStatus::Cancelled
+        );
+        assert!(snapshot
+            .stages
+            .iter()
+            .filter(|stage| stage.position > active.position)
+            .all(|stage| stage.status == TaskStatus::Queued));
+    }
+
+    #[test]
+    fn durable_error_message_is_bounded_control_free_and_redacts_url_queries() {
+        let (_temp, store, workspace, chain, _stages) = setup_chain();
+        let message = format!(
+            "Request failed at https://example.test/path?token=secret\n{}\u{7}",
+            "x".repeat(700)
+        );
+        store
+            .finish_chain(
+                workspace,
+                chain.id,
+                ChainStatus::Failed,
+                Some("ProviderFailure"),
+                Some(&message),
+            )
+            .unwrap();
+
+        let snapshot = store.snapshot(workspace).unwrap();
+        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        let detail = persisted.error_message.as_deref().unwrap();
+        assert!(detail.len() <= CHAIN_ERROR_MESSAGE_MAX_BYTES);
+        assert!(!detail.chars().any(char::is_control));
+        assert!(!detail.contains("secret"));
+        assert!(detail.contains("https://example.test/path?<redacted>"));
     }
 }
 
