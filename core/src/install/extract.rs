@@ -87,13 +87,19 @@ fn extract_zip(archive_path: &Path, member: &str, dest: &Path, max: u64) -> Resu
         let entry = archive
             .by_index(index)
             .map_err(|e| unsafe_archive(&format!("Malformed ZIP entry: {e}")))?;
-        // `enclosed_name` is `None` for absolute paths or leading `..` traversal.
+        // Validate the archive's original filename before asking zip to produce
+        // an enclosed path. Newer zip releases may normalize internal `..`
+        // components when deriving an enclosed name; MACSPLOIT intentionally
+        // rejects aliases such as `sub/../subfinder` instead of accepting a
+        // normalized equivalent.
+        if !is_safe_relative(Path::new(entry.name())) {
+            return Err(unsafe_archive("ZIP entry has an unsafe path."));
+        }
+        // `enclosed_name` provides a second path-safety check for absolute,
+        // traversal, platform-prefix, and malformed paths.
         let Some(name) = entry.enclosed_name() else {
             return Err(unsafe_archive("ZIP entry has an unsafe path."));
         };
-        // Defense in depth: reject any non-normal component (`.`, internal `..`),
-        // since `enclosed_name` does not collapse them. Real release archives use
-        // plain top-level names, so this never rejects a legitimate artifact.
         if !is_safe_relative(&name) {
             return Err(unsafe_archive("ZIP entry has an unsafe path."));
         }
@@ -189,6 +195,24 @@ mod tests {
         zip::write::FileOptions::default().unix_permissions(0o755)
     }
 
+    // zip v8 normalizes names passed to ZipWriter, which makes it unsuitable for
+    // constructing hostile path fixtures directly. Patch a same-length filename
+    // in both the local and central directory records so the reader sees the raw
+    // archive spelling an attacker could supply.
+    fn patch_zip_entry_name(path: &Path, from: &[u8], to: &[u8]) {
+        assert_eq!(from.len(), to.len());
+        let mut bytes = std::fs::read(path).unwrap();
+        let mut replacements = 0;
+        for offset in 0..=bytes.len().saturating_sub(from.len()) {
+            if &bytes[offset..offset + from.len()] == from {
+                bytes[offset..offset + to.len()].copy_from_slice(to);
+                replacements += 1;
+            }
+        }
+        assert_eq!(replacements, 2, "expected local and central ZIP filenames");
+        std::fs::write(path, bytes).unwrap();
+    }
+
     #[test]
     fn zip_extracts_only_the_member_ignoring_junk() {
         let dir = tmp();
@@ -263,13 +287,16 @@ mod tests {
     fn zip_rejects_internal_dotdot_component() {
         let dir = tmp();
         let archive = zip_with(dir.path(), |w| {
-            w.start_file("sub/../subfinder", opts()).unwrap();
+            w.start_file("sub/aa/subfinder", opts()).unwrap();
             w.write_all(b"x").unwrap();
         });
+        patch_zip_entry_name(&archive, b"sub/aa/subfinder", b"sub/../subfinder");
+
         let dest = dir.path().join("out");
         let err =
             extract_member(&archive, ArchiveFormat::Zip, "subfinder", &dest, 1024).unwrap_err();
         assert_eq!(err.code, "UnsafeArchive");
+        assert!(!dest.exists());
     }
 
     #[test]

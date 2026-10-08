@@ -9,6 +9,16 @@
       "sha": "d3b76dd0d2ee616cb27867e689306ff991a28467",
       "source": "Dependabot PR #4",
       "reason": "Reviewed roxmltree 0.21.1 dependency update retained in main history after merge."
+    },
+    {
+      "sha": "eee412caa322db1ccd4214dd0b0cf5f817c266d6",
+      "source": "Dependabot PR #55",
+      "reason": "Reviewed actions/cache v6 dependency update retained in main history after merge."
+    },
+    {
+      "sha": "e229cef506049806263bf47e227f8d5e9b24cf3f",
+      "source": "Dependabot PR #52",
+      "reason": "Reviewed uuid 1.27.0 and tokio 1.53.2 dependency update retained in main history after merge."
     }
   ]
 }
