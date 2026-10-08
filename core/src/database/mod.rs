@@ -121,10 +121,7 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("../../migrations/005_chain_error_message.sql"))
             .map_err(|_| {
-                CoreError::new(
-                    "MigrationFailure",
-                    "Chain-error-detail migration failed.",
-                )
+                CoreError::new("MigrationFailure", "Chain-error-detail migration failed.")
             })?;
         tx.pragma_update(None, "user_version", 5)?;
         tx.commit()?;
