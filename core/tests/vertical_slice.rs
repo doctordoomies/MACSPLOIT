@@ -189,7 +189,12 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
     let (temp, engine, workspace, target) = setup();
 
     engine
-        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let first = wait(&engine, workspace);
     let run_a = first.provider_runs[0].id;
@@ -224,7 +229,12 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
         .unwrap();
 
     engine
-        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let second = wait(&engine, workspace);
     let run_b = second
@@ -311,15 +321,24 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
         .filter(|o| o.asset_id == persisted_url.id)
         .collect();
     assert_eq!(persisted_observations.len(), 2);
-    assert!(persisted_observations.iter().any(|o| o.metadata["status"] == 200));
-    assert!(persisted_observations.iter().any(|o| o.metadata["status"] == 403));
+    assert!(persisted_observations
+        .iter()
+        .any(|o| o.metadata["status"] == 200));
+    assert!(persisted_observations
+        .iter()
+        .any(|o| o.metadata["status"] == 403));
 }
 
 #[test]
 fn discovery_metadata_is_object_only_and_bounded() {
     let (_temp, engine, workspace, target) = setup();
     engine
-        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
         .unwrap();
     let before = wait(&engine, workspace);
     let run = before.provider_runs[0].id;
