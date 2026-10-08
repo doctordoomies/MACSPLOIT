@@ -101,17 +101,22 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
             }
             tx.pragma_update(None, "user_version", 3)?;
             tx.commit()?;
-            if version < 4 {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(include_str!("../../migrations/004_observation_metadata.sql"))
-            .map_err(|_| CoreError::new("MigrationFailure", "Observation-metadata migration failed."))?;
-        tx.pragma_update(None, "user_version", 4)?;
-        tx.commit()?;
-    }
-    Ok(())
+            Ok(())
         })();
         conn.pragma_update(None, "foreign_keys", true)?;
         result?;
+    }
+    if version < 4 {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("../../migrations/004_observation_metadata.sql"))
+            .map_err(|_| {
+                CoreError::new(
+                    "MigrationFailure",
+                    "Observation-metadata migration failed.",
+                )
+            })?;
+        tx.pragma_update(None, "user_version", 4)?;
+        tx.commit()?;
     }
     Ok(())
 }
