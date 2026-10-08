@@ -71,17 +71,21 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Username (Sherlock/Maigret) | PLANNED | |
-| Email (Holehe/theHarvester) | PLANNED | |
+| OSINT framework (typed contract) | BETA | `USERNAME_OSINT`/`EMAIL_OSINT` capabilities, `username_osint`/`email_osint` chains with explicit provider selection, identifier-subject authorization, `Username`/`EmailAddress`/`Account` assets, `has_account`/`profile_url` relationships, per-run observation metadata, report-artifact evidence, `PARTIAL` runs — see [OSINT](osint.md). Pending owner macOS acceptance |
+| Username OSINT — user-scanner | BETA | Issue #22. Dedicated OSINT workflow; user-scanner 1.5.x; one bounded scan (no recursion, no breach data, no proxies, notifying modules skipped, NSFW excluded); cancellable; results survive restart. No partial results on cancel/timeout (upstream writes JSON only at the end) |
+| Email OSINT — user-scanner | BETA | Same provider and boundaries; registrations without URLs become `Account` assets |
+| Username — Sherlock / Maigret / socialscan | PLANNED | Fit the shared OSINT contract; not implemented |
+| Email — Holehe / socialscan / theHarvester | PLANNED | Not implemented |
 | Phone (PhoneInfoga) | PLANNED | |
-| Domain OSINT | PLANNED | |
+| Domain OSINT (theHarvester, passive Amass, native RDAP, certificate transparency) | PLANNED | |
+| Identity correlation | PLANNED | Nothing merges accounts/people today; correlation must be explicit and reviewable |
 | Source/secret analysis (Gitleaks/TruffleHog/Semgrep) | FUTURE | Only on explicitly selected repos/files |
 
 ## Platform & tooling
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, copy-only setup help, and explicit per-provider install (Homebrew, or verified managed download for subfinder/httpx/katana/ffuf) — see the Provider installation row |
+| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, copy-only setup help, and explicit per-provider install (Homebrew, or verified managed download for subfinder/httpx/katana/ffuf) — see the Provider installation row. user-scanner is copy-only (`pipx install user-scanner`) with a supported-version check (1.5.x) |
 | Provider/plugin SDK | EXPERIMENTAL | Internal trait documented; no stable public ABI pre-1.0 |
 | Reporting exports | PLANNED | |
 | Workspace delete/export | PLANNED | Data location documented today |

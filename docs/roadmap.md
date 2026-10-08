@@ -170,7 +170,8 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 - Milestone 1 owner testing exposed provider-setup, authorization-flow, and responsive Recon UI usability gaps tracked by Issue #36;
 - bug bounty program context is not modeled;
 - there is no Findings system yet;
-- OSINT target types exist, but OSINT providers are not implemented;
+- OSINT target types existed without providers (being addressed by Milestone 6: the
+  OSINT foundation and user-scanner slice are in review; other OSINT providers remain);
 - reports/exports are not implemented;
 - historical URLs, JavaScript analysis, API discovery, and screenshots remain planned.
 
@@ -644,6 +645,10 @@ cross-validation; provider count alone is not a success metric.
 
 ## 6.0 OSINT framework foundation
 
+**MERGE GATE — implemented in the OSINT foundation PR (Issue #58 / #22), awaiting owner
+review and macOS acceptance.** See [OSINT](osint.md) for the typed contract, model, and
+limits. Phone/Domain target compatibility arrives with their providers (6.3/6.4).
+
 Before multiplying tools, make OSINT a first-class typed workflow:
 
 - explicit OSINT capabilities in the Rust provider contract;
@@ -660,7 +665,9 @@ Do not create a second orchestration system.
 
 ## 6.1 Username + public-profile OSINT
 
-**Issue #22 — user-scanner is the first implementation slice.**
+**Issue #22 — user-scanner is the first implementation slice. MERGE GATE:** Username
+and Email OSINT through user-scanner 1.5.x are implemented in the OSINT foundation PR.
+Sherlock, Maigret, and socialscan remain to be integrated.
 
 Provider set to evaluate/integrate:
 
@@ -674,6 +681,9 @@ Use public profile/account results, bounded metadata, evidence, and uncertainty.
 matching handle across sites is not proof that all accounts belong to one person.
 
 ## 6.2 Email OSINT
+
+user-scanner email OSINT is implemented in the same PR (MERGE GATE). Holehe,
+socialscan, and theHarvester remain.
 
 Provider set to evaluate/integrate:
 

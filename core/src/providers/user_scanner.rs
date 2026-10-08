@@ -62,8 +62,9 @@ pub const REQUEST_TIMEOUT_SECS: u32 = 10;
 /// Bounded upstream concurrency (default upstream: 60 username / 25 email).
 pub const USERNAME_CONCURRENCY: u32 = 20;
 pub const EMAIL_CONCURRENCY: u32 = 8;
-/// Wall-clock limit for one run. A full catalog scan is ~2,400 username modules or
-/// ~200 email modules; upstream bounds each module at its request timeout + 10 s.
+/// Wall-clock limit for one run. A full catalog scan is ~2,490 username modules or
+/// ~190 email modules (1.5.2.1, NSFW excluded); upstream bounds each module at its
+/// request timeout + 10 s.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(900);
 /// Upstream versions whose CLI/defaults/JSON schema were verified.
 pub const SUPPORTED_SERIES: &str = "1.5.";

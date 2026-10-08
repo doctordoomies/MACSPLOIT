@@ -1,28 +1,41 @@
 # Providers
 
 Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, two
-built-in native providers (DNS, HTTP analysis), and five real external providers:
+built-in native providers (DNS, HTTP analysis), and six real external providers:
 Subfinder (passive), Nmap (active), HTTPX (active-low-impact), Katana
-(active-low-impact), and ffuf (active content discovery).
+(active-low-impact), ffuf (active content discovery), and user-scanner (OSINT,
+active-low-impact against third-party public platforms).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
 types, risk, and an `offline` flag. `installation` reports whether a real tool is
 present (INSTALLED/MISSING/UNSUPPORTED_VERSION/EXECUTION_ERROR) or that a provider
 is native (BUILT_IN). `execute` returns a structured
-`Execution` (command, stdout, stderr, exit status, pid, timings) captured by the
-centralized process supervisor; `parse` consumes that `Execution`. A registry
+`Execution` (command, stdout, stderr, exit status, pid, timings, optional bounded
+structured `artifacts` such as a JSON report file, and a `cancelled` flag) captured by
+the centralized process supervisor; `parse` consumes that `Execution`. Artifacts are
+persisted as their own hashed evidence before parsing, and a cancelled execution still
+persists its evidence. `parse_outcome` (default: wraps `parse`) can additionally report
+a partial run and a bounded summary; a partial run finishes its chain as `PARTIAL`. A registry
 selects by capability and supported target type, or by a stage-pinned provider id
 when a capability is offered by more than one provider. SwiftUI never selects
 executables or parses raw provider output. This is an internal interface, not a
 third-party plugin ABI.
 
 Implemented capabilities: SUBDOMAIN_DISCOVERY, DNS_RESOLUTION, PORT_DISCOVERY,
-SERVICE_FINGERPRINTING, HTTP_PROBING, WEB_CRAWLING. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
+SERVICE_FINGERPRINTING, HTTP_PROBING, WEB_CRAWLING, WEB_ANALYSIS, CONTENT_DISCOVERY,
+USERNAME_OSINT, EMAIL_OSINT. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
 VALIDATION, LAB_ONLY. Passive and low-impact work runs on any in-scope target;
 full ACTIVE work (Nmap) is authorized by the analyst explicitly launching the
 chain and is still re-checked against per-asset scope before execution;
 validation/lab are rejected.
+
+OSINT capabilities operate on an identifier subject (an explicitly added Username or
+Email target), not on a workspace host: the provider queries third-party public
+platforms and never contacts subject-owned infrastructure, so host scope does not
+apply to the identifier. An OSINT run is authorized by the explicit target plus the
+explicit Run action, and only PASSIVE or ACTIVE_LOW_IMPACT OSINT providers may run
+(`scope::authorize_osint_subject`). See [OSINT](osint.md).
 
 The URL-based web providers (KatanaProvider, NativeHttpProvider, FfufProvider) accept an
 explicitly scoped local/private URL target (`localhost`, loopback, `::1`, a private
@@ -52,6 +65,7 @@ installation output is status only and never enters workspace evidence.
 | Katana | `katana` | supported (pinned v1.8.0, arm64/x86_64) | GitHub releases |
 | ffuf | `ffuf` | supported (pinned v2.3.0, arm64/x86_64) | GitHub releases |
 | Nmap | `nmap` | not appropriate (privileged .dmg) | nmap.org |
+| user-scanner | none (Python package) | not offered | copy-only `pipx install user-scanner` (PyPI) |
 
 - **Install with Homebrew (implemented):** MACSPLOIT locates the `brew` executable
   (resolving a Homebrew symlink) and runs `brew install <reviewed formula>` as an
@@ -339,6 +353,29 @@ explicitly selected in-scope HTTP(S) URL with a user-chosen wordlist.
 **Manual installation.** Install ffuf yourself (`brew install ffuf`); MACSPLOIT never
 installs it. Automated tests use `fixtures/fake-ffuf.sh` + a small fixture wordlist.
 
+## UserScannerProvider
+
+Status: **BETA** (Milestone 6 / Issue #22). `user_scanner`, risk **ACTIVE_LOW_IMPACT**,
+capabilities USERNAME_OSINT and EMAIL_OSINT, supported target types Username and
+EmailAddress. Runs only from the dedicated `username_osint` / `email_osint` chains.
+
+- **Supported upstream:** user-scanner 1.5.x (verified 1.5.0–1.5.2.1 source; fixtures
+  model 1.5.2.1). Other versions show *Unsupported version* and do not run.
+- **Discovery:** `MACSPLOIT_USER_SCANNER`, then `PATH`, Homebrew dirs, the managed
+  dir, then `$PIPX_BIN_DIR` and `~/.local/bin`. Never installed by MACSPLOIT.
+- **Argv:** `--username=<handle>` | `--email=<address>`, `--no-nsfw --stop 1
+  --concurrency 20|8 --timeout 10 --format json --output <private-run-dir>/results.json`,
+  with a private per-run `USER_SCANNER_CONFIG` that disables upstream's PyPI update
+  check/prompt. Never passed: `--cross-scan`, `--hudson`, proxies, `--allow-loud`,
+  `--email-domains`, file inputs, `--update`.
+- **Bounds:** 15-minute timeout, 256 KiB stdout / 64 KiB stderr, 1 MiB report, 5,000
+  records, 250 accounts, bounded strings/URLs/metadata.
+- **Model:** subject asset + run summary; `Account` (`has_account`) per positive
+  platform; validated profile `URL` (`profile_url`); per-run observation metadata with
+  upstream status and `REPORTED` confidence. Details and limitations: [OSINT](osint.md).
+
+Automated tests use `fixtures/fake-user-scanner.sh` and `fixtures/user-scanner/*.json`.
+
 ## Next adapter boundary
 
 Next Phase 2 work: historical URL intelligence (gau/waybackurls), then JavaScript
@@ -356,18 +393,17 @@ or interpolate target input into a shell.
 Open **Tool Manager** in the sidebar to inspect every registered provider, even
 without a selected workspace. The Rust core must be connected to load or refresh
 status. The view renders `ProviderRegistry` / `list_providers` generically; new
-providers appear once registered, without dedicated Swift cards. The ffuf provider
-merged separately during this work already appears through the same view; future
-providers such as user-scanner need no special rendering. This does not implement
-new providers or change their roadmap.
+providers appear once registered, without dedicated Swift cards. The ffuf and
+user-scanner providers appear through the same view with no special rendering.
 
 Each card shows provider identity, description, capabilities, target types, risk,
 offline/network behavior, built-in/external status, and installation diagnostics.
 Built In, Installed, Missing, Unsupported, and Error remain distinct. Installed
 external tools expose the core-resolved executable path and detected version;
 unrecognized version output is explicitly **Version unknown**. Version probes
-that fail or time out report Error. No minimum-version policy is introduced here;
-Unsupported is supported by the schema/UI for providers that enforce one.
+that fail or time out report Error. user-scanner is the first provider with a
+version policy: anything outside 1.5.x (including an unrecognized version) reports
+Unsupported and cannot run.
 
 Refresh uses the existing bounded local version probes. It does not run a recon
 chain or reconnect the core. Duplicate refreshes are disabled; a failed request

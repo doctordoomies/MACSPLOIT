@@ -102,6 +102,8 @@ MACSPLOIT is under active development, but the current beta already supports rea
 | **Web Analysis** | HTTP(S) URL | Native HTTP Analysis | Headers, cookie security flags, CORS, redirects, robots metadata |
 | **Web Recon** | HTTP(S) URL | Katana | Bounded same-host URL discovery |
 | **Content Discovery** | HTTP(S) URL | ffuf | Bounded same-host path discovery using a user-selected wordlist |
+| **Username OSINT** (beta) | @username | user-scanner | Public-platform account checks; one bounded scan, no recursion/breach data/proxies — see [OSINT](docs/osint.md) |
+| **Email OSINT** (beta) | Email address | user-scanner | Public registration checks; notifying modules skipped |
 
 ### Core workbench
 
@@ -359,6 +361,7 @@ Install only what you need.
 | IP Recon | Nmap, HTTPX |
 | Web Recon | Katana |
 | Content Discovery | ffuf |
+| Username / Email OSINT | user-scanner 1.5.x (`pipx install user-scanner`; MACSPLOIT never installs it) |
 
 Provider Center can detect versions and supported install methods.
 
