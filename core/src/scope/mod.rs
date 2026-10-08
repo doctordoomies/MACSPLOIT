@@ -105,6 +105,39 @@ pub fn authorize(
     Ok(())
 }
 
+/// Authorization for an OSINT run on an identifier subject (Username/EmailAddress).
+///
+/// Workspace scope lists hosts/networks the analyst may actively test. An OSINT
+/// subject is an identifier, not a network destination: the provider queries
+/// third-party public platforms with it and never contacts subject-owned
+/// infrastructure. Host scope therefore cannot authorize (or forbid) the subject;
+/// authorization is the explicitly added workspace target plus the analyst's
+/// explicit Run action. The risk policy still applies: only Passive and
+/// ActiveLowImpact OSINT providers may run, and validation/lab/active work is
+/// rejected here. Discovered profile URLs are recorded with their real scope
+/// status and are never dispatched to another provider automatically.
+pub fn authorize_osint_subject(kind: TargetType, risk: RiskClass, approved: bool) -> Result<()> {
+    if !matches!(kind, TargetType::Username | TargetType::EmailAddress) {
+        return Err(CoreError::new(
+            "InvalidTarget",
+            "OSINT requires a username or email target.",
+        ));
+    }
+    if !matches!(risk, RiskClass::Passive | RiskClass::ActiveLowImpact) {
+        return Err(CoreError::new(
+            "ScopeViolation",
+            "Only passive or low-impact OSINT providers may run on an identifier subject.",
+        ));
+    }
+    if !approved {
+        return Err(CoreError::new(
+            "ScopeViolation",
+            "OSINT runs require an explicit analyst action.",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +165,18 @@ mod tests {
         ] {
             assert!(!contains(&entries(), input));
         }
+    }
+    #[test]
+    fn osint_subjects_need_identifier_type_low_risk_and_approval() {
+        use TargetType::*;
+        assert!(authorize_osint_subject(Username, RiskClass::ActiveLowImpact, true).is_ok());
+        assert!(authorize_osint_subject(EmailAddress, RiskClass::Passive, true).is_ok());
+        assert!(authorize_osint_subject(Domain, RiskClass::Passive, true).is_err());
+        assert!(authorize_osint_subject(Username, RiskClass::Active, true).is_err());
+        assert!(authorize_osint_subject(Username, RiskClass::Validation, true).is_err());
+        assert!(authorize_osint_subject(Username, RiskClass::Passive, false).is_err());
+        // Host scope never authorizes an identifier as a network destination.
+        assert!(!contains(&entries(), "@octo"));
     }
     #[test]
     fn active_out_of_scope_and_unapproved_work_is_denied() {

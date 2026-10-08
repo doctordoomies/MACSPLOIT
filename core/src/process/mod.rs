@@ -71,6 +71,10 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_FFUF") {
             overrides.insert("ffuf".to_owned(), PathBuf::from(path));
         }
+        // OSINT: user-scanner (pipx/pip console script `user-scanner`).
+        if let Some(path) = std::env::var_os("MACSPLOIT_USER_SCANNER") {
+            overrides.insert("user-scanner".to_owned(), PathBuf::from(path));
+        }
         // Homebrew executable override (tests inject a fake brew; advanced users may pin).
         if let Some(path) = std::env::var_os("MACSPLOIT_BREW") {
             overrides.insert("brew".to_owned(), PathBuf::from(path));
@@ -174,6 +178,15 @@ pub fn scan_version(text: &str) -> Option<String> {
     None
 }
 
+/// Optional per-process settings for [`run_with`]. Environment entries are literal
+/// key/value pairs set on the child (never expanded by a shell); `current_dir`
+/// pins the child's working directory (e.g. a private per-run temporary directory).
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    pub env: Vec<(String, String)>,
+    pub current_dir: Option<PathBuf>,
+}
+
 /// Run `executable args...` under supervision. Never uses a shell. Captures at
 /// most `stdout_cap`/`stderr_cap` bytes. Kills the child if `cancelled` is set
 /// or `deadline` passes.
@@ -185,6 +198,27 @@ pub fn run(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<ProcessOutcome> {
+    run_with(
+        executable,
+        args,
+        cancelled,
+        deadline,
+        stdout_cap,
+        stderr_cap,
+        &RunOptions::default(),
+    )
+}
+
+/// [`run`] with explicit environment additions and working directory.
+pub fn run_with(
+    executable: &Path,
+    args: &[String],
+    cancelled: &AtomicBool,
+    deadline: Instant,
+    stdout_cap: usize,
+    stderr_cap: usize,
+    options: &RunOptions,
+) -> Result<ProcessOutcome> {
     let started_at = crate::now();
     let mut command = Command::new(executable);
     command
@@ -192,6 +226,12 @@ pub fn run(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, value) in &options.env {
+        command.env(key, value);
+    }
+    if let Some(directory) = &options.current_dir {
+        command.current_dir(directory);
+    }
     // Run the child as its own process-group leader so the supervisor can kill
     // the entire group (tool plus any helpers it spawns), not just the direct
     // child. Safe: `setsid` is async-signal-safe and touches no Rust state.
@@ -218,20 +258,16 @@ pub fn run(
 
     // Drain stdout/stderr on dedicated threads so a full pipe cannot deadlock
     // the supervisor loop. `take` bounds memory regardless of tool behavior.
-    let stdout_handle = child.stdout.take().map(|stream| {
-        thread::spawn(move || {
-            let mut buffer = Vec::new();
-            let _ = stream.take(stdout_cap as u64).read_to_end(&mut buffer);
-            buffer
-        })
-    });
-    let stderr_handle = child.stderr.take().map(|stream| {
-        thread::spawn(move || {
-            let mut buffer = Vec::new();
-            let _ = stream.take(stderr_cap as u64).read_to_end(&mut buffer);
-            buffer
-        })
-    });
+    // Bytes past the cap are drained and discarded so a chatty tool never blocks on
+    // a full pipe (which would otherwise stall it until the deadline).
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|stream| thread::spawn(move || read_bounded(stream, stdout_cap)));
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|stream| thread::spawn(move || read_bounded(stream, stderr_cap)));
 
     let mut timed_out = false;
     let mut was_cancelled = false;
@@ -272,6 +308,14 @@ pub fn run(
         started_at,
         ended_at: crate::now(),
     })
+}
+
+/// Read at most `cap` bytes, then drain (and discard) the rest until EOF.
+fn read_bounded(mut stream: impl Read, cap: usize) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let _ = (&mut stream).take(cap as u64).read_to_end(&mut buffer);
+    let _ = std::io::copy(&mut stream, &mut std::io::sink());
+    buffer
 }
 
 #[cfg(test)]
@@ -422,6 +466,72 @@ mod tests {
         assert_eq!(outcome.stderr, b"oops");
         assert_eq!(outcome.exit_status, Some(3));
         assert!(!outcome.timed_out && !outcome.cancelled);
+    }
+
+    #[test]
+    fn run_bounds_output_without_stalling_a_chatty_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("chatty");
+        // ~1 MiB of output against a 1 KiB cap must still finish promptly.
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 16384 ]; do echo 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; i=$((i+1)); done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let outcome = run(
+            &script,
+            &[],
+            &cancelled,
+            Instant::now() + Duration::from_secs(20),
+            1024,
+            1024,
+        )
+        .unwrap();
+        assert!(
+            !outcome.timed_out,
+            "bounded capture must not stall the child"
+        );
+        assert_eq!(outcome.exit_status, Some(0));
+        assert_eq!(outcome.stdout.len(), 1024);
+    }
+
+    #[test]
+    fn run_with_sets_environment_and_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("envtool");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s|' \"$MACSPLOIT_TEST_VALUE\"\npwd\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let outcome = run_with(
+            &script,
+            &[],
+            &cancelled,
+            Instant::now() + Duration::from_secs(5),
+            1024,
+            1024,
+            &RunOptions {
+                env: vec![("MACSPLOIT_TEST_VALUE".into(), "$(id);literal".into())],
+                current_dir: Some(work.path().to_path_buf()),
+            },
+        )
+        .unwrap();
+        let text = String::from_utf8(outcome.stdout).unwrap();
+        let (value, cwd) = text.trim_end().split_once('|').unwrap();
+        assert_eq!(
+            value, "$(id);literal",
+            "environment values are never shell-expanded"
+        );
+        assert_eq!(
+            std::path::Path::new(cwd).canonicalize().unwrap(),
+            work.path().canonicalize().unwrap()
+        );
     }
 
     #[test]

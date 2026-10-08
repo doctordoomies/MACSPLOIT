@@ -290,6 +290,7 @@ fn discovery_transaction_rolls_back_asset_provenance_and_events() {
             value: "new.example.test".into(),
             source: Some("example.test".into()),
             relationship: Some(RelationshipType::HasSubdomain),
+            observation: None,
             metadata: json!({}),
         },
         Discovery {
@@ -297,6 +298,7 @@ fn discovery_transaction_rolls_back_asset_provenance_and_events() {
             value: "broken.example.test".into(),
             source: Some("missing.test".into()),
             relationship: Some(RelationshipType::HasSubdomain),
+            observation: None,
             metadata: json!({}),
         },
     ];

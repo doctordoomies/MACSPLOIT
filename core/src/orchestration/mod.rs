@@ -26,6 +26,9 @@ use std::{
 /// own execution via `Provider::timeout`; this only prevents a runaway chain and
 /// must be large enough for the slowest active provider (Nmap).
 const CHAIN_BUDGET: Duration = Duration::from_secs(300);
+/// Outer ceiling for an OSINT chain. A full user-scanner catalog scan is bounded by
+/// its own provider timeout (15 min); this only adds headroom for persistence.
+const OSINT_CHAIN_BUDGET: Duration = Duration::from_secs(960);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainRun {
@@ -81,10 +84,27 @@ pub enum ChainKind {
     /// Bounded path/content discovery (ffuf) over an in-scope HTTP(S) URL with an
     /// explicitly selected wordlist. Never runs as part of another chain.
     ContentDiscovery,
+    /// OSINT for one explicitly selected Username target (one bounded provider
+    /// scan; no recursion). Never started automatically.
+    UsernameOsint,
+    /// OSINT for one explicitly selected Email target (one bounded provider scan;
+    /// no recursion, no breach data). Never started automatically.
+    EmailOsint,
+}
+
+impl ChainKind {
+    /// The OSINT capability (and required target type) for an OSINT chain.
+    pub fn osint(self) -> Option<(Capability, TargetType)> {
+        match self {
+            Self::UsernameOsint => Some((Capability::UsernameOsint, TargetType::Username)),
+            Self::EmailOsint => Some((Capability::EmailOsint, TargetType::EmailAddress)),
+            _ => None,
+        }
+    }
 }
 
 /// One preset stage: (display name, optional capability, optional pinned provider).
-type StagePlan = (&'static str, Option<Capability>, Option<&'static str>);
+type StagePlan = (&'static str, Option<Capability>, Option<String>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRun {
@@ -143,7 +163,7 @@ impl Store {
         let snapshot=Snapshot {
             workspace:database::workspace(&tx,id)?,targets:targets_in(&tx,id)?,assets:assets_in(&tx,id)?,
             relationships:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'source_asset_id',source_asset_id,'destination_asset_id',destination_asset_id,'relationship_type',relationship_type,'created_at',created_at) FROM asset_relationships WHERE workspace_id=?1 ORDER BY created_at,id",[&key])?,
-            observations:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'asset_id',asset_id,'source_asset_id',source_asset_id,'provider_run_id',provider_run_id,'evidence_id',evidence_id,'discovered_by',discovered_by,'observed_value',observed_value,'timestamp',timestamp,'confidence',confidence) FROM observations WHERE workspace_id=?1 ORDER BY timestamp,id",[&key])?,
+            observations:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'asset_id',asset_id,'source_asset_id',source_asset_id,'provider_run_id',provider_run_id,'evidence_id',evidence_id,'discovered_by',discovered_by,'observed_value',observed_value,'timestamp',timestamp,'confidence',confidence,'metadata',json(metadata)) FROM observations WHERE workspace_id=?1 ORDER BY timestamp,id",[&key])?,
             chains:rows(&tx,&format!("{CHAIN_SELECT} WHERE workspace_id=?1 ORDER BY created_at,id"),[&key])?,
             stages:rows(&tx,&format!("{STAGE_SELECT} WHERE workspace_id=?1 ORDER BY chain_id,position"),[&key])?,
             tasks:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'status',status,'updated_at',updated_at) FROM tasks WHERE workspace_id=?1 ORDER BY updated_at,id",[&key])?,
@@ -161,6 +181,7 @@ impl Store {
         target: Id,
         kind: ChainKind,
         options: serde_json::Value,
+        osint_provider: Option<String>,
     ) -> Result<ChainRun> {
         let mut conn = self.connect(workspace)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -189,17 +210,17 @@ impl Store {
                         (
                             "Synthetic Subdomain Discovery",
                             Some(Capability::SubdomainDiscovery),
-                            Some("synthetic"),
+                            Some("synthetic".into()),
                         ),
                         (
                             "Synthetic Resolution",
                             Some(Capability::DnsResolution),
-                            Some("synthetic"),
+                            Some("synthetic".into()),
                         ),
                         (
                             "Synthetic Service Discovery",
                             Some(Capability::ServiceFingerprinting),
-                            Some("synthetic"),
+                            Some("synthetic".into()),
                         ),
                         ("Completion", None, None),
                     ],
@@ -225,7 +246,7 @@ impl Store {
                         (
                             "DNS Resolution",
                             Some(Capability::DnsResolution),
-                            Some("native_dns"),
+                            Some("native_dns".into()),
                         ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
@@ -246,19 +267,23 @@ impl Store {
                         (
                             "Subfinder Discovery",
                             Some(Capability::SubdomainDiscovery),
-                            Some("subfinder"),
+                            Some("subfinder".into()),
                         ),
                         (
                             "DNS Resolution",
                             Some(Capability::DnsResolution),
-                            Some("native_dns"),
+                            Some("native_dns".into()),
                         ),
                         (
                             "Port + Service Discovery",
                             Some(Capability::PortDiscovery),
-                            Some("nmap"),
+                            Some("nmap".into()),
                         ),
-                        ("HTTP Probing", Some(Capability::HttpProbing), Some("httpx")),
+                        (
+                            "HTTP Probing",
+                            Some(Capability::HttpProbing),
+                            Some("httpx".into()),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -282,9 +307,13 @@ impl Store {
                         (
                             "Port + Service Discovery",
                             Some(Capability::PortDiscovery),
-                            Some("nmap"),
+                            Some("nmap".into()),
                         ),
-                        ("HTTP Probing", Some(Capability::HttpProbing), Some("httpx")),
+                        (
+                            "HTTP Probing",
+                            Some(Capability::HttpProbing),
+                            Some("httpx".into()),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -301,7 +330,11 @@ impl Store {
                     "Web Recon",
                     vec![
                         ("Target Validation", None, None),
-                        ("Web Crawl", Some(Capability::WebCrawling), Some("katana")),
+                        (
+                            "Web Crawl",
+                            Some(Capability::WebCrawling),
+                            Some("katana".into()),
+                        ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -322,7 +355,7 @@ impl Store {
                         (
                             "Native HTTP Analysis",
                             Some(Capability::WebAnalysis),
-                            Some("native_http"),
+                            Some("native_http".into()),
                         ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
@@ -356,7 +389,49 @@ impl Store {
                         (
                             "Content Discovery",
                             Some(Capability::ContentDiscovery),
-                            Some("ffuf"),
+                            Some("ffuf".into()),
+                        ),
+                        ("Persistence", None, None),
+                        ("Completion", None, None),
+                    ],
+                )
+            }
+            ChainKind::UsernameOsint | ChainKind::EmailOsint => {
+                let (capability, required) = kind.osint().expect("OSINT chain kind");
+                if target.target_type != required {
+                    return Err(CoreError::new(
+                        "InvalidTarget",
+                        if required == TargetType::Username {
+                            "Username OSINT requires a username target (e.g. @handle)."
+                        } else {
+                            "Email OSINT requires an email target."
+                        },
+                    ));
+                }
+                // Strict subject validation (no option/pattern characters).
+                crate::osint::Subject::from_target(target.target_type, &target.normalized_value)?;
+                let provider = osint_provider.ok_or_else(|| {
+                    CoreError::new(
+                        "ProviderUnsupported",
+                        "No registered provider supports this OSINT workflow.",
+                    )
+                })?;
+                (
+                    if required == TargetType::Username {
+                        "Username OSINT"
+                    } else {
+                        "Email OSINT"
+                    },
+                    vec![
+                        ("Subject Validation", None, None),
+                        (
+                            if required == TargetType::Username {
+                                "Username OSINT"
+                            } else {
+                                "Email OSINT"
+                            },
+                            Some(capability),
+                            Some(provider),
                         ),
                         ("Persistence", None, None),
                         ("Completion", None, None),
@@ -364,13 +439,24 @@ impl Store {
                 )
             }
         };
-        // Scope authorization is mandatory for every preset, real or synthetic.
-        crate::scope::authorize(
-            &database::workspace(&tx, workspace)?.scope,
-            &target.normalized_value,
-            crate::providers::RiskClass::Passive,
-            false,
-        )?;
+        // Authorization is mandatory for every preset, real or synthetic. Host-based
+        // presets require the target in workspace scope; OSINT presets operate on an
+        // identifier subject (see scope::authorize_osint_subject) and the provider's
+        // risk class is re-checked before execution.
+        if kind.osint().is_some() {
+            crate::scope::authorize_osint_subject(
+                target.target_type,
+                crate::providers::RiskClass::Passive,
+                true,
+            )?;
+        } else {
+            crate::scope::authorize(
+                &database::workspace(&tx, workspace)?.scope,
+                &target.normalized_value,
+                crate::providers::RiskClass::Passive,
+                false,
+            )?;
+        }
         let count: i64 = tx.query_row("SELECT COUNT(*) FROM chain_runs", [], |r| r.get(0))?;
         if count >= 100 {
             return Err(CoreError::new(
@@ -621,7 +707,11 @@ impl Store {
                     discovered_by: provider.into(),
                     observed_value: discovery.value.clone(),
                     timestamp: crate::now(),
-                    confidence: "CONFIRMED".into(),
+                    confidence: discovery
+                        .observation
+                        .as_ref()
+                        .map_or_else(|| "CONFIRMED".into(), |o| o.confidence.clone()),
+                    metadata: discovery.observation.as_ref().map(|o| o.metadata.clone()),
                 },
             )?;
             if let (Some(source), Some(relation)) = (source, discovery.relationship) {
@@ -851,7 +941,15 @@ impl Engine {
                 "One Recon Chain is already running. Wait or cancel it.",
             ));
         }
-        let chain = self.store.create_chain(workspace, target, kind, options)?;
+        let osint_provider = match kind.osint() {
+            Some((capability, required)) => Some(
+                self.resolve_osint_provider(workspace, target, capability, required, &options)?,
+            ),
+            None => None,
+        };
+        let chain = self
+            .store
+            .create_chain(workspace, target, kind, options, osint_provider)?;
         let cancellation = Arc::new(AtomicBool::new(false));
         *active = Some(ActiveRun {
             workspace,
@@ -893,6 +991,51 @@ impl Engine {
             }
         });
         Ok(chain)
+    }
+
+    /// Pick the provider for an OSINT chain: `options.provider_id` when supplied
+    /// (must be a registered provider compatible with the capability and the
+    /// target's type), otherwise the first compatible registered provider.
+    fn resolve_osint_provider(
+        &self,
+        workspace: Id,
+        target: Id,
+        capability: Capability,
+        required: TargetType,
+        options: &serde_json::Value,
+    ) -> Result<String> {
+        let requested = match options.get("provider_id") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if id.len() <= 64 => Some(id.as_str()),
+            Some(_) => {
+                return Err(CoreError::new(
+                    "InvalidRequest",
+                    "provider_id must be a provider identifier string.",
+                ))
+            }
+        };
+        let conn = self.store.connect(workspace)?;
+        let target = targets_in(&conn, workspace)?
+            .into_iter()
+            .find(|t| t.id == target)
+            .ok_or_else(|| {
+                CoreError::new("InvalidTarget", "Target does not exist in this workspace.")
+            })?;
+        if target.target_type != required {
+            return Err(CoreError::new(
+                "InvalidTarget",
+                if required == TargetType::Username {
+                    "Username OSINT requires a username target (e.g. @handle)."
+                } else {
+                    "Email OSINT requires an email target."
+                },
+            ));
+        }
+        Ok(self
+            .registry
+            .osint_provider(capability, target.target_type, requested)?
+            .metadata()
+            .id)
     }
 
     pub fn cancel(&self, workspace: Id, chain: Id) -> Result<()> {
@@ -1054,34 +1197,64 @@ impl Engine {
         )?;
         tx.commit()?;
         let started = Instant::now();
-        for stage in snapshot.stages.iter().filter(|s| s.chain_id == chain.id) {
-            self.check_budget(cancelled, started)?;
+        let stages: Vec<&Stage> = snapshot
+            .stages
+            .iter()
+            .filter(|s| s.chain_id == chain.id)
+            .collect();
+        let budget = if stages
+            .iter()
+            .any(|s| s.capability.is_some_and(Capability::is_osint))
+        {
+            OSINT_CHAIN_BUDGET
+        } else {
+            CHAIN_BUDGET
+        };
+        let mut partial = false;
+        for stage in stages {
+            self.check_budget(cancelled, started, budget)?;
             self.store
                 .stage_transition(workspace, stage.id, TaskStatus::Running)?;
             let until = Instant::now() + self.stage_delay;
             while Instant::now() < until {
-                self.check_budget(cancelled, started)?;
+                self.check_budget(cancelled, started, budget)?;
                 thread::sleep(Duration::from_millis(10));
             }
             if let Some(capability) = stage.capability {
-                self.execute_provider(chain, stage, target, capability, cancelled, started)?;
+                partial |=
+                    self.execute_provider(chain, stage, target, capability, cancelled, started)?;
             }
-            self.check_budget(cancelled, started)?;
+            self.check_budget(cancelled, started, budget)?;
             self.store
                 .stage_transition(workspace, stage.id, TaskStatus::Completed)?;
         }
-        self.store
-            .finish_chain(workspace, chain.id, ChainStatus::Completed, None)
+        // PARTIAL: every stage completed, but a provider reported incomplete results
+        // (e.g. some OSINT platform checks errored or records were dropped).
+        self.store.finish_chain(
+            workspace,
+            chain.id,
+            if partial {
+                ChainStatus::Partial
+            } else {
+                ChainStatus::Completed
+            },
+            None,
+        )
     }
 
-    fn check_budget(&self, cancelled: &AtomicBool, started: Instant) -> Result<()> {
+    fn check_budget(
+        &self,
+        cancelled: &AtomicBool,
+        started: Instant,
+        budget: Duration,
+    ) -> Result<()> {
         if cancelled.load(Ordering::SeqCst) {
             return Err(CoreError::new("Cancelled", "Recon Chain cancelled."));
         }
         // Outer safety net for a whole chain. Individual providers bound their own
         // execution (see Provider::timeout); this ceiling accommodates the slowest
         // active provider (Nmap) while still preventing an unbounded chain.
-        if started.elapsed() > CHAIN_BUDGET {
+        if started.elapsed() > budget {
             return Err(CoreError::new(
                 "BudgetExceeded",
                 "Recon Chain exceeded its time budget.",
@@ -1098,8 +1271,14 @@ impl Engine {
         capability: Capability,
         cancelled: &AtomicBool,
         started: Instant,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let workspace = chain.workspace_id;
+        // OSINT stages only appear in OSINT chains, which use the OSINT budget.
+        let budget = if capability.is_osint() {
+            OSINT_CHAIN_BUDGET
+        } else {
+            CHAIN_BUDGET
+        };
         // Pin the exact provider when the stage names one; otherwise fall back to
         // capability-based selection (preserves earlier single-provider behavior).
         let provider = match &stage.provider_id {
@@ -1112,7 +1291,12 @@ impl Engine {
         // Launching a real Recon Chain is the analyst's explicit approval for its
         // active stages; per-asset scope is still enforced by the in-scope filter
         // below, so an out-of-scope resolved IP is never handed to an active tool.
-        crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
+        // OSINT stages run on an identifier subject, never on a workspace host.
+        if capability.is_osint() {
+            crate::scope::authorize_osint_subject(target.target_type, metadata.risk_class, true)?;
+        } else {
+            crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
+        }
         let mut inputs:Vec<Asset>=rows(&conn,&format!("{ASSET_SELECT} WHERE workspace_id=?1 AND (id=?2 OR id IN (SELECT asset_id FROM observations o JOIN provider_runs p ON p.id=o.provider_run_id WHERE p.chain_id=?3))"),
             params![workspace.to_string(),target.asset_id.map(|id|id.to_string()),chain.id.to_string()])?;
         inputs.retain(|a| crate::scope::contains(&scope, a.scope_key()));
@@ -1208,6 +1392,33 @@ impl Engine {
             tx.commit()?;
         }
 
+        // Bounded structured outputs written outside stdout (e.g. a JSON report file)
+        // become their own hashed evidence records first; the envelope references them.
+        let mut artifact_refs = Vec::new();
+        let mut primary_evidence: Option<Id> = None;
+        for artifact in &execution.artifacts {
+            let mut reference = json!({
+                "name": artifact.name,
+                "observed_bytes": artifact.observed_bytes,
+                "over_limit": artifact.over_limit,
+            });
+            if !artifact.over_limit && !artifact.bytes.is_empty() {
+                let stored = self.store.write_evidence(
+                    workspace,
+                    run,
+                    &metadata.name,
+                    &target.normalized_value,
+                    &artifact.bytes,
+                )?;
+                insert_evidence(&conn, &stored, run)?;
+                reference["evidence_id"] = json!(stored.id);
+                reference["sha256"] = json!(stored.sha256);
+                reference["byte_count"] = json!(stored.byte_count);
+                primary_evidence.get_or_insert(stored.id);
+            }
+            artifact_refs.push(reference);
+        }
+
         // Preserve the complete provider output (stdout, stderr, command, exit,
         // timings, version) as an evidence envelope BEFORE parsing, so neither a
         // tool failure nor a parser failure can destroy the raw record.
@@ -1224,6 +1435,8 @@ impl Engine {
             "pid": execution.pid,
             "started_at": execution.started_at,
             "ended_at": execution.ended_at,
+            "cancelled": execution.cancelled,
+            "artifacts": artifact_refs,
             "stdout": String::from_utf8_lossy(&execution.stdout),
             "stderr": String::from_utf8_lossy(&execution.stderr),
         }))?;
@@ -1235,21 +1448,7 @@ impl Engine {
             &envelope,
         )?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO evidence VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![
-                evidence.id.to_string(),
-                workspace.to_string(),
-                run.to_string(),
-                evidence.provider,
-                evidence.target,
-                evidence.timestamp,
-                evidence.sha256,
-                evidence.media_type,
-                evidence.relative_path,
-                evidence.byte_count
-            ],
-        )?;
+        insert_evidence(&tx, &evidence, run)?;
         tx.execute(
             "UPDATE provider_runs SET raw_output_reference=?1 WHERE id=?2",
             params![evidence.id.to_string(), run.to_string()],
@@ -1261,6 +1460,24 @@ impl Engine {
             json!({"evidence_id":evidence.id,"provider_run_id":run}),
         )?;
         tx.commit()?;
+
+        // A cancelled run keeps the evidence it already captured; record the run as
+        // cancelled and stop the chain.
+        if execution.cancelled {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE provider_runs SET end_time=?1,status='CANCELLED',exit_status=?2 WHERE id=?3",
+                params![crate::now(), execution.exit_status, run.to_string()],
+            )?;
+            emit(
+                &tx,
+                workspace,
+                EventType::ProviderCompleted,
+                json!({"provider_run_id":run,"provider":metadata.name,"status":"CANCELLED"}),
+            )?;
+            tx.commit()?;
+            return Err(CoreError::new("Cancelled", "Recon Chain cancelled."));
+        }
 
         // A tool that timed out or exited non-zero is a failed run, but its
         // evidence is already durable. Mark it and fail the chain gracefully.
@@ -1287,12 +1504,31 @@ impl Engine {
             ));
         }
 
-        self.check_budget(cancelled, started)?;
-        let discoveries = provider.parse(&execution)?;
+        self.check_budget(cancelled, started, budget)?;
+        let parsed = match provider.parse_outcome(&execution) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                // Parsing failed: the run and its evidence are preserved; record why.
+                let tx = conn.transaction()?;
+                tx.execute(
+                    "UPDATE provider_runs SET end_time=?1,status='FAILED',exit_status=?2 WHERE id=?3",
+                    params![crate::now(), execution.exit_status, run.to_string()],
+                )?;
+                emit(
+                    &tx,
+                    workspace,
+                    EventType::ProviderCompleted,
+                    json!({"provider_run_id":run,"provider":metadata.name,"status":"FAILED","error_code":error.code,"message":error.message}),
+                )?;
+                tx.commit()?;
+                return Err(error);
+            }
+        };
+        let discoveries = parsed.discoveries;
         self.store.persist_discoveries(
             workspace,
             run,
-            evidence.id,
+            primary_evidence.unwrap_or(evidence.id),
             &metadata.name,
             &discoveries,
         )?;
@@ -1304,12 +1540,12 @@ impl Engine {
         // Bounded, sanitized result summary for the live console. Values that look like
         // URLs are redacted (query stripped) via the display sanitizer; raw stdout stays
         // only in the evidence envelope. Preview is capped; by_type carries full counts.
-        emit(
-            &tx,
-            workspace,
-            EventType::ProviderResults,
-            provider_results_payload(run, &metadata.name, &discoveries),
-        )?;
+        let mut results = provider_results_payload(run, &metadata.name, &discoveries);
+        results["partial"] = json!(parsed.partial);
+        if let Some(summary) = parsed.summary {
+            results["summary"] = summary;
+        }
+        emit(&tx, workspace, EventType::ProviderResults, results)?;
         emit(
             &tx,
             workspace,
@@ -1317,8 +1553,28 @@ impl Engine {
             json!({"provider_run_id":run,"provider":metadata.name,"status":"COMPLETED"}),
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(parsed.partial)
     }
+}
+
+/// Insert an evidence row for a provider run.
+fn insert_evidence(conn: &rusqlite::Connection, evidence: &Evidence, run: Id) -> Result<()> {
+    conn.execute(
+        "INSERT INTO evidence VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            evidence.id.to_string(),
+            evidence.workspace_id.to_string(),
+            run.to_string(),
+            evidence.provider,
+            evidence.target,
+            evidence.timestamp,
+            evidence.sha256,
+            evidence.media_type,
+            evidence.relative_path,
+            evidence.byte_count
+        ],
+    )?;
+    Ok(())
 }
 
 const RESULTS_PREVIEW_MAX: usize = 8;
