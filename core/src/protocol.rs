@@ -38,6 +38,12 @@ pub enum Command {
     Snapshot {
         workspace_id: Id,
     },
+    /// Read-only durable reconstruction of one chain's provider observations,
+    /// relationship provenance, and evidence metadata.
+    ChainResults {
+        workspace_id: Id,
+        chain_id: Id,
+    },
     EventsAfter {
         workspace_id: Id,
         after: i64,
@@ -94,6 +100,7 @@ impl Command {
             Self::UpdateWorkspaceScope { .. } => "update_workspace_scope",
             Self::AddTarget { .. } => "add_target",
             Self::Snapshot { .. } => "snapshot",
+            Self::ChainResults { .. } => "chain_results",
             Self::EventsAfter { .. } => "events_after",
             Self::StartChain { .. } => "start_chain",
             Self::CancelChain { .. } => "cancel_chain",
@@ -164,6 +171,10 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
             Command::Snapshot { workspace_id } => {
                 serde_json::to_value(engine.store.snapshot(workspace_id)?)?
             }
+            Command::ChainResults {
+                workspace_id,
+                chain_id,
+            } => serde_json::to_value(engine.store.chain_results(workspace_id, chain_id)?)?,
             Command::EventsAfter {
                 workspace_id,
                 after,

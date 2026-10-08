@@ -32,6 +32,7 @@ empty request ID; an oversized frame closes the helper session.
 | update_workspace_scope | workspace_id, scope array | Workspace with normalized replacement scope |
 | add_target | workspace_id, value | Classified stored target |
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
+| chain_results | workspace_id, chain_id | Read-only durable reconstruction of one Recon Chain: chain/target/stages/provider runs, scoped assets + Observations (including per-run metadata), relationship observations/provenance, and Evidence metadata. No raw Evidence body; no timestamp-only ownership inference. |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
 | start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |

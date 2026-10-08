@@ -389,6 +389,131 @@ fn discovery_metadata_is_object_only_and_bounded() {
 }
 
 #[test]
+fn chain_results_are_scoped_to_one_run_and_preserve_typed_provenance() {
+    let (temp, engine, workspace, target) = setup();
+    let first_chain = engine
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let first_snapshot = wait(&engine, workspace);
+    let first_results = engine
+        .store
+        .chain_results(workspace, first_chain.id)
+        .unwrap();
+
+    assert_eq!(first_results.chain.id, first_chain.id);
+    assert_eq!(first_results.target.id, target);
+    assert_eq!(first_results.provider_runs.len(), 3);
+    assert_eq!(first_results.evidence.len(), 3);
+    assert_eq!(first_results.relationships.len(), 10);
+    assert_eq!(first_results.relationship_observations.len(), 10);
+
+    let provider_ids: std::collections::HashSet<_> = first_results
+        .provider_runs
+        .iter()
+        .map(|run| run.id)
+        .collect();
+    let evidence_ids: std::collections::HashSet<_> = first_results
+        .evidence
+        .iter()
+        .map(|evidence| evidence.id)
+        .collect();
+    let relationship_ids: std::collections::HashSet<_> = first_results
+        .relationships
+        .iter()
+        .map(|relationship| relationship.id)
+        .collect();
+    let asset_ids: std::collections::HashSet<_> =
+        first_results.assets.iter().map(|asset| asset.id).collect();
+
+    assert!(first_results.observations.iter().all(|observation| {
+        observation
+            .provider_run_id
+            .is_some_and(|run| provider_ids.contains(&run))
+            && observation
+                .evidence_id
+                .is_some_and(|evidence| evidence_ids.contains(&evidence))
+            && asset_ids.contains(&observation.asset_id)
+    }));
+    assert!(first_results
+        .relationship_observations
+        .iter()
+        .all(|provenance| {
+            provider_ids.contains(&provenance.provider_run_id)
+                && evidence_ids.contains(&provenance.evidence_id)
+                && relationship_ids.contains(&provenance.relationship_id)
+        }));
+    assert!(first_results.relationships.iter().all(|relationship| {
+        asset_ids.contains(&relationship.source_asset_id)
+            && asset_ids.contains(&relationship.destination_asset_id)
+    }));
+
+    let second_chain = engine
+        .start(
+            workspace,
+            target,
+            ChainKind::Synthetic,
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    let second_snapshot = wait(&engine, workspace);
+    assert!(second_snapshot
+        .provider_runs
+        .iter()
+        .any(|run| run.chain_id == second_chain.id));
+
+    let first_after_second = engine
+        .store
+        .chain_results(workspace, first_chain.id)
+        .unwrap();
+    assert!(first_after_second
+        .provider_runs
+        .iter()
+        .all(|run| run.chain_id == first_chain.id));
+    assert_eq!(first_after_second.provider_runs.len(), 3);
+    assert_eq!(first_after_second.evidence.len(), 3);
+    assert_eq!(
+        first_after_second.observations.len(),
+        first_results.observations.len()
+    );
+    assert_eq!(
+        first_after_second.relationship_observations.len(),
+        first_results.relationship_observations.len()
+    );
+
+    drop(engine);
+    let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
+    let persisted = reopened
+        .store
+        .chain_results(workspace, first_chain.id)
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(first_after_second).unwrap(),
+        serde_json::to_value(persisted).unwrap()
+    );
+
+    let other = reopened
+        .store
+        .create_workspace("Other", &["example.test".into()])
+        .unwrap();
+    assert_eq!(
+        reopened
+            .store
+            .chain_results(other.id, first_chain.id)
+            .unwrap_err()
+            .code,
+        "ChainNotFound"
+    );
+
+    // The ordinary snapshot still contains both chains; chain_results is the scoped view.
+    assert!(first_snapshot.chains.len() < second_snapshot.chains.len());
+}
+
+#[test]
 fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
     let (_temp, engine, _, _) = setup();
     let denied = engine.store.create_workspace("No Scope", &[]).unwrap();

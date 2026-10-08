@@ -11,7 +11,7 @@ use rusqlite::{params, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     os::unix::fs::OpenOptionsExt,
     sync::{
@@ -131,6 +131,34 @@ pub struct Snapshot {
     pub last_sequence: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipObservation {
+    pub id: Id,
+    pub workspace_id: Id,
+    pub relationship_id: Id,
+    pub provider_run_id: Id,
+    pub evidence_id: Id,
+    pub timestamp: String,
+}
+
+/// Read-only durable reconstruction of one Recon Chain.
+///
+/// Assets are canonical identity/navigation records and may reflect later workspace
+/// activity. Historical provider-specific facts come from observations.metadata.
+/// Relationship provenance is explicit rather than inferred from timestamps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainResults {
+    pub chain: ChainRun,
+    pub target: Target,
+    pub stages: Vec<Stage>,
+    pub provider_runs: Vec<ProviderRun>,
+    pub assets: Vec<Asset>,
+    pub observations: Vec<Observation>,
+    pub relationships: Vec<Relationship>,
+    pub relationship_observations: Vec<RelationshipObservation>,
+    pub evidence: Vec<Evidence>,
+}
+
 const CHAIN_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'target_id',target_id,'name',name,'status',status,'created_at',created_at,'updated_at',updated_at,'error_code',error_code,'error_message',error_message) FROM chain_runs";
 const STAGE_SELECT:&str="SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'position',position,'name',name,'capability',capability,'status',status,'started_at',started_at,'ended_at',ended_at,'provider_id',provider_id) FROM chain_stages";
 
@@ -158,6 +186,147 @@ impl Store {
         };
         tx.commit()?;
         Ok(snapshot)
+    }
+
+    pub fn chain_results(&self, workspace: Id, chain: Id) -> Result<ChainResults> {
+        let mut conn = self.connect(workspace)?;
+        let tx = conn.transaction()?;
+        let workspace_key = workspace.to_string();
+        let chain_key = chain.to_string();
+
+        let chain = rows::<ChainRun>(
+            &tx,
+            &format!("{CHAIN_SELECT} WHERE workspace_id=?1 AND id=?2"),
+            params![workspace_key, chain_key],
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            CoreError::new(
+                "ChainNotFound",
+                "Recon Chain does not exist in this workspace.",
+            )
+        })?;
+
+        let target = targets_in(&tx, workspace)?
+            .into_iter()
+            .find(|target| target.id == chain.target_id)
+            .ok_or_else(|| {
+                CoreError::new(
+                    "DatabaseError",
+                    "Recon Chain target is missing from the workspace.",
+                )
+            })?;
+
+        let stages: Vec<Stage> = rows(
+            &tx,
+            &format!("{STAGE_SELECT} WHERE workspace_id=?1 AND chain_id=?2 ORDER BY position"),
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+        let provider_runs: Vec<ProviderRun> = rows(
+            &tx,
+            "SELECT json_object(
+                'id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,
+                'provider_id',provider_id,'provider_version',provider_version,'target',target,
+                'start_time',start_time,'end_time',end_time,'status',status,
+                'raw_output_reference',raw_output_reference,'exit_status',exit_status
+             ) FROM provider_runs
+             WHERE workspace_id=?1 AND chain_id=?2
+             ORDER BY start_time,id",
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+        let observations: Vec<Observation> = rows(
+            &tx,
+            "SELECT json_object(
+                'id',id,'workspace_id',workspace_id,'asset_id',asset_id,
+                'source_asset_id',source_asset_id,'provider_run_id',provider_run_id,
+                'evidence_id',evidence_id,'discovered_by',discovered_by,
+                'observed_value',observed_value,'metadata',json(metadata),
+                'timestamp',timestamp,'confidence',confidence
+             ) FROM observations
+             WHERE workspace_id=?1
+               AND provider_run_id IN (
+                   SELECT id FROM provider_runs WHERE workspace_id=?1 AND chain_id=?2
+               )
+             ORDER BY timestamp,id",
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+        let relationship_observations: Vec<RelationshipObservation> = rows(
+            &tx,
+            "SELECT json_object(
+                'id',ro.id,'workspace_id',ro.workspace_id,
+                'relationship_id',ro.relationship_id,'provider_run_id',ro.provider_run_id,
+                'evidence_id',ro.evidence_id,'timestamp',ro.timestamp
+             )
+             FROM relationship_observations ro
+             JOIN provider_runs p
+               ON p.workspace_id=ro.workspace_id AND p.id=ro.provider_run_id
+             WHERE ro.workspace_id=?1 AND p.chain_id=?2
+             ORDER BY ro.timestamp,ro.id",
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+        let relationships: Vec<Relationship> = rows(
+            &tx,
+            "SELECT json_object(
+                'id',r.id,'workspace_id',r.workspace_id,'source_asset_id',r.source_asset_id,
+                'destination_asset_id',r.destination_asset_id,
+                'relationship_type',r.relationship_type,'created_at',r.created_at
+             )
+             FROM asset_relationships r
+             WHERE r.workspace_id=?1
+               AND r.id IN (
+                   SELECT ro.relationship_id
+                   FROM relationship_observations ro
+                   JOIN provider_runs p
+                     ON p.workspace_id=ro.workspace_id AND p.id=ro.provider_run_id
+                   WHERE ro.workspace_id=?1 AND p.chain_id=?2
+               )
+             ORDER BY r.created_at,r.id",
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+        let evidence: Vec<Evidence> = rows(
+            &tx,
+            &format!(
+                "{EVIDENCE_SELECT} WHERE workspace_id=?1
+                 AND provider_run_id IN (
+                     SELECT id FROM provider_runs WHERE workspace_id=?1 AND chain_id=?2
+                 )
+                 ORDER BY timestamp,id"
+            ),
+            params![workspace.to_string(), chain.id.to_string()],
+        )?;
+
+        let mut asset_ids = HashSet::new();
+        if let Some(asset_id) = target.asset_id {
+            asset_ids.insert(asset_id);
+        }
+        for observation in &observations {
+            asset_ids.insert(observation.asset_id);
+            if let Some(source_asset_id) = observation.source_asset_id {
+                asset_ids.insert(source_asset_id);
+            }
+        }
+        for relationship in &relationships {
+            asset_ids.insert(relationship.source_asset_id);
+            asset_ids.insert(relationship.destination_asset_id);
+        }
+        let assets = assets_in(&tx, workspace)?
+            .into_iter()
+            .filter(|asset| asset_ids.contains(&asset.id))
+            .collect();
+
+        tx.commit()?;
+        Ok(ChainResults {
+            chain,
+            target,
+            stages,
+            provider_runs,
+            assets,
+            observations,
+            relationships,
+            relationship_observations,
+            evidence,
+        })
     }
 
     fn create_chain(
