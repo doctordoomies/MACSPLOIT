@@ -25,6 +25,13 @@ pub enum RiskClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NetworkActivity {
+    None,
+    Network,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Capability {
     SubdomainDiscovery,
     DnsResolution,
@@ -45,8 +52,9 @@ pub struct ProviderMetadata {
     pub capabilities: Vec<Capability>,
     pub supported_target_types: Vec<TargetType>,
     pub risk_class: RiskClass,
-    /// True when the provider runs entirely offline (no external process).
-    pub offline: bool,
+    /// Whether normal provider execution can perform network I/O. This is separate
+    /// from built-in/external process state, which comes from Installation.
+    pub network_activity: NetworkActivity,
 }
 
 /// Provider metadata paired with its live installation state, for the UI.
@@ -54,6 +62,8 @@ pub struct ProviderMetadata {
 pub struct ProviderStatus {
     #[serde(flatten)]
     pub metadata: ProviderMetadata,
+    /// Deprecated protocol-v1 compatibility alias derived from network_activity.
+    pub offline: bool,
     pub installation: Installation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<ProviderSetup>,
@@ -127,8 +137,8 @@ pub trait Provider: Send + Sync {
     fn setup(&self) -> Option<ProviderSetup> {
         None
     }
-    /// Report whether the provider's backing tool is available. Offline
-    /// providers are always installed.
+    /// Report whether the provider's backing tool is available. Built-in
+    /// providers return Installation::BuiltIn.
     fn installation(&self, tools: &ToolConfig) -> Installation;
     /// Maximum wall-clock time for one execution. Fast providers keep the default;
     /// heavier active tools (e.g. Nmap) override it.
@@ -248,6 +258,7 @@ impl ProviderRegistry {
                     None => ProviderInstallInfo::default(),
                 };
                 ProviderStatus {
+                    offline: metadata.network_activity == NetworkActivity::None,
                     installation: provider.installation(tools),
                     setup: provider.setup(),
                     install,
@@ -282,7 +293,7 @@ impl Provider for SyntheticDiscoveryProvider {
             description: "Invented offline discoveries. No network, DNS, or external tools.".into(),
             version: "1.0.0".into(),
             risk_class: RiskClass::Passive,
-            offline: true,
+            network_activity: NetworkActivity::None,
             capabilities: vec![
                 Capability::SubdomainDiscovery,
                 Capability::DnsResolution,
@@ -490,7 +501,7 @@ impl Provider for SubfinderProvider {
                     .into(),
             version: "external".into(),
             risk_class: RiskClass::Passive,
-            offline: false,
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::SubdomainDiscovery],
             supported_target_types: vec![TargetType::Domain],
         }
@@ -705,7 +716,7 @@ impl Provider for NativeDnsProvider {
                     .into(),
             version: "built-in".into(),
             risk_class: RiskClass::ActiveLowImpact,
-            offline: true, // no external process; still active network I/O when live
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::DnsResolution],
             // Forward for Domain/Hostname (and URL hostnames); reverse PTR for an
             // IPAddress target or a URL whose host is an IP literal. The provider also
@@ -928,7 +939,7 @@ impl Provider for NmapProvider {
                     .into(),
             version: "external".into(),
             risk_class: RiskClass::Active,
-            offline: false,
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::PortDiscovery, Capability::ServiceFingerprinting],
             supported_target_types: vec![TargetType::IPAddress],
         }
@@ -1261,7 +1272,7 @@ impl Provider for HttpxProvider {
                     .into(),
             version: "external".into(),
             risk_class: RiskClass::ActiveLowImpact,
-            offline: false,
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::HttpProbing],
             supported_target_types: vec![TargetType::Domain, TargetType::IPAddress],
         }
@@ -1502,7 +1513,7 @@ impl Provider for KatanaProvider {
                     .into(),
             version: "external".into(),
             risk_class: RiskClass::ActiveLowImpact,
-            offline: false,
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::WebCrawling],
             supported_target_types: vec![TargetType::URL],
         }
@@ -1809,7 +1820,7 @@ impl Provider for FfufProvider {
                     .into(),
             version: "external".into(),
             risk_class: RiskClass::Active,
-            offline: false,
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::ContentDiscovery],
             supported_target_types: vec![TargetType::URL],
         }
@@ -2090,7 +2101,7 @@ impl Provider for NativeHttpProvider {
                     .into(),
             version: "built-in".into(),
             risk_class: RiskClass::ActiveLowImpact,
-            offline: false, // makes real network requests when live
+            network_activity: NetworkActivity::Network,
             capabilities: vec![Capability::WebAnalysis],
             supported_target_types: vec![TargetType::URL],
         }
@@ -2339,6 +2350,28 @@ mod tests {
             .unwrap();
         assert_eq!(provider.metadata().risk_class, RiskClass::Passive);
         assert_eq!(provider.metadata().id, "synthetic");
+        assert_eq!(
+            provider.metadata().network_activity,
+            NetworkActivity::None
+        );
+    }
+
+    #[test]
+    fn provider_network_activity_is_independent_of_execution_kind() {
+        let metadata = ProviderRegistry::default().metadata();
+        let activity = |id: &str| {
+            metadata
+                .iter()
+                .find(|provider| provider.id == id)
+                .unwrap()
+                .network_activity
+        };
+        assert_eq!(activity("synthetic"), NetworkActivity::None);
+        assert_eq!(activity("native_dns"), NetworkActivity::Network);
+        assert_eq!(activity("native_http"), NetworkActivity::Network);
+        for id in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
+            assert_eq!(activity(id), NetworkActivity::Network);
+        }
     }
 
     #[test]
@@ -2381,7 +2414,7 @@ mod tests {
         let metadata = SubfinderProvider.metadata();
         assert_eq!(metadata.id, "subfinder");
         assert_eq!(metadata.risk_class, RiskClass::Passive);
-        assert!(!metadata.offline);
+        assert_eq!(metadata.network_activity, NetworkActivity::Network);
         assert_eq!(metadata.capabilities, vec![Capability::SubdomainDiscovery]);
         assert_eq!(metadata.supported_target_types, vec![TargetType::Domain]);
     }
@@ -2602,7 +2635,7 @@ mod tests {
         let metadata = NmapProvider.metadata();
         assert_eq!(metadata.id, "nmap");
         assert_eq!(metadata.risk_class, RiskClass::Active);
-        assert!(!metadata.offline);
+        assert_eq!(metadata.network_activity, NetworkActivity::Network);
         assert_eq!(
             metadata.capabilities,
             vec![Capability::PortDiscovery, Capability::ServiceFingerprinting]
