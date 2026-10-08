@@ -26,6 +26,9 @@ use std::{
 /// own execution via `Provider::timeout`; this only prevents a runaway chain and
 /// must be large enough for the slowest active provider (Nmap).
 const CHAIN_BUDGET: Duration = Duration::from_secs(300);
+/// Provider-normalized metadata belongs in durable observations, but it must remain
+/// a compact structured summary rather than becoming a second raw-output channel.
+const OBSERVATION_METADATA_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainRun {
@@ -143,7 +146,7 @@ impl Store {
         let snapshot=Snapshot {
             workspace:database::workspace(&tx,id)?,targets:targets_in(&tx,id)?,assets:assets_in(&tx,id)?,
             relationships:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'source_asset_id',source_asset_id,'destination_asset_id',destination_asset_id,'relationship_type',relationship_type,'created_at',created_at) FROM asset_relationships WHERE workspace_id=?1 ORDER BY created_at,id",[&key])?,
-            observations:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'asset_id',asset_id,'source_asset_id',source_asset_id,'provider_run_id',provider_run_id,'evidence_id',evidence_id,'discovered_by',discovered_by,'observed_value',observed_value,'timestamp',timestamp,'confidence',confidence) FROM observations WHERE workspace_id=?1 ORDER BY timestamp,id",[&key])?,
+            observations:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'asset_id',asset_id,'source_asset_id',source_asset_id,'provider_run_id',provider_run_id,'evidence_id',evidence_id,'discovered_by',discovered_by,'observed_value',observed_value,'metadata',json(metadata),'timestamp',timestamp,'confidence',confidence) FROM observations WHERE workspace_id=?1 ORDER BY timestamp,id",[&key])?,
             chains:rows(&tx,&format!("{CHAIN_SELECT} WHERE workspace_id=?1 ORDER BY created_at,id"),[&key])?,
             stages:rows(&tx,&format!("{STAGE_SELECT} WHERE workspace_id=?1 ORDER BY chain_id,position"),[&key])?,
             tasks:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'status',status,'updated_at',updated_at) FROM tasks WHERE workspace_id=?1 ORDER BY updated_at,id",[&key])?,
@@ -582,16 +585,27 @@ impl Store {
                     "A relationship requires a source asset.",
                 ));
             }
-            let mut metadata = discovery.metadata.clone();
-            if !metadata.is_object() {
+            let observation_metadata = discovery.metadata.clone();
+            if !observation_metadata.is_object() {
                 return Err(CoreError::new(
                     "ProviderFailure",
-                    "Asset metadata must be an object.",
+                    "Discovery metadata must be an object.",
                 ));
             }
+            if serde_json::to_vec(&observation_metadata)?.len() > OBSERVATION_METADATA_MAX_BYTES {
+                return Err(CoreError::new(
+                    "ProviderFailure",
+                    "Discovery metadata exceeds the 16 KiB normalized-metadata limit.",
+                ));
+            }
+
+            // Asset metadata remains the canonical/current asset summary. It is
+            // intentionally first-seen compatible today; per-run facts live on the
+            // Observation so deduplication cannot erase historical provider output.
+            let mut asset_metadata = observation_metadata.clone();
             let scope_value =
                 if matches!(discovery.asset_type, AssetType::Port | AssetType::Service) {
-                    metadata
+                    asset_metadata
                         .get("host")
                         .and_then(Value::as_str)
                         .ok_or_else(|| {
@@ -601,13 +615,13 @@ impl Store {
                     &discovery.value
                 };
             let in_scope = crate::scope::contains(&scope, scope_value);
-            metadata["in_scope"] = json!(in_scope);
+            asset_metadata["in_scope"] = json!(in_scope);
             let asset = upsert_asset(
                 &tx,
                 workspace,
                 discovery.asset_type,
                 &discovery.value,
-                metadata,
+                asset_metadata,
             )?;
             observe(
                 &tx,
@@ -620,6 +634,7 @@ impl Store {
                     evidence_id: Some(evidence),
                     discovered_by: provider.into(),
                     observed_value: discovery.value.clone(),
+                    metadata: observation_metadata,
                     timestamp: crate::now(),
                     confidence: "CONFIRMED".into(),
                 },

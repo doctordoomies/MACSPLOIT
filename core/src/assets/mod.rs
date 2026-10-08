@@ -75,8 +75,19 @@ pub struct Observation {
     pub evidence_id: Option<Id>,
     pub discovered_by: String,
     pub observed_value: String,
+    /// Bounded normalized facts emitted for this exact observation/run.
+    ///
+    /// Asset metadata is the canonical/current asset summary and may not change when
+    /// a deduplicated asset is observed again. Historical run results therefore use
+    /// this field rather than mutable asset metadata.
+    #[serde(default = "empty_metadata")]
+    pub metadata: Value,
     pub timestamp: String,
     pub confidence: String,
+}
+
+fn empty_metadata() -> Value {
+    Value::Object(serde_json::Map::new())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

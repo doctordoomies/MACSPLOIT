@@ -185,6 +185,191 @@ fn duplicate_discoveries_and_repeat_runs_preserve_provenance() {
 }
 
 #[test]
+fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
+    let (temp, engine, workspace, target) = setup();
+
+    engine
+        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .unwrap();
+    let first = wait(&engine, workspace);
+    let run_a = first.provider_runs[0].id;
+    let evidence_a = first
+        .evidence
+        .iter()
+        .find(|e| e.provider_run_id == run_a)
+        .unwrap()
+        .id;
+
+    let url = "https://example.test/admin";
+    engine
+        .store
+        .persist_discoveries(
+            workspace,
+            run_a,
+            evidence_a,
+            "fixture",
+            &[Discovery {
+                asset_type: AssetType::URL,
+                value: url.into(),
+                source: None,
+                relationship: None,
+                metadata: json!({
+                    "tool": "ffuf",
+                    "status": 200,
+                    "content_length": 42,
+                    "redirect": null
+                }),
+            }],
+        )
+        .unwrap();
+
+    engine
+        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .unwrap();
+    let second = wait(&engine, workspace);
+    let run_b = second
+        .provider_runs
+        .iter()
+        .find(|run| !first.provider_runs.iter().any(|old| old.id == run.id))
+        .unwrap()
+        .id;
+    let evidence_b = second
+        .evidence
+        .iter()
+        .find(|e| e.provider_run_id == run_b)
+        .unwrap()
+        .id;
+
+    engine
+        .store
+        .persist_discoveries(
+            workspace,
+            run_b,
+            evidence_b,
+            "fixture",
+            &[Discovery {
+                asset_type: AssetType::URL,
+                value: url.into(),
+                source: None,
+                relationship: None,
+                metadata: json!({
+                    "tool": "ffuf",
+                    "status": 403,
+                    "content_length": 7,
+                    "redirect": "/login"
+                }),
+            }],
+        )
+        .unwrap();
+
+    let current = engine.store.snapshot(workspace).unwrap();
+    let url_asset = current
+        .assets
+        .iter()
+        .find(|asset| asset.canonical_identity == url)
+        .unwrap();
+    assert_eq!(
+        current
+            .assets
+            .iter()
+            .filter(|asset| asset.canonical_identity == url)
+            .count(),
+        1
+    );
+    assert_eq!(url_asset.metadata["status"], 200);
+    assert_eq!(url_asset.metadata["in_scope"], true);
+
+    let observation_a = current
+        .observations
+        .iter()
+        .find(|o| o.asset_id == url_asset.id && o.provider_run_id == Some(run_a))
+        .unwrap();
+    let observation_b = current
+        .observations
+        .iter()
+        .find(|o| o.asset_id == url_asset.id && o.provider_run_id == Some(run_b))
+        .unwrap();
+    assert_eq!(observation_a.metadata["status"], 200);
+    assert_eq!(observation_a.metadata["content_length"], 42);
+    assert_eq!(observation_b.metadata["status"], 403);
+    assert_eq!(observation_b.metadata["content_length"], 7);
+    assert_eq!(observation_b.metadata["redirect"], "/login");
+    assert!(observation_a.metadata.get("in_scope").is_none());
+    assert!(observation_b.metadata.get("in_scope").is_none());
+
+    drop(engine);
+    let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
+    let persisted = reopened.store.snapshot(workspace).unwrap();
+    let persisted_url = persisted
+        .assets
+        .iter()
+        .find(|asset| asset.canonical_identity == url)
+        .unwrap();
+    let persisted_observations: Vec<_> = persisted
+        .observations
+        .iter()
+        .filter(|o| o.asset_id == persisted_url.id)
+        .collect();
+    assert_eq!(persisted_observations.len(), 2);
+    assert!(persisted_observations.iter().any(|o| o.metadata["status"] == 200));
+    assert!(persisted_observations.iter().any(|o| o.metadata["status"] == 403));
+}
+
+#[test]
+fn discovery_metadata_is_object_only_and_bounded() {
+    let (_temp, engine, workspace, target) = setup();
+    engine
+        .start(workspace, target, ChainKind::Synthetic, serde_json::Value::Null)
+        .unwrap();
+    let before = wait(&engine, workspace);
+    let run = before.provider_runs[0].id;
+    let evidence = before
+        .evidence
+        .iter()
+        .find(|e| e.provider_run_id == run)
+        .unwrap()
+        .id;
+
+    let non_object = Discovery {
+        asset_type: AssetType::URL,
+        value: "https://example.test/non-object".into(),
+        source: None,
+        relationship: None,
+        metadata: json!(["not", "an", "object"]),
+    };
+    assert_eq!(
+        engine
+            .store
+            .persist_discoveries(workspace, run, evidence, "fixture", &[non_object])
+            .unwrap_err()
+            .code,
+        "ProviderFailure"
+    );
+
+    let oversized = Discovery {
+        asset_type: AssetType::URL,
+        value: "https://example.test/oversized".into(),
+        source: None,
+        relationship: None,
+        metadata: json!({"summary": "x".repeat(20 * 1024)}),
+    };
+    assert_eq!(
+        engine
+            .store
+            .persist_discoveries(workspace, run, evidence, "fixture", &[oversized])
+            .unwrap_err()
+            .code,
+        "ProviderFailure"
+    );
+
+    let after = engine.store.snapshot(workspace).unwrap();
+    assert_eq!(
+        serde_json::to_value(before).unwrap(),
+        serde_json::to_value(after).unwrap()
+    );
+}
+
+#[test]
 fn missing_scope_prevents_dispatch_and_scope_limits_downstream_work() {
     let (_temp, engine, _, _) = setup();
     let denied = engine.store.create_workspace("No Scope", &[]).unwrap();

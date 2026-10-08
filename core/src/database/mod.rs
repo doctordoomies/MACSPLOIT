@@ -59,7 +59,7 @@ pub fn rows<T: DeserializeOwned>(
 pub fn migrate(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
-    const LATEST: i64 = 3;
+    const LATEST: i64 = 4;
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > LATEST {
         return Err(CoreError::new(
@@ -101,7 +101,14 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
             }
             tx.pragma_update(None, "user_version", 3)?;
             tx.commit()?;
-            Ok(())
+            if version < 4 {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("../../migrations/004_observation_metadata.sql"))
+            .map_err(|_| CoreError::new("MigrationFailure", "Observation-metadata migration failed."))?;
+        tx.pragma_update(None, "user_version", 4)?;
+        tx.commit()?;
+    }
+    Ok(())
         })();
         conn.pragma_update(None, "foreign_keys", true)?;
         result?;
@@ -465,6 +472,7 @@ impl Store {
                     evidence_id: None,
                     discovered_by: "Analyst".into(),
                     observed_value: input.trim().into(),
+                    metadata: json!({}),
                     timestamp: crate::now(),
                     confidence: "CONFIRMED".into(),
                 },
@@ -583,7 +591,10 @@ pub fn upsert_asset(
 
 pub fn observe(tx: &Transaction<'_>, observation: &Observation) -> Result<()> {
     tx.execute(
-        "INSERT INTO observations VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO observations(
+            id,workspace_id,asset_id,source_asset_id,provider_run_id,evidence_id,
+            discovered_by,observed_value,timestamp,confidence,metadata
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             observation.id.to_string(),
             observation.workspace_id.to_string(),
@@ -594,7 +605,8 @@ pub fn observe(tx: &Transaction<'_>, observation: &Observation) -> Result<()> {
             observation.discovered_by,
             observation.observed_value,
             observation.timestamp,
-            observation.confidence
+            observation.confidence,
+            observation.metadata.to_string()
         ],
     )?;
     Ok(())
@@ -656,6 +668,45 @@ mod tests {
     }
 
     #[test]
+    fn observation_metadata_migration_defaults_existing_rows_to_an_object() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/002_domain_recon.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/003_reverse_dns.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version=3;
+             INSERT INTO workspaces VALUES('w','fixture','t','t');
+             INSERT INTO assets VALUES('a','w','Domain','example.test','example.test','{}','t','t');
+             INSERT INTO observations VALUES('o','w','a',NULL,NULL,NULL,'fixture','example.test','t','CONFIRMED');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+
+        assert_eq!(
+            conn.query_row(
+                "SELECT metadata FROM observations WHERE id='o'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap(),
+            "{}"
+        );
+        assert!(conn
+            .execute(
+                "INSERT INTO observations(
+                    id,workspace_id,asset_id,source_asset_id,provider_run_id,evidence_id,
+                    discovered_by,observed_value,timestamp,confidence,metadata
+                 ) VALUES('bad','w','a',NULL,NULL,NULL,'fixture','bad','t','CONFIRMED','[]')",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
     fn migration_is_versioned_idempotent_and_enforces_foreign_keys() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
@@ -663,7 +714,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
         // The provider_id column added by migration 002 is present.
         assert!(conn
