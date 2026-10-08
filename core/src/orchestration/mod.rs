@@ -1452,7 +1452,11 @@ mod terminal_state_tests {
                 workspace.to_string(),
                 chain.to_string(),
                 stage.to_string(),
-                if status == "COMPLETED" { Some("t") } else { None },
+                if status == "COMPLETED" {
+                    Some("t")
+                } else {
+                    None
+                },
                 status,
                 exit_status
             ],
@@ -1464,7 +1468,10 @@ mod terminal_state_tests {
     #[test]
     fn first_provider_failure_is_failed_and_unstarted_stages_stay_queued() {
         let (_temp, store, workspace, chain, stages) = setup_chain();
-        let first_provider = stages.iter().find(|stage| stage.provider_id.is_some()).unwrap();
+        let first_provider = stages
+            .iter()
+            .find(|stage| stage.provider_id.is_some())
+            .unwrap();
         store
             .stage_transition(workspace, first_provider.id, TaskStatus::Running)
             .unwrap();
@@ -1482,7 +1489,11 @@ mod terminal_state_tests {
             .unwrap();
 
         let snapshot = store.snapshot(workspace).unwrap();
-        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        let persisted = snapshot
+            .chains
+            .iter()
+            .find(|run| run.id == chain.id)
+            .unwrap();
         assert_eq!(persisted.status, ChainStatus::Failed);
         assert_eq!(persisted.error_code.as_deref(), Some("ProviderMissing"));
         assert_eq!(
@@ -1521,8 +1532,14 @@ mod terminal_state_tests {
         store
             .stage_transition(workspace, completed.id, TaskStatus::Completed)
             .unwrap();
-        let completed_run =
-            insert_provider_run(&store, workspace, chain.id, completed.id, "COMPLETED", Some(0));
+        let completed_run = insert_provider_run(
+            &store,
+            workspace,
+            chain.id,
+            completed.id,
+            "COMPLETED",
+            Some(0),
+        );
 
         store
             .stage_transition(workspace, failing.id, TaskStatus::Running)
@@ -1543,9 +1560,16 @@ mod terminal_state_tests {
             .unwrap();
 
         let snapshot = store.snapshot(workspace).unwrap();
-        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        let persisted = snapshot
+            .chains
+            .iter()
+            .find(|run| run.id == chain.id)
+            .unwrap();
         assert_eq!(persisted.status, ChainStatus::Partial);
-        assert_eq!(persisted.error_message.as_deref(), Some("Later provider failed."));
+        assert_eq!(
+            persisted.error_message.as_deref(),
+            Some("Later provider failed.")
+        );
         assert_eq!(
             snapshot
                 .provider_runs
@@ -1604,7 +1628,14 @@ mod terminal_state_tests {
         store
             .stage_transition(workspace, completed.id, TaskStatus::Completed)
             .unwrap();
-        insert_provider_run(&store, workspace, chain.id, completed.id, "COMPLETED", Some(0));
+        insert_provider_run(
+            &store,
+            workspace,
+            chain.id,
+            completed.id,
+            "COMPLETED",
+            Some(0),
+        );
         store
             .stage_transition(workspace, active.id, TaskStatus::Running)
             .unwrap();
@@ -1622,7 +1653,11 @@ mod terminal_state_tests {
             .unwrap();
 
         let snapshot = store.snapshot(workspace).unwrap();
-        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        let persisted = snapshot
+            .chains
+            .iter()
+            .find(|run| run.id == chain.id)
+            .unwrap();
         assert_eq!(persisted.status, ChainStatus::Cancelled);
         assert_eq!(
             snapshot
@@ -1658,7 +1693,11 @@ mod terminal_state_tests {
             .unwrap();
 
         let snapshot = store.snapshot(workspace).unwrap();
-        let persisted = snapshot.chains.iter().find(|run| run.id == chain.id).unwrap();
+        let persisted = snapshot
+            .chains
+            .iter()
+            .find(|run| run.id == chain.id)
+            .unwrap();
         let detail = persisted.error_message.as_deref().unwrap();
         assert!(detail.len() <= CHAIN_ERROR_MESSAGE_MAX_BYTES);
         assert!(!detail.chars().any(char::is_control));
