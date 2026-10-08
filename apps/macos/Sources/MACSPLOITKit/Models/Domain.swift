@@ -100,10 +100,39 @@ public struct Relationship: Codable, Identifiable, Sendable, Equatable {
 public struct Observation: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetId: String, discoveredBy: String, observedValue: String, timestamp: String, confidence: String
     public let sourceAssetId: String?, providerRunId: String?, evidenceId: String?
+    public let metadata: JSONValue
+
+    private enum CodingKeys: String, CodingKey {
+        case id, workspaceId, assetId, discoveredBy, observedValue, timestamp, confidence
+        case sourceAssetId, providerRunId, evidenceId, metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        workspaceId = try values.decode(String.self, forKey: .workspaceId)
+        assetId = try values.decode(String.self, forKey: .assetId)
+        discoveredBy = try values.decode(String.self, forKey: .discoveredBy)
+        observedValue = try values.decode(String.self, forKey: .observedValue)
+        timestamp = try values.decode(String.self, forKey: .timestamp)
+        confidence = try values.decode(String.self, forKey: .confidence)
+        sourceAssetId = try values.decodeIfPresent(String.self, forKey: .sourceAssetId)
+        providerRunId = try values.decodeIfPresent(String.self, forKey: .providerRunId)
+        evidenceId = try values.decodeIfPresent(String.self, forKey: .evidenceId)
+        metadata = try values.decodeIfPresent(JSONValue.self, forKey: .metadata) ?? .object([:])
+    }
 }
 public struct ChainRun: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, targetId: String, name: String, status: String, createdAt: String, updatedAt: String
-    public let errorCode: String?
+    public let errorCode: String?, errorMessage: String?
+
+    public init(id: String, workspaceId: String, targetId: String, name: String, status: String,
+                createdAt: String, updatedAt: String, errorCode: String?, errorMessage: String? = nil) {
+        self.id = id; self.workspaceId = workspaceId; self.targetId = targetId; self.name = name
+        self.status = status; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.errorCode = errorCode; self.errorMessage = errorMessage
+    }
+
     public var isRunning: Bool { ["PENDING", "RUNNING"].contains(status) }
 }
 public struct ChainStage: Codable, Identifiable, Sendable, Equatable {
@@ -124,6 +153,20 @@ public struct ProviderRun: Codable, Identifiable, Sendable, Equatable {
 public struct Evidence: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, providerRunId: String, provider: String, target: String, timestamp: String, sha256: String, mediaType: String, relativePath: String
     public let byteCount: Int
+}
+public struct RelationshipObservation: Codable, Identifiable, Sendable, Equatable {
+    public let id: String, workspaceId: String, relationshipId: String, providerRunId: String, evidenceId: String, timestamp: String
+}
+public struct ChainResults: Codable, Sendable, Equatable {
+    public let chain: ChainRun
+    public let target: Target
+    public let stages: [ChainStage]
+    public let providerRuns: [ProviderRun]
+    public let assets: [Asset]
+    public let observations: [Observation]
+    public let relationships: [Relationship]
+    public let relationshipObservations: [RelationshipObservation]
+    public let evidence: [Evidence]
 }
 public struct CoreEvent: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, timestamp: String, eventType: String

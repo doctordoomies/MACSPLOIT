@@ -56,6 +56,21 @@ actor ReplyTransport: CoreTransport {
         #expect(snapshot.events[0].payload["synthetic"] == .bool(true))
     }
 
+    @Test func testChainResultsEncodesIdsAndDecodesRunMetadataAndFailureDetail() async throws {
+        let reply = ReplyTransport(#"{"result":{"chain":{"id":"c","workspace_id":"w","target_id":"t","name":"Domain Recon","status":"PARTIAL","created_at":"now","updated_at":"now","error_code":"ProviderFailure","error_message":"Later provider failed."},"target":{"id":"t","workspace_id":"w","original_value":"example.test","normalized_value":"example.test","target_type":"Domain","created_at":"now","asset_id":"a"},"stages":[],"provider_runs":[],"assets":[],"observations":[{"id":"o","workspace_id":"w","asset_id":"a","source_asset_id":null,"provider_run_id":"p","evidence_id":"e","discovered_by":"ffuf","observed_value":"https://example.test/admin","metadata":{"status":403,"content_length":7},"timestamp":"now","confidence":"CONFIRMED"}],"relationships":[],"relationship_observations":[],"evidence":[]}}"#)
+        let result = try await CoreClient(transport: reply).chainResults(workspace: "w", chain: "c")
+        #expect(result.chain.status == "PARTIAL")
+        #expect(result.chain.errorMessage == "Later provider failed.")
+        #expect(result.observations[0].metadata["status"] == .number(403))
+        #expect(result.observations[0].metadata["content_length"] == .number(7))
+
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(object["method"] as? String == "chain_results")
+        let params = object["params"] as! [String: String]
+        #expect(params["workspace_id"] == "w")
+        #expect(params["chain_id"] == "c")
+    }
+
     @Test func testProviderStatusDecodesFlattenedMetadataAndInstallation() async throws {
         let reply = ReplyTransport(#"{"result":[{"id":"subfinder","name":"Subfinder","description":"Passive subdomain enumeration.","version":"external","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","offline":false,"installation":{"state":"MISSING"}}]}"#)
         let providers = try await CoreClient(transport: reply).listProviders()
