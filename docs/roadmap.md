@@ -176,6 +176,22 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 
 These gaps define the next roadmap order.
 
+## Owner reprioritization — OSINT completion
+
+On 2026-10-08 the owner deliberately changed the near-term execution order: finish the
+OSINT workbench before returning to the remaining product milestones.
+
+- **Issue #58 — OSINT framework and provider coverage completion is ACTIVE.**
+- **Issue #22 — user-scanner remains the first username/email implementation slice.**
+- **PR #46 / Issue #45 — M1.5 Run Results remains preserved but is on HOLD while OSINT is active.**
+- M2–M5 remain queued; they are not silently cancelled.
+- After OSINT acceptance, choose deliberately between resuming the existing
+  Findings/Assessment roadmap and beginning a separately gated Authorized Validation /
+  Lab design. OSINT discoveries must never automatically trigger exploitation.
+
+This is an intentional roadmap reprioritization under the policy below, not accidental
+parallel feature work.
+
 ---
 
 # Milestone 0 — Consolidate the current beta
@@ -206,7 +222,7 @@ This milestone closes the current development burst before new product work star
 
 # Milestone 1 — Real-target usability
 
-**Status: ACTIVE**
+**Status: HOLD — PR #46 / Issue #45 preserved while OSINT is ACTIVE**
 
 The goal is simple: common authorized targets should work directly without artificial
 dependencies such as requiring public DNS first.
@@ -295,9 +311,8 @@ or begin Milestone 2 work as part of this issue.
 
 ## 1.4 First-run setup and onboarding
 
-**Issue #38 — ACTIVE (implemented in an open PR, MERGE GATE; not yet merged).** A fresh
-MACSPLOIT install should guide the user through environment readiness before exposing the
-full workbench.
+**Issue #38 — DONE via PR #41.** A fresh MACSPLOIT install guides the user through
+environment readiness before exposing the full workbench.
 
 Required outcomes:
 
@@ -325,9 +340,14 @@ provider-platform decision and is intentionally out of scope. Research/news back
 implementation is not required merely because setup can choose a Research-oriented
 dashboard preset.
 
-## 1.5 Real-target acceptance matrix
+## 1.5 Real-target acceptance + Run Results UX
 
-After Issues #36 and #38 land and receive owner acceptance, add/maintain an acceptance matrix covering at minimum:
+**Issue #45 / PR #46 — HOLD.** The implementation branch is preserved and may continue
+after the active OSINT milestone. Do not merge it merely to clear the queue; its owner
+acceptance gate still applies.
+
+When resumed, complete the Run Results experience and maintain an acceptance matrix
+covering at minimum:
 
 - domain;
 - hostname;
@@ -615,55 +635,126 @@ reconstructing the engagement manually from terminal files.
 
 # Milestone 6 — OSINT
 
-**Status: QUEUED**
+**Status: ACTIVE — Issue #58**
 
-OSINT begins after the core assessment workflow is coherent.
+The immediate product goal is a coherent, evidence-first OSINT workbench covering
+Username, Email, Phone, Domain/Organization, and public infrastructure/account
+intelligence. Breadth is encouraged when a provider adds distinct coverage or useful
+cross-validation; provider count alone is not a success metric.
 
-## 6.1 Username + email OSINT
+## 6.0 OSINT framework foundation
 
-**Existing issue: #22 — user-scanner integration**
+Before multiplying tools, make OSINT a first-class typed workflow:
 
-Initial provider scope:
+- explicit OSINT capabilities in the Rust provider contract;
+- target compatibility for Username / Email / Phone / Domain and related public assets;
+- dedicated OSINT run UI rather than hiding OSINT inside Domain Recon;
+- bounded/cancellable execution through the existing process supervisor;
+- provider readiness/version/setup in Provider Center;
+- evidence-first persistence and per-run Observation metadata;
+- confidence/provenance preserved independently from identity correlation;
+- repeat-run deduplication without losing historical observations;
+- fully offline fake-provider fixtures in CI.
 
-- Username targets
-- Email targets
-- public profile/account discoveries
-- metadata/provenance
-- confidence preservation
-- bounded explicit execution
+Do not create a second orchestration system.
 
-Initial integration excludes unrestricted recursive pivots, breach credential
-collection, and evasion/proxy systems.
+## 6.1 Username + public-profile OSINT
 
-## 6.2 Domain OSINT
+**Issue #22 — user-scanner is the first implementation slice.**
 
-Add domain-focused public intelligence that provides meaningful information not already
-covered by active recon.
+Provider set to evaluate/integrate:
 
-Examples may include public registration/organization, certificate transparency, or
-other passive sources after provider review.
+- user-scanner;
+- Sherlock;
+- Maigret;
+- socialscan;
+- additional maintained username providers only when they add distinct coverage.
+
+Use public profile/account results, bounded metadata, evidence, and uncertainty. A
+matching handle across sites is not proof that all accounts belong to one person.
+
+## 6.2 Email OSINT
+
+Provider set to evaluate/integrate:
+
+- user-scanner;
+- Holehe;
+- socialscan;
+- theHarvester where its public-source output fits the target.
+
+Initial email OSINT is public registration/profile intelligence. Do not center this phase
+on breach credentials, stolen data, secret harvesting, or password exposure.
 
 ## 6.3 Phone OSINT
 
-Evaluate PhoneInfoga or another maintained provider with the same evidence/confidence
-model.
+Integrate PhoneInfoga (or a better-maintained equivalent if provider review shows one)
+for explicit Phone targets, with bounded execution, structured parsing, evidence, and
+confidence/provenance.
 
-## 6.4 Alternative username providers
+## 6.4 Domain / organization / public infrastructure OSINT
 
-Sherlock/Maigret are added only if they provide useful coverage or validation beyond
-user-scanner. Provider count is not a roadmap goal.
+Add complementary passive/public-source providers:
 
-## 6.5 Identity correlation
+- theHarvester;
+- OWASP Amass in passive/public-source mode;
+- native RDAP / registration intelligence;
+- native certificate-transparency intelligence;
+- reuse existing Subfinder/provider data where it already answers the question rather
+  than duplicating active recon.
 
-Build explicit correlation edges with confidence/provenance.
+Optional external intelligence APIs may be added only as explicit read-only providers
+with clear API-key/configuration handling and no hard dependency.
 
-A shared username or email registration result does not automatically mean two
-profiles belong to the same human.
+## 6.5 Advanced aggregators
+
+Evaluate SpiderFoot and similar maintained aggregators after the typed OSINT contract is
+stable. They must feed MACSPLOIT's normalized Assets / Observations / Relationships /
+Evidence model rather than becoming a second workbench inside the workbench.
+
+## 6.6 Identity correlation
+
+Build explicit correlation edges with evidence and confidence.
+
+Never silently merge people/accounts merely because they share a username, email-like
+identifier, avatar, or display name. Correlation remains reviewable and reversible.
+
+## 6.7 OSINT safety and privacy boundaries
+
+Initial OSINT is public-source research with explicit user actions and bounded providers.
+
+Do not add as default behavior:
+
+- credential/password collection;
+- breach-password harvesting;
+- exposed-secret persistence;
+- unrestricted recursive identity hunting;
+- proxy rotation / rate-limit bypass / evasion;
+- stalking or covert-surveillance workflows;
+- automatic actions against discovered accounts.
+
+Recursive pivots, if ever added, require explicit opt-in plus hard depth/result/request
+limits and visible provenance.
 
 ## Exit condition
 
-Username, email, domain, and phone research can be performed as explicit OSINT
-workflows with evidence and uncertainty preserved.
+OSINT is complete enough to leave this milestone when:
+
+- Username, Email, Phone, and Domain OSINT each have a native workflow;
+- multiple maintained providers can be selected where useful;
+- provider readiness/version/setup is understandable;
+- runs are bounded and cancellable;
+- results normalize into Assets / Observations / Relationships / Evidence;
+- uncertainty and provenance remain visible;
+- repeat runs deduplicate canonical assets without losing per-run facts;
+- results survive restart;
+- automated tests remain offline;
+- docs/features/roadmap match reality;
+- CI and CodeQL are green;
+- the owner completes an end-to-end OSINT walkthrough.
+
+After this exit gate, deliberately choose the next product track. Exploitation or deeper
+validation, if selected, belongs in the separate Authorized Validation / Lab architecture
+with stronger scope/risk gates and must not become an automatic continuation of OSINT.
 
 ---
 
@@ -1035,14 +1126,15 @@ After the agent finishes:
 | Issue #20 — localhost/local/private targets | Milestone 1.1 — DONE via PR #31 |
 | Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
 | Issue #36 — UX stabilization | Milestone 1.3 — DONE via PR #39 |
-| Issue #38 — first-run setup and onboarding | Milestone 1.4 — ACTIVE (MERGE GATE) |
-| Real-target acceptance matrix | Milestone 1.5 — after Issues #36 and #38 |
+| Issue #38 / PR #41 — first-run setup and onboarding | Milestone 1.4 — DONE |
+| Issue #45 / PR #46 — Run Results + real-target acceptance | Milestone 1.5 — HOLD |
+| Issue #58 — OSINT framework and provider coverage completion | Milestone 6 — ACTIVE |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
 | JavaScript analysis | Milestone 3 — issue to create when active |
 | Nuclei / TLS | Milestone 4 — issues to create when active |
-| Issue #22 — user-scanner OSINT | Milestone 6 |
+| Issue #22 — user-scanner OSINT | Milestone 6.1 — ACTIVE implementation slice |
 | Local source analysis | Milestone 7 |
 | Issue #21 — AI node UI | Milestone 9 |
 | Issue #9 — AI-assisted agents | Milestone 9 |
@@ -1053,55 +1145,45 @@ After the agent finishes:
 
 # High-level execution order
 
+The milestone numbers remain stable, but the owner has intentionally changed the
+near-term execution sequence:
+
 ```text
-M0  Consolidate current beta
-    Tool Manager DONE + CodeQL cutover
+M6  OSINT — ACTIVE
+    typed OSINT framework
+    + user-scanner / Sherlock / Maigret / socialscan
+    + Holehe / theHarvester
+    + PhoneInfoga
+    + passive Amass / RDAP / certificate transparency
+    + identity correlation + OSINT UX
             ↓
-M1  Real-target usability
-    localhost/private + Direct IP Recon + UX stabilization + onboarding + acceptance
+    owner OSINT acceptance gate
             ↓
-M2  Bug bounty workbench + Findings foundation
-            ↓
-M3  Web recon completion
-    historical URLs + JS + APIs + screenshots
-            ↓
-M4  Vulnerability assessment
-    TLS + Findings engine + conservative Nuclei
-            ↓
-M5  Reporting and exports
-            ↓
-M6  OSINT
-    user-scanner + domain + phone + correlation
-            ↓
-M7  Local source / repository analysis
-            ↓
-M8  Provider platform maturity + Core 1.0 candidate
-            ↓
-M9  AI analyst / node interface
-            ↓
-M10 Authorized Validation / Lab
-            ↓
-M11 Infrastructure / network / cloud / containers
-            ↓
-M12 Hardware / wireless
+NEXT DECISION
+    A) resume M1.5 → M2 Findings → M3/M4/M5
+    OR
+    B) deliberately design Authorized Validation / Lab before any exploitation work
+
+M7+ remain queued/future according to their existing sections.
 ```
 
-Distribution/release engineering runs as an ongoing controlled track and becomes a
-formal release gate around Core 1.0.
+Distribution/release engineering remains an ongoing controlled track.
 
 ---
 
 ## Immediate next action
 
-Do **not** start Historical URL Intelligence yet.
+OSINT is now the active product milestone.
 
-M0 is complete; Milestones 1.1 (PR #31), 1.2 (PR #35), and 1.3 UX Stabilization (PR #39)
-are merged with green post-merge CI and Advanced CodeQL. The next execution sequence is:
+1. Land this roadmap reprioritization.
+2. Establish the OSINT typed-provider/model/UI foundation under Issue #58.
+3. Implement Issue #22 (user-scanner Username + Email) as the first real provider slice.
+4. Add complementary username/email providers (Sherlock, Maigret, socialscan, Holehe).
+5. Add PhoneInfoga.
+6. Add domain/public-infrastructure OSINT (theHarvester, passive Amass, RDAP, CT).
+7. Add correlation/review UX, restart persistence, offline fixtures, and complete the
+   owner OSINT acceptance walkthrough.
+8. Only then decide whether to resume M1.5/Findings/Assessment or design the separate
+   Authorized Validation / Lab track.
 
-1. complete Issue #38 — Milestone 1.4 First-run Setup & Onboarding (in progress);
-2. complete the Milestone 1.5 real-target acceptance matrix;
-3. owner full-product walkthrough and fix any acceptance bugs;
-4. reach the Milestone 1 exit condition;
-5. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
-
-That sequence remains authoritative until this roadmap is deliberately changed.
+PR #46 remains preserved on HOLD and is not automatically merged or discarded.
