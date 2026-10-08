@@ -108,13 +108,12 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 4 {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(include_str!("../../migrations/004_observation_metadata.sql"))
-            .map_err(|_| {
-                CoreError::new(
-                    "MigrationFailure",
-                    "Observation-metadata migration failed.",
-                )
-            })?;
+        tx.execute_batch(include_str!(
+            "../../migrations/004_observation_metadata.sql"
+        ))
+        .map_err(|_| {
+            CoreError::new("MigrationFailure", "Observation-metadata migration failed.")
+        })?;
         tx.pragma_update(None, "user_version", 4)?;
         tx.commit()?;
     }
@@ -692,12 +691,10 @@ mod tests {
         migrate(&mut conn).unwrap();
 
         assert_eq!(
-            conn.query_row(
-                "SELECT metadata FROM observations WHERE id='o'",
-                [],
-                |r| r.get::<_, String>(0),
-            )
-            .unwrap(),
+            conn.query_row("SELECT metadata FROM observations WHERE id='o'", [], |r| {
+                r.get::<_, String>(0)
+            },)
+                .unwrap(),
             "{}"
         );
         assert!(conn
