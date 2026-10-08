@@ -72,25 +72,44 @@ actor ReplyTransport: CoreTransport {
     }
 
     @Test func testProviderStatusDecodesFlattenedMetadataAndInstallation() async throws {
-        let reply = ReplyTransport(#"{"result":[{"id":"subfinder","name":"Subfinder","description":"Passive subdomain enumeration.","version":"external","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","offline":false,"installation":{"state":"MISSING"}}]}"#)
+        let reply = ReplyTransport(#"{"result":[{"id":"subfinder","name":"Subfinder","description":"Passive subdomain enumeration.","version":"external","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","network_activity":"NETWORK","offline":false,"installation":{"state":"MISSING"}}]}"#)
         let providers = try await CoreClient(transport: reply).listProviders()
         #expect(providers.count == 1)
         #expect(providers[0].id == "subfinder")
         #expect(providers[0].capabilities == ["SUBDOMAIN_DISCOVERY"])
         #expect(providers[0].supportedTargetTypes == ["Domain"])
-        #expect(providers[0].offline == false)
+        #expect(providers[0].networkActivity == "NETWORK")
+        #expect(providers[0].performsNetworkActivity)
         #expect(providers[0].installation.isInstalled == false)
         #expect(providers[0].installation.summary == "Not installed")
     }
 
     @Test func testBuiltInProviderInstallationDecodes() async throws {
-        let reply = ReplyTransport(#"{"result":[{"id":"native_dns","name":"Native DNS Resolver","description":"Built-in resolver.","version":"built-in","capabilities":["DNS_RESOLUTION"],"supported_target_types":["Domain","Hostname"],"risk_class":"ACTIVE_LOW_IMPACT","offline":true,"installation":{"state":"BUILT_IN"}}]}"#)
+        let reply = ReplyTransport(#"{"result":[{"id":"native_dns","name":"Native DNS Resolver","description":"Built-in resolver.","version":"built-in","capabilities":["DNS_RESOLUTION"],"supported_target_types":["Domain","Hostname"],"risk_class":"ACTIVE_LOW_IMPACT","network_activity":"NETWORK","offline":false,"installation":{"state":"BUILT_IN"}}]}"#)
         let providers = try await CoreClient(transport: reply).listProviders()
         #expect(providers[0].id == "native_dns")
         #expect(providers[0].riskClass == "ACTIVE_LOW_IMPACT")
         #expect(providers[0].installation.state == "BUILT_IN")
+        #expect(providers[0].networkActivity == "NETWORK")
+        #expect(providers[0].performsNetworkActivity)
         #expect(providers[0].installation.isAvailable)
         #expect(providers[0].installation.summary == "Built in")
+    }
+
+    @Test func testProviderNetworkActivitySeparatesBuiltInFromNetworkBehavior() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"synthetic","name":"Synthetic","description":"d","version":"built-in","capabilities":["SUBDOMAIN_DISCOVERY"],"supported_target_types":["Domain"],"risk_class":"PASSIVE","network_activity":"NONE","offline":true,"installation":{"state":"BUILT_IN"}},{"id":"native_http","name":"Native HTTP","description":"d","version":"built-in","capabilities":["WEB_ANALYSIS"],"supported_target_types":["URL"],"risk_class":"ACTIVE_LOW_IMPACT","network_activity":"NETWORK","offline":false,"installation":{"state":"BUILT_IN"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].installation.isBuiltIn)
+        #expect(providers[0].performsNetworkActivity == false)
+        #expect(providers[1].installation.isBuiltIn)
+        #expect(providers[1].performsNetworkActivity)
+    }
+
+    @Test func testLegacyOfflineFieldIsOnlyAFallback() async throws {
+        let reply = ReplyTransport(#"{"result":[{"id":"legacy","name":"Legacy","description":"d","version":"external","capabilities":[],"supported_target_types":[],"risk_class":"PASSIVE","offline":false,"installation":{"state":"MISSING"}}]}"#)
+        let providers = try await CoreClient(transport: reply).listProviders()
+        #expect(providers[0].networkActivity == nil)
+        #expect(providers[0].performsNetworkActivity)
     }
 
     @Test func testStartChainEncodesChainAndOptions() async throws {
