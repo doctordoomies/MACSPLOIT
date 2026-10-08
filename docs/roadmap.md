@@ -338,13 +338,14 @@ run-scoped Results experience.
 
 Implementation must proceed data-first:
 
-1. **Issue #50** — persist run-specific discovery metadata on Observations so repeated canonical assets retain what each provider run actually observed.
-2. **Issue #49** — make PARTIAL/FAILED/CANCELLED semantics and durable failure detail accurate.
-3. Expose chain-scoped ProviderRun → Observation / relationship_observations → Evidence provenance through a typed read-only core query.
-4. Add Swift state and workflow-specific Run Results presentation.
-5. Complete the real-target acceptance matrix and owner walkthrough.
+1. **Issue #50 — Run-specific Observation metadata.** Add a versioned persistence field for bounded normalized discovery metadata, preserve per-run facts even when a canonical Asset already exists, and cover dedup/restart behavior with offline regression tests.
+2. **Issue #49 — Accurate terminal execution state.** Make PARTIAL / FAILED / CANCELLED semantics deterministic, persist bounded presentation-safe failure detail, and keep provider/stage terminal state truthful after restart.
+3. **Typed chain-results core query.** Reconstruct one chain/run through ProviderRun → Observation / relationship_observations → Evidence provenance, preferring Observation metadata for historical run-specific facts rather than mutable Asset metadata.
+4. **Swift bridge + ViewModel state.** Add typed models for a selected chain/run, including stale-request protection so an older asynchronous response cannot replace newer Results state.
+5. **Workflow-specific Run Results UI.** Present DNS, Domain, IP, Web Recon, Web Analysis, and Content Discovery results with explicit zero/partial/failed/cancelled states and direct Asset/Evidence navigation.
+6. **Acceptance blockers + owner acceptance.** Resolve Issue #47 (managed-provider duplicate install / rediscovery) and Issue #48 (network-activity metadata/labels), then complete the authorized real-target matrix and owner full-product walkthrough.
 
-Do not build the polished Results UI first and then retrofit provenance.
+Do not build the polished Results UI first and then retrofit provenance. Issues #47 and #48 are required Milestone 1 exit blockers even if they are implemented in low-conflict maintenance work rather than directly inside PR #46.
 
 ### Run-scoped Results requirements
 
@@ -1169,9 +1170,13 @@ M0 is complete; Milestones 1.1 (PR #31), 1.2 (PR #35), 1.3 UX Stabilization (PR 
 and 1.4 Setup & Onboarding (PR #41) are merged and owner-accepted. The next execution
 sequence is:
 
-1. complete Issue #45 — Milestone 1.5 Run Results UX + real-target acceptance;
-2. owner full-product walkthrough and fix any acceptance bugs;
-3. reach the Milestone 1 exit condition;
-4. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
+1. implement Issue #50 observation metadata;
+2. implement Issue #49 terminal-state/failure persistence;
+3. add the typed chain-results Rust query;
+4. add Swift bridge/ViewModel state and workflow-specific Run Results UI;
+5. resolve acceptance blockers #47 and #48;
+6. complete the authorized real-target matrix and owner full-product walkthrough;
+7. reach the Milestone 1 exit condition;
+8. only then advance to the Milestone 2 Bug Bounty workbench + Findings foundation.
 
 That sequence remains authoritative until this roadmap is deliberately changed.
