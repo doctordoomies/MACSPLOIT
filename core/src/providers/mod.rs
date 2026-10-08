@@ -2350,10 +2350,7 @@ mod tests {
             .unwrap();
         assert_eq!(provider.metadata().risk_class, RiskClass::Passive);
         assert_eq!(provider.metadata().id, "synthetic");
-        assert_eq!(
-            provider.metadata().network_activity,
-            NetworkActivity::None
-        );
+        assert_eq!(provider.metadata().network_activity, NetworkActivity::None);
     }
 
     #[test]
