@@ -293,6 +293,29 @@ mod tests {
     }
 
     #[test]
+    fn wire_accepts_osint_chain_kinds_and_provider_option() {
+        for (wire, kind) in [
+            (
+                "username_osint",
+                crate::orchestration::ChainKind::UsernameOsint,
+            ),
+            ("email_osint", crate::orchestration::ChainKind::EmailOsint),
+        ] {
+            let request: Request = serde_json::from_value(
+                json!({"protocol_version":1,"request_id":"osint","method":"start_chain","params":{
+                "workspace_id": Id::new_v4(), "target_id": Id::new_v4(), "chain": wire,
+                "options": {"provider_id": "user_scanner"}}}),
+            )
+            .unwrap();
+            let Command::StartChain { chain, options, .. } = request.command else {
+                panic!("not start_chain")
+            };
+            assert_eq!(chain, kind);
+            assert_eq!(options["provider_id"], "user_scanner");
+        }
+    }
+
+    #[test]
     fn wire_rejects_invalid_uuid_and_unknown_method() {
         assert!(serde_json::from_value::<Request>(json!({"protocol_version":1,"request_id":"test","method":"snapshot","params":{"workspace_id":"../outside"}})).is_err());
         assert!(serde_json::from_value::<Request>(

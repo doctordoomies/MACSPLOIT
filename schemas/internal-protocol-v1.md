@@ -34,7 +34,7 @@ empty request ID; an oversized frame closes the helper session.
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
 | chain_results | workspace_id, chain_id | Read-only durable reconstruction of one Recon Chain: chain/target/stages/provider runs, scoped assets + Observations (including per-run metadata), relationship observations/provenance, and Evidence metadata. No raw Evidence body; no timestamp-only ownership inference. |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
-| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, or `content_discovery`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`) | Pending chain; execution occurs on worker |
+| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, `content_discovery`, `username_osint`, or `email_osint`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`; OSINT chains accept `{"provider_id": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
 | list_providers | none | Provider metadata, live installation status (state/version), and `install` (reviewed method availability: `homebrew`, `managed_download`, `official_installer_url?`) |
@@ -80,3 +80,21 @@ core, alongside the existing `version`. Missing fields decode as absent. Built-i
 providers use `BUILT_IN` and omit executable paths and installation commands.
 Setup commands are static display/copy data, never executable IPC instructions.
 The other installation states and protocol version remain unchanged.
+
+
+### OSINT additions (v1 compatible)
+
+`start_chain` accepts `username_osint` (Username target) and `email_osint`
+(EmailAddress target). `options.provider_id`, when present, must be a string naming a
+registered provider that advertises the OSINT capability and the target's type;
+otherwise the first compatible provider is used (`ProviderUnsupported` /
+`InvalidRequest` / `InvalidTarget` on mismatch). Provider metadata gains the
+`USERNAME_OSINT` and `EMAIL_OSINT` capability values; asset types gain `Username`,
+`EmailAddress`, and `Account`; relationship types gain `has_account` and
+`profile_url`. Snapshot observations gain an optional `metadata` object (absent/null
+for legacy rows). Chains may finish `PARTIAL` (already a valid chain status) when a
+provider reports incomplete results. `ProviderResults` event payloads may include
+`partial` and a bounded `summary`; a failed parse emits `ProviderCompleted` with
+`error_code`/`message`. Evidence envelopes may include `cancelled` and `artifacts`
+(name, observed size, over-limit flag, and the evidence id/SHA-256 of a separately
+stored structured report). Older clients ignore all new fields; no version bump.

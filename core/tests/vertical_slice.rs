@@ -218,6 +218,7 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
                 value: url.into(),
                 source: None,
                 relationship: None,
+                observation: None,
                 metadata: json!({
                     "tool": "ffuf",
                     "status": 200,
@@ -262,6 +263,7 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
                 value: url.into(),
                 source: None,
                 relationship: None,
+                observation: None,
                 metadata: json!({
                     "tool": "ffuf",
                     "status": 403,
@@ -299,13 +301,13 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
         .iter()
         .find(|o| o.asset_id == url_asset.id && o.provider_run_id == Some(run_b))
         .unwrap();
-    assert_eq!(observation_a.metadata["status"], 200);
-    assert_eq!(observation_a.metadata["content_length"], 42);
-    assert_eq!(observation_b.metadata["status"], 403);
-    assert_eq!(observation_b.metadata["content_length"], 7);
-    assert_eq!(observation_b.metadata["redirect"], "/login");
-    assert!(observation_a.metadata.get("in_scope").is_none());
-    assert!(observation_b.metadata.get("in_scope").is_none());
+    assert_eq!(observation_a.metadata.as_ref().unwrap()["status"], 200);
+    assert_eq!(observation_a.metadata.as_ref().unwrap()["content_length"], 42);
+    assert_eq!(observation_b.metadata.as_ref().unwrap()["status"], 403);
+    assert_eq!(observation_b.metadata.as_ref().unwrap()["content_length"], 7);
+    assert_eq!(observation_b.metadata.as_ref().unwrap()["redirect"], "/login");
+    assert!(observation_a.metadata.as_ref().unwrap().get("in_scope").is_none());
+    assert!(observation_b.metadata.as_ref().unwrap().get("in_scope").is_none());
 
     drop(engine);
     let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
@@ -323,10 +325,10 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
     assert_eq!(persisted_observations.len(), 2);
     assert!(persisted_observations
         .iter()
-        .any(|o| o.metadata["status"] == 200));
+        .any(|o| o.metadata.as_ref().unwrap()["status"] == 200));
     assert!(persisted_observations
         .iter()
-        .any(|o| o.metadata["status"] == 403));
+        .any(|o| o.metadata.as_ref().unwrap()["status"] == 403));
 }
 
 #[test]
@@ -354,6 +356,7 @@ fn discovery_metadata_is_object_only_and_bounded() {
         value: "https://example.test/non-object".into(),
         source: None,
         relationship: None,
+        observation: None,
         metadata: json!(["not", "an", "object"]),
     };
     assert_eq!(
@@ -370,6 +373,7 @@ fn discovery_metadata_is_object_only_and_bounded() {
         value: "https://example.test/oversized".into(),
         source: None,
         relationship: None,
+        observation: None,
         metadata: json!({"summary": "x".repeat(20 * 1024)}),
     };
     assert_eq!(
@@ -619,6 +623,7 @@ fn discovery_transaction_rolls_back_asset_provenance_and_events() {
             value: "new.example.test".into(),
             source: Some("example.test".into()),
             relationship: Some(RelationshipType::HasSubdomain),
+            observation: None,
             metadata: json!({}),
         },
         Discovery {
@@ -626,6 +631,7 @@ fn discovery_transaction_rolls_back_asset_provenance_and_events() {
             value: "broken.example.test".into(),
             source: Some("missing.test".into()),
             relationship: Some(RelationshipType::HasSubdomain),
+            observation: None,
             metadata: json!({}),
         },
     ];

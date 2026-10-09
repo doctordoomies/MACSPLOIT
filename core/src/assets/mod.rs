@@ -17,6 +17,14 @@ pub enum AssetType {
     Endpoint,
     Technology,
     Certificate,
+    /// An OSINT subject handle (canonical form `@handle`).
+    Username,
+    /// An OSINT subject email address (domain lowercased; local part preserved).
+    EmailAddress,
+    /// A public account/registration reported by an OSINT provider on one platform
+    /// for one identifier. Canonical identity is `<platform>:<identifier>`. An
+    /// Account is never merged with another merely because it shares an identifier.
+    Account,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +40,11 @@ pub enum RelationshipType {
     Serves,
     HasEndpoint,
     UsesTechnology,
+    /// OSINT: an identifier (Username/EmailAddress) was reported as present or
+    /// registered on a platform (Account). A provider claim, not proof of ownership.
+    HasAccount,
+    /// OSINT: an Account's public profile URL as reported by the provider.
+    ProfileUrl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,19 +88,12 @@ pub struct Observation {
     pub evidence_id: Option<Id>,
     pub discovered_by: String,
     pub observed_value: String,
-    /// Bounded normalized facts emitted for this exact observation/run.
-    ///
-    /// Asset metadata is the canonical/current asset summary and may not change when
-    /// a deduplicated asset is observed again. Historical run results therefore use
-    /// this field rather than mutable asset metadata.
-    #[serde(default = "empty_metadata")]
-    pub metadata: Value,
     pub timestamp: String,
     pub confidence: String,
-}
-
-fn empty_metadata() -> Value {
-    Value::Object(serde_json::Map::new())
+    /// Per-run, provider-specific facts for this observation (e.g. OSINT upstream
+    /// status, platform, bounded public profile metadata). Absent for legacy rows.
+    #[serde(default)]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +102,18 @@ pub struct Discovery {
     pub value: String,
     pub source: Option<String>,
     pub relationship: Option<RelationshipType>,
+    /// Optional per-run observation detail. When absent the observation is recorded
+    /// with confidence `CONFIRMED` and no metadata (the historical behavior).
+    #[serde(default)]
+    pub observation: Option<ObservationDetail>,
+    pub metadata: Value,
+}
+
+/// Confidence and per-run metadata a provider attaches to the observation it makes,
+/// kept separate from the canonical asset (which deduplicates across runs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservationDetail {
+    pub confidence: String,
     pub metadata: Value,
 }
 
@@ -127,6 +145,9 @@ pub fn canonical_identity(kind: AssetType, value: &str) -> crate::error::Result<
             .map(|ip| ip.to_string())
             .map_err(|_| CoreError::new("InvalidTarget", "Invalid IP address.")),
         AssetType::URL | AssetType::Website | AssetType::Endpoint => crate::targets::web_url(value),
+        AssetType::Username => crate::osint::username_identity(value),
+        AssetType::EmailAddress => crate::osint::email_identity(value),
+        AssetType::Account => crate::osint::account_identity(value),
         _ if !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control) => {
             Ok(value.into())
         }

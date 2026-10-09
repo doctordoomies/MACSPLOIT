@@ -17,6 +17,11 @@ fn tools(root: &Path, body: &str) -> ToolConfig {
     for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
         tools.overrides.insert(name.into(), executable.clone());
     }
+    // Pin user-scanner to an absent path so a developer's real install never leaks
+    // into these deterministic expectations (its own probes live in osint_user_scanner.rs).
+    tools
+        .overrides
+        .insert("user-scanner".into(), root.join("absent-user-scanner"));
     tools
 }
 
@@ -42,9 +47,18 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
     assert!(response.error.is_none());
     assert_eq!(response.protocol_version, 1);
     let statuses: Vec<ProviderStatus> = serde_json::from_value(response.result.unwrap()).unwrap();
-    assert_eq!(statuses.len(), 8);
+    assert_eq!(statuses.len(), 9);
     let mut built_in = 0;
     for status in statuses {
+        if status.metadata.id == "user_scanner" {
+            assert_eq!(status.installation, Installation::Missing);
+            assert_eq!(
+                status.setup.unwrap().install_command.as_deref(),
+                Some("pipx install user-scanner")
+            );
+            assert!(!status.install.homebrew && !status.install.managed_download);
+            continue;
+        }
         match status.installation {
             Installation::BuiltIn => {
                 built_in += 1;
@@ -85,7 +99,7 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
         for status in registry
             .status(&config)
             .into_iter()
-            .filter(|s| s.setup.is_some())
+            .filter(|s| s.setup.is_some() && s.metadata.id != "user_scanner")
         {
             let value = serde_json::to_value(status).unwrap();
             assert_eq!(value["installation"]["state"], expected);
@@ -95,7 +109,14 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
         }
     }
     let mut config = ToolConfig::default();
-    for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
+    for name in [
+        "subfinder",
+        "nmap",
+        "httpx",
+        "katana",
+        "ffuf",
+        "user-scanner",
+    ] {
         config
             .overrides
             .insert(name.into(), temp.path().join("missing"));

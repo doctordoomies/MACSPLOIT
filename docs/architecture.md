@@ -74,8 +74,11 @@ Providers implement one Rust trait (metadata/installation/execute/parse, plus an
 optional per-provider timeout) and are selected by capability, or pinned per chain
 stage when a capability has more than one provider. Registered: the offline synthetic
 provider, Subfinder (passive external), native DNS (built-in), Nmap (active external),
-HTTPX (active-low-impact external), Katana (active-low-impact external), and native
-HTTP analysis (built-in). A pinned provider is trusted to operate on the chain's input
+HTTPX (active-low-impact external), Katana (active-low-impact external), native
+HTTP analysis (built-in), ffuf (active external), and user-scanner (OSINT,
+active-low-impact external). OSINT chains run on an identifier subject rather than a
+workspace host; see [OSINT](osint.md) for that authorization model and the shared
+OSINT primitives. A pinned provider is trusted to operate on the chain's input
 assets, so provider selection by id is validated on capability only — the chain target
 type is not re-checked (Nmap consumes IPAddress assets while the chain target is a
 Domain). `ProviderContext` carries workspace scope so a provider can scope-check

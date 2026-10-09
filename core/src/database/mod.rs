@@ -84,49 +84,55 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
         tx.commit()?;
     }
     if version < 3 {
-        // Rebuilding asset_relationships (CHECK change) requires foreign keys off so the
-        // relationship_observations FK survives the drop/rename. Pragma can't change inside
-        // a transaction, so toggle it around a dedicated migration transaction.
-        conn.pragma_update(None, "foreign_keys", false)?;
-        let result = (|| -> Result<()> {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute_batch(include_str!("../../migrations/003_reverse_dns.sql"))
-                .map_err(|_| CoreError::new("MigrationFailure", "Reverse-DNS migration failed."))?;
-            let invalid: bool = tx.prepare("PRAGMA foreign_key_check")?.exists([])?;
-            if invalid {
-                return Err(CoreError::new(
-                    "MigrationFailure",
-                    "Reverse-DNS migration violates referential integrity.",
-                ));
-            }
-            tx.pragma_update(None, "user_version", 3)?;
-            tx.commit()?;
-            Ok(())
-        })();
-        conn.pragma_update(None, "foreign_keys", true)?;
-        result?;
+        rebuild_migration(
+            conn,
+            include_str!("../../migrations/003_reverse_dns.sql"),
+            3,
+            "Reverse-DNS",
+        )?;
     }
     if version < 4 {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(include_str!(
-            "../../migrations/004_observation_metadata.sql"
-        ))
-        .map_err(|_| {
-            CoreError::new("MigrationFailure", "Observation-metadata migration failed.")
-        })?;
-        tx.pragma_update(None, "user_version", 4)?;
-        tx.commit()?;
+        rebuild_migration(
+            conn,
+            include_str!("../../migrations/004_osint.sql"),
+            4,
+            "OSINT",
+        )?;
     }
     if version < 5 {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("../../migrations/005_chain_error_message.sql"))
-            .map_err(|_| {
-                CoreError::new("MigrationFailure", "Chain-error-detail migration failed.")
-            })?;
+            .map_err(|_| CoreError::new("MigrationFailure", "Chain-error-detail migration failed."))?;
         tx.pragma_update(None, "user_version", 5)?;
         tx.commit()?;
     }
     Ok(())
+}
+
+/// Run a migration that rebuilds a table (CHECK change). Rebuilding asset_relationships
+/// requires foreign keys off so the relationship_observations FK survives the
+/// drop/rename. Pragma can't change inside a transaction, so toggle it around a
+/// dedicated migration transaction and verify referential integrity before commit.
+fn rebuild_migration(conn: &mut Connection, sql: &str, version: i64, label: &str) -> Result<()> {
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| -> Result<()> {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(sql).map_err(|_| {
+            CoreError::new("MigrationFailure", &format!("{label} migration failed."))
+        })?;
+        let invalid: bool = tx.prepare("PRAGMA foreign_key_check")?.exists([])?;
+        if invalid {
+            return Err(CoreError::new(
+                "MigrationFailure",
+                &format!("{label} migration violates referential integrity."),
+            ));
+        }
+        tx.pragma_update(None, "user_version", version)?;
+        tx.commit()?;
+        Ok(())
+    })();
+    conn.pragma_update(None, "foreign_keys", true)?;
+    result
 }
 
 pub fn emit(conn: &Connection, workspace: Id, kind: EventType, payload: Value) -> Result<()> {
@@ -488,6 +494,7 @@ impl Store {
                     metadata: json!({}),
                     timestamp: crate::now(),
                     confidence: "CONFIRMED".into(),
+                    metadata: None,
                 },
             )?;
             Some(asset.id)
@@ -604,10 +611,7 @@ pub fn upsert_asset(
 
 pub fn observe(tx: &Transaction<'_>, observation: &Observation) -> Result<()> {
     tx.execute(
-        "INSERT INTO observations(
-            id,workspace_id,asset_id,source_asset_id,provider_run_id,evidence_id,
-            discovered_by,observed_value,timestamp,confidence,metadata
-         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        "INSERT INTO observations VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             observation.id.to_string(),
             observation.workspace_id.to_string(),
@@ -619,7 +623,7 @@ pub fn observe(tx: &Transaction<'_>, observation: &Observation) -> Result<()> {
             observation.observed_value,
             observation.timestamp,
             observation.confidence,
-            observation.metadata.to_string()
+            observation.metadata.as_ref().map(|m| m.to_string())
         ],
     )?;
     Ok(())
@@ -681,38 +685,72 @@ mod tests {
     }
 
     #[test]
-    fn observation_metadata_migration_defaults_existing_rows_to_an_object() {
+    fn osint_migration_preserves_relationships_and_observations() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/002_domain_recon.sql"))
-            .unwrap();
+        for sql in [
+            include_str!("../../migrations/001_initial.sql"),
+            include_str!("../../migrations/002_domain_recon.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
         conn.execute_batch(include_str!("../../migrations/003_reverse_dns.sql"))
             .unwrap();
-        conn.execute_batch(
-            "PRAGMA user_version=3;
-             INSERT INTO workspaces VALUES('w','fixture','t','t');
-             INSERT INTO assets VALUES('a','w','Domain','example.test','example.test','{}','t','t');
-             INSERT INTO observations VALUES('o','w','a',NULL,NULL,NULL,'fixture','example.test','t','CONFIRMED');",
-        )
-        .unwrap();
-
+        conn.execute_batch("PRAGMA user_version=3;
+            INSERT INTO workspaces VALUES('w','fixture','t','t');
+            INSERT INTO assets VALUES('a','w','Domain','example.test','example.test','{}','t','t');
+            INSERT INTO assets VALUES('b','w','IPAddress','192.0.2.1','192.0.2.1','{}','t','t');
+            INSERT INTO targets VALUES('t','w','example.test','example.test','Domain','t','a');
+            INSERT INTO chain_runs VALUES('c','w','t','DNS','COMPLETED','t','t',NULL);
+            INSERT INTO chain_stages VALUES('s','w','c',0,'DNS','DNS_RESOLUTION','COMPLETED','t','t','native_dns');
+            INSERT INTO provider_runs VALUES('p','w','c','s','native_dns','built-in','example.test','t','t','COMPLETED',NULL,0);
+            INSERT INTO evidence VALUES('e','w','p','native_dns','example.test','t','hash','application/json','e.json',0);
+            INSERT INTO asset_relationships VALUES('r','w','b','a','ptr_record','t');
+            INSERT INTO relationship_observations VALUES('o','w','r','p','e','t');
+            INSERT INTO observations VALUES('ob','w','b','a','p','e','native_dns','192.0.2.1','t','CONFIRMED');").unwrap();
         migrate(&mut conn).unwrap();
-
         assert_eq!(
-            conn.query_row("SELECT metadata FROM observations WHERE id='o'", [], |r| {
-                r.get::<_, String>(0)
-            },)
-                .unwrap(),
-            "{}"
+            conn.query_row(
+                "SELECT relationship_type FROM asset_relationships WHERE id='r'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "ptr_record"
         );
+        // Legacy observations keep a NULL metadata column; new ones accept JSON only.
+        assert!(conn
+            .query_row(
+                "SELECT metadata IS NULL FROM observations WHERE id='ob'",
+                [],
+                |r| r.get::<_, bool>(0)
+            )
+            .unwrap());
         assert!(conn
             .execute(
-                "INSERT INTO observations(
-                    id,workspace_id,asset_id,source_asset_id,provider_run_id,evidence_id,
-                    discovered_by,observed_value,timestamp,confidence,metadata
-                 ) VALUES('bad','w','a',NULL,NULL,NULL,'fixture','bad','t','CONFIRMED','[]')",
-                [],
+                "INSERT INTO observations VALUES('bad','w','b',NULL,NULL,NULL,'x','v','t','REPORTED','not json')",
+                []
+            )
+            .is_err());
+        assert!(!conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        conn.execute(
+            "INSERT INTO asset_relationships VALUES('acct','w','a','b','has_account','t')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_relationships VALUES('prof','w','b','a','profile_url','t')",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO asset_relationships VALUES('nope','w','a','a','owned_by','t')",
+                []
             )
             .is_err());
     }

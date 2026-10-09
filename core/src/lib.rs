@@ -6,6 +6,7 @@ pub mod events;
 pub mod evidence;
 pub mod install;
 pub mod orchestration;
+pub mod osint;
 pub mod process;
 pub mod protocol;
 pub mod providers;

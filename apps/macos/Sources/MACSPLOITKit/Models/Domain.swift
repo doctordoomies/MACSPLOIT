@@ -29,6 +29,11 @@ public enum JSONValue: Codable, Sendable, Equatable {
         return .null
     }
     public var string: String? { if case .string(let value) = self { return value }; return nil }
+    public var number: Double? { if case .number(let value) = self { return value }; return nil }
+    public var int: Int? { number.flatMap { $0.isFinite ? Int(exactly: $0.rounded()) : nil } }
+    public var bool: Bool? { if case .bool(let value) = self { return value }; return nil }
+    public var array: [JSONValue] { if case .array(let value) = self { return value }; return [] }
+    public var object: [String: JSONValue] { if case .object(let value) = self { return value }; return [:] }
     public var isFalse: Bool { self == .bool(false) }
     public var pretty: String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -100,26 +105,17 @@ public struct Relationship: Codable, Identifiable, Sendable, Equatable {
 public struct Observation: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, assetId: String, discoveredBy: String, observedValue: String, timestamp: String, confidence: String
     public let sourceAssetId: String?, providerRunId: String?, evidenceId: String?
-    public let metadata: JSONValue
+    /// Per-run provider facts (e.g. OSINT upstream status and bounded profile fields).
+    /// Absent for legacy observations and for providers that do not record any.
+    public let metadata: JSONValue?
 
-    private enum CodingKeys: String, CodingKey {
-        case id, workspaceId, assetId, discoveredBy, observedValue, timestamp, confidence
-        case sourceAssetId, providerRunId, evidenceId, metadata
-    }
-
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
-        workspaceId = try values.decode(String.self, forKey: .workspaceId)
-        assetId = try values.decode(String.self, forKey: .assetId)
-        discoveredBy = try values.decode(String.self, forKey: .discoveredBy)
-        observedValue = try values.decode(String.self, forKey: .observedValue)
-        timestamp = try values.decode(String.self, forKey: .timestamp)
-        confidence = try values.decode(String.self, forKey: .confidence)
-        sourceAssetId = try values.decodeIfPresent(String.self, forKey: .sourceAssetId)
-        providerRunId = try values.decodeIfPresent(String.self, forKey: .providerRunId)
-        evidenceId = try values.decodeIfPresent(String.self, forKey: .evidenceId)
-        metadata = try values.decodeIfPresent(JSONValue.self, forKey: .metadata) ?? .object([:])
+    public init(id: String, workspaceId: String, assetId: String, discoveredBy: String, observedValue: String,
+                timestamp: String, confidence: String, sourceAssetId: String?, providerRunId: String?,
+                evidenceId: String?, metadata: JSONValue? = nil) {
+        self.id = id; self.workspaceId = workspaceId; self.assetId = assetId; self.discoveredBy = discoveredBy
+        self.observedValue = observedValue; self.timestamp = timestamp; self.confidence = confidence
+        self.sourceAssetId = sourceAssetId; self.providerRunId = providerRunId; self.evidenceId = evidenceId
+        self.metadata = metadata
     }
 }
 public struct ChainRun: Codable, Identifiable, Sendable, Equatable {

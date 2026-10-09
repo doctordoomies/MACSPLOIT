@@ -1,0 +1,90 @@
+[
+  {
+    "status": "Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "Github",
+    "category": "Dev",
+    "url": "https://github.example.test/octo-synthetic",
+    "extra": {
+      "name": "Synthetic Octo",
+      "bio": "Invented offline fixture profile.\u001b[31m",
+      "followers": 42,
+      "public_repos": 7,
+      "verified": false
+    },
+    "media": {
+      "avatar": "https://avatars.example.test/u/1.png"
+    }
+  },
+  {
+    "status": "Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "X (Twitter)",
+    "category": "Social",
+    "url": "https://x.example.test/octo-synthetic",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "Evilsite",
+    "category": "Other",
+    "url": "javascript:alert(1)",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "Github",
+    "category": "Dev",
+    "url": "https://github.example.test/octo-synthetic",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Not Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "Gitlab",
+    "category": "Dev",
+    "url": "https://gitlab.example.test/octo-synthetic",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Not Found",
+    "reason": "",
+    "username": "octo-synthetic",
+    "site_name": "Reddit",
+    "category": "Social",
+    "url": "https://reddit.example.test/user/octo-synthetic",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Error",
+    "reason": "ConnectError: Connection timed out (try a VPN if the site is blocked in your region)",
+    "username": "octo-synthetic",
+    "site_name": "Instagram",
+    "category": "Social",
+    "url": "",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Skipped",
+    "reason": "Notifies the target by forgot password email or similar",
+    "username": "octo-synthetic",
+    "site_name": "Somesite",
+    "category": "Other",
+    "url": "",
+    "extra": {},
+    "media": {}
+  }
+]

@@ -897,7 +897,11 @@ struct ReconView: View {
     }
 
     private func incompatibleTargetHint(_ target: Target) -> String {
-        "\(mode.rawValue) requires \(mode.targetRequirement); the selected target is \(target.targetType)."
+        let hint = "\(mode.rawValue) requires \(mode.targetRequirement); the selected target is \(target.targetType)."
+        if let osint = OSINTMode.mode(forTargetType: target.targetType) {
+            return hint + " Use the OSINT section to run \(osint.rawValue) on it."
+        }
+        return hint
     }
 
     @ViewBuilder private func stageSymbol(_ status: String) -> some View {
