@@ -755,7 +755,7 @@ struct ReconView: View {
         }
     }
 
-    private func metadataPairs(_ metadata: JSONValue) -> [(String, String)] {
+    private func metadataPairs(_ metadata: JSONValue?) -> [(String, String)] {
         guard case .object(let fields) = metadata else { return [] }
         let preferred = [
             "record_type", "dns_outcome", "status", "status_code", "method",
