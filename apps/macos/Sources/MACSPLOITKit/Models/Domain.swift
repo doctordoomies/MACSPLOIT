@@ -120,7 +120,15 @@ public struct Observation: Codable, Identifiable, Sendable, Equatable {
 }
 public struct ChainRun: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, targetId: String, name: String, status: String, createdAt: String, updatedAt: String
-    public let errorCode: String?
+    public let errorCode: String?, errorMessage: String?
+
+    public init(id: String, workspaceId: String, targetId: String, name: String, status: String,
+                createdAt: String, updatedAt: String, errorCode: String?, errorMessage: String? = nil) {
+        self.id = id; self.workspaceId = workspaceId; self.targetId = targetId; self.name = name
+        self.status = status; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.errorCode = errorCode; self.errorMessage = errorMessage
+    }
+
     public var isRunning: Bool { ["PENDING", "RUNNING"].contains(status) }
 }
 public struct ChainStage: Codable, Identifiable, Sendable, Equatable {
@@ -141,6 +149,20 @@ public struct ProviderRun: Codable, Identifiable, Sendable, Equatable {
 public struct Evidence: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, providerRunId: String, provider: String, target: String, timestamp: String, sha256: String, mediaType: String, relativePath: String
     public let byteCount: Int
+}
+public struct RelationshipObservation: Codable, Identifiable, Sendable, Equatable {
+    public let id: String, workspaceId: String, relationshipId: String, providerRunId: String, evidenceId: String, timestamp: String
+}
+public struct ChainResults: Codable, Sendable, Equatable {
+    public let chain: ChainRun
+    public let target: Target
+    public let stages: [ChainStage]
+    public let providerRuns: [ProviderRun]
+    public let assets: [Asset]
+    public let observations: [Observation]
+    public let relationships: [Relationship]
+    public let relationshipObservations: [RelationshipObservation]
+    public let evidence: [Evidence]
 }
 public struct CoreEvent: Codable, Identifiable, Sendable, Equatable {
     public let id: String, workspaceId: String, timestamp: String, eventType: String
@@ -225,10 +247,20 @@ public struct ProviderInstallInfo: Codable, Sendable, Equatable {
 public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
     public let id: String, name: String, description: String, version: String
     public let capabilities: [String], supportedTargetTypes: [String], riskClass: String
+    /// Explicit network behavior from current protocol-v1 cores.
+    public let networkActivity: String?
+    /// Legacy compatibility alias retained by protocol v1.
     public let offline: Bool
     public let installation: ProviderInstallation
     public let setup: ProviderSetup?
     public let install: ProviderInstallInfo?
+    public var performsNetworkActivity: Bool {
+        switch networkActivity {
+        case "NETWORK": return true
+        case "NONE": return false
+        default: return !offline
+        }
+    }
     /// Whether a verified app-managed direct download is offered (false for Nmap).
     public var managedDownloadSupported: Bool { install?.managedDownload ?? false }
     /// Whether a Homebrew install method is offered.
