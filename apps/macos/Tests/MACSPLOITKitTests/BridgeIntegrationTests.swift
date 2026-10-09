@@ -353,4 +353,91 @@ import Testing
         let evidence = try await client.readEvidence(workspace: workspace.id, evidence: result.evidence[0].id)
         #expect(!evidence.rawJson.contains(wordlist)) // full local wordlist path redacted
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_USER_SCANNER"] != nil))
+    func testUsernameOSINTRunCancelEvidenceAndRestartThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-osint-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        // Fake user-scanner (offline) reports the verified upstream version.
+        let providers = try await client.listProviders()
+        let scanner = try #require(providers.first { $0.id == "user_scanner" })
+        #expect(scanner.installation.isInstalled)
+        #expect(scanner.installation.version == "1.5.2.1")
+        #expect(scanner.capabilities == ["USERNAME_OSINT", "EMAIL_OSINT"])
+        #expect(scanner.setup?.installCommand == "pipx install user-scanner")
+        #expect(OSINTMode.username.compatibleProviders(providers).map(\.id) == ["user_scanner"])
+
+        // Host scope does not cover any platform; OSINT runs on the identifier subject.
+        let workspace = try await client.createWorkspace(name: "OSINT bridge test", scope: ["example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "@octo-synthetic")
+        #expect(target.targetType == "Username")
+        let idle = try await client.snapshot(workspace: workspace.id)
+        #expect(idle.chains.isEmpty) // adding a target never launches OSINT
+
+        let run = try await client.startChain(workspace: workspace.id, target: target.id, chain: "username_osint",
+                                              options: .object(["provider_id": .string("user_scanner")]))
+        let deadline = Date().addingTimeInterval(20)
+        var finished: Snapshot?
+        while Date() < deadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if let chain = snapshot.chains.first(where: { $0.id == run.id }), !chain.isRunning { finished = snapshot; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let result = try #require(finished)
+        let results = try #require(OSINTRunResults.make(snapshot: result, chainId: run.id))
+        #expect(results.state == .partial)
+        #expect(Set(results.accounts.map(\.platform)) == ["Github", "X (Twitter)", "Evilsite"])
+        #expect(results.accounts.allSatisfy { $0.confidence == "REPORTED" })
+        #expect(results.summary?.error == 1)
+        #expect(results.summary?.blocked == 1)
+        #expect(result.assets.contains { $0.assetType == "Account" && $0.canonicalIdentity == "github:octo-synthetic" })
+        #expect(result.relationships.contains { $0.relationshipType == "has_account" })
+        #expect(results.evidence.count == 2)
+        for evidence in results.evidence {
+            let raw = try await client.readEvidence(workspace: workspace.id, evidence: evidence.id)
+            #expect(!raw.rawJson.isEmpty)
+        }
+
+        // A second subject that hangs: cancel stops it and keeps captured evidence.
+        let slow = try await client.addTarget(workspace: workspace.id, value: "@slow-synthetic")
+        let slowRun = try await client.startChain(workspace: workspace.id, target: slow.id, chain: "username_osint", options: .object([:]))
+        var running = false
+        let runDeadline = Date().addingTimeInterval(10)
+        while Date() < runDeadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.providerRuns.contains(where: { $0.chainId == slowRun.id && $0.status == "RUNNING" }) { running = true; break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(running)
+        try await client.cancelChain(workspace: workspace.id, chain: slowRun.id)
+        var cancelled: Snapshot?
+        let cancelDeadline = Date().addingTimeInterval(10)
+        while Date() < cancelDeadline {
+            let snapshot = try await client.snapshot(workspace: workspace.id)
+            if snapshot.chains.first(where: { $0.id == slowRun.id })?.status == "CANCELLED" { cancelled = snapshot; break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let afterCancel = try #require(cancelled)
+        let cancelledRun = try #require(afterCancel.providerRuns.first { $0.chainId == slowRun.id })
+        #expect(cancelledRun.status == "CANCELLED")
+        let envelope = try await client.readEvidence(workspace: workspace.id, evidence: try #require(cancelledRun.rawOutputReference))
+        #expect(envelope.rawJson.contains("\"cancelled\": true"))
+
+        // Restart: results and provenance survive a new helper process.
+        transport.shutdown()
+        let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        defer { reopenedTransport.shutdown() }
+        let reopened = CoreClient(transport: reopenedTransport)
+        let persisted = try await reopened.snapshot(workspace: workspace.id)
+        let restored = try #require(OSINTRunResults.make(snapshot: persisted, chainId: run.id))
+        #expect(restored.accounts == results.accounts)
+        #expect(restored.summary == results.summary)
+    }
 }

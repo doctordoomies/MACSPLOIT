@@ -1,0 +1,44 @@
+[
+  {
+    "status": "Registered",
+    "reason": "",
+    "email": "researcher@example.test",
+    "site_name": "Amazon",
+    "category": "Shopping",
+    "url": "",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Registered",
+    "reason": "",
+    "email": "researcher@example.test",
+    "site_name": "Gravatar",
+    "category": "Social",
+    "url": "https://gravatar.example.test/researcher",
+    "extra": {
+      "display_name": "Synthetic Researcher"
+    },
+    "media": {}
+  },
+  {
+    "status": "Not Registered",
+    "reason": "",
+    "email": "researcher@example.test",
+    "site_name": "Spotify",
+    "category": "Music",
+    "url": "",
+    "extra": {},
+    "media": {}
+  },
+  {
+    "status": "Skipped",
+    "reason": "Notifies the target by forgot password email or similar",
+    "email": "researcher@example.test",
+    "site_name": "Leetcode",
+    "category": "Dev",
+    "url": "",
+    "extra": {},
+    "media": {}
+  }
+]

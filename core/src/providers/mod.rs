@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod user_scanner;
+pub use user_scanner::UserScannerProvider;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RiskClass {
@@ -34,6 +37,18 @@ pub enum Capability {
     WebCrawling,
     WebAnalysis,
     ContentDiscovery,
+    /// OSINT: public account/profile presence for an explicit Username subject.
+    UsernameOsint,
+    /// OSINT: public registration/profile presence for an explicit Email subject.
+    EmailOsint,
+}
+
+impl Capability {
+    /// OSINT capabilities operate on an identifier subject (username/email), not a
+    /// workspace host, and query third-party public platforms chosen by the provider.
+    pub fn is_osint(self) -> bool {
+        matches!(self, Self::UsernameOsint | Self::EmailOsint)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +115,36 @@ pub struct Execution {
     pub timed_out: bool,
     pub started_at: String,
     pub ended_at: String,
+    /// Additional bounded structured outputs the tool wrote outside stdout (e.g. a
+    /// JSON report file). Each is persisted as its own hashed evidence record before
+    /// parsing and referenced from the execution envelope.
+    pub artifacts: Vec<ExecutionArtifact>,
+    /// True when the run was cancelled after the process started. The orchestrator
+    /// still persists the captured evidence, then reports the chain as cancelled.
+    pub cancelled: bool,
+}
+
+/// A bounded structured output captured from a provider run.
+#[derive(Debug, Clone)]
+pub struct ExecutionArtifact {
+    /// Stable short name (e.g. `user_scanner_json`).
+    pub name: String,
+    /// The exact bytes captured (empty when absent or over the bound).
+    pub bytes: Vec<u8>,
+    /// Observed size on disk, when known (may exceed `bytes.len()` when over bound).
+    pub observed_bytes: Option<u64>,
+    /// True when the artifact exceeded its bound and was not captured.
+    pub over_limit: bool,
+}
+
+/// What a provider's parser produced: discoveries plus whether the run's results
+/// are partial (some checks failed/were dropped) and an optional bounded summary
+/// for the live console and run results.
+#[derive(Debug, Clone, Default)]
+pub struct ParsedOutput {
+    pub discoveries: Vec<Discovery>,
+    pub partial: bool,
+    pub summary: Option<serde_json::Value>,
 }
 
 impl Execution {
@@ -143,6 +188,15 @@ pub trait Provider: Send + Sync {
         ctx: &ProviderContext,
     ) -> Result<Execution>;
     fn parse(&self, execution: &Execution) -> Result<Vec<Discovery>>;
+    /// Parse with run-level detail. Providers that can report partial results or a
+    /// run summary override this; the default wraps [`Provider::parse`].
+    fn parse_outcome(&self, execution: &Execution) -> Result<ParsedOutput> {
+        Ok(ParsedOutput {
+            discoveries: self.parse(execution)?,
+            partial: false,
+            summary: None,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -169,6 +223,7 @@ impl ProviderRegistry {
                 Arc::new(KatanaProvider),
                 Arc::new(NativeHttpProvider::new(web)),
                 Arc::new(FfufProvider),
+                Arc::new(UserScannerProvider),
             ],
         }
     }
@@ -228,6 +283,54 @@ impl ProviderRegistry {
             ));
         }
         Ok(provider)
+    }
+
+    /// Resolve the provider for an OSINT run: the explicitly requested provider id
+    /// when given, otherwise the first registered provider for the capability. The
+    /// provider must advertise both the capability and the subject's target type.
+    pub fn osint_provider(
+        &self,
+        capability: Capability,
+        target_type: TargetType,
+        requested: Option<&str>,
+    ) -> Result<Arc<dyn Provider>> {
+        let compatible = |provider: &Arc<dyn Provider>| {
+            let metadata = provider.metadata();
+            metadata.capabilities.contains(&capability)
+                && metadata.supported_target_types.contains(&target_type)
+        };
+        match requested {
+            Some(id) => {
+                let provider = self
+                    .providers
+                    .iter()
+                    .find(|provider| provider.metadata().id == id)
+                    .ok_or_else(|| {
+                        CoreError::new(
+                            "ProviderUnsupported",
+                            "The requested OSINT provider is not registered.",
+                        )
+                    })?;
+                if !compatible(provider) {
+                    return Err(CoreError::new(
+                        "ProviderUnsupported",
+                        "The requested provider does not support this OSINT workflow and target type.",
+                    ));
+                }
+                Ok(provider.clone())
+            }
+            None => self
+                .providers
+                .iter()
+                .find(|p| compatible(p))
+                .cloned()
+                .ok_or_else(|| {
+                    CoreError::new(
+                        "ProviderUnsupported",
+                        "No registered provider supports this OSINT workflow.",
+                    )
+                }),
+        }
     }
 
     pub fn metadata(&self) -> Vec<ProviderMetadata> {
@@ -317,6 +420,7 @@ impl Provider for SyntheticDiscoveryProvider {
                 value,
                 source: Some(source),
                 relationship: Some(relationship),
+                observation: None,
                 metadata,
             });
         };
@@ -361,7 +465,9 @@ impl Provider for SyntheticDiscoveryProvider {
             | Capability::HttpProbing
             | Capability::WebCrawling
             | Capability::WebAnalysis
-            | Capability::ContentDiscovery => {}
+            | Capability::ContentDiscovery
+            | Capability::UsernameOsint
+            | Capability::EmailOsint => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
@@ -411,6 +517,8 @@ impl Provider for SyntheticDiscoveryProvider {
             timed_out: false,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -569,6 +677,8 @@ impl Provider for SubfinderProvider {
             timed_out: outcome.timed_out,
             started_at: outcome.started_at,
             ended_at: outcome.ended_at,
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -613,6 +723,7 @@ impl Provider for SubfinderProvider {
                 value: host,
                 source: is_child.then(|| target.to_owned()),
                 relationship: is_child.then_some(RelationshipType::HasSubdomain),
+                observation: None,
                 metadata,
             });
         }
@@ -780,6 +891,8 @@ impl Provider for NativeDnsProvider {
             timed_out: false,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -796,6 +909,7 @@ impl Provider for NativeDnsProvider {
                     value: record.host.clone(),
                     source: None,
                     relationship: None,
+                    observation: None,
                     metadata: json!({"tool":"native_dns", "dns_outcome":record.outcome}),
                 });
             }
@@ -807,6 +921,7 @@ impl Provider for NativeDnsProvider {
                     value: value.to_owned(),
                     source: Some(record.host.clone()),
                     relationship: Some(RelationshipType::ResolvesTo),
+                    observation: None,
                     metadata: json!({
                         "tool": "native_dns",
                         "record_type": family,
@@ -831,6 +946,7 @@ impl Provider for NativeDnsProvider {
                 value: record.ip.clone(),
                 source: None,
                 relationship: None,
+                observation: None,
                 metadata: json!({ "tool": "native_dns", "reverse_lookup": true, "dns_outcome": record.outcome }),
             });
             for name in &record.names {
@@ -842,6 +958,7 @@ impl Provider for NativeDnsProvider {
                     value: name.clone(),
                     source: Some(record.ip.clone()),
                     relationship: Some(RelationshipType::PtrRecord),
+                    observation: None,
                     metadata: json!({
                         "tool": "native_dns",
                         "record_type": "PTR",
@@ -1014,6 +1131,8 @@ impl Provider for NmapProvider {
                 timed_out: false,
                 started_at,
                 ended_at: crate::now(),
+                artifacts: Vec::new(),
+                cancelled: false,
             });
         }
 
@@ -1067,6 +1186,8 @@ impl Provider for NmapProvider {
             timed_out,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -1124,6 +1245,7 @@ impl Provider for NmapProvider {
                         value: port_value.clone(),
                         source: Some(address.to_owned()),
                         relationship: Some(RelationshipType::Exposes),
+                        observation: None,
                         metadata: json!({
                             "tool": "nmap",
                             "host": address,
@@ -1155,6 +1277,7 @@ impl Provider for NmapProvider {
                             value: format!("{port_value}/{name}"),
                             source: Some(port_value.clone()),
                             relationship: Some(RelationshipType::Serves),
+                            observation: None,
                             metadata,
                         });
                     }
@@ -1326,6 +1449,8 @@ impl Provider for HttpxProvider {
                 timed_out: false,
                 started_at,
                 ended_at: crate::now(),
+                artifacts: Vec::new(),
+                cancelled: false,
             });
         }
         let executable = ctx.tools.locate("httpx").ok_or_else(|| {
@@ -1373,6 +1498,8 @@ impl Provider for HttpxProvider {
             timed_out: outcome.timed_out,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -1425,6 +1552,7 @@ impl Provider for HttpxProvider {
                 value: url.clone(),
                 source: host,
                 relationship: Some(RelationshipType::HasEndpoint),
+                observation: None,
                 metadata,
             });
             // Technology assets are reusable identities shared across websites.
@@ -1438,6 +1566,7 @@ impl Provider for HttpxProvider {
                     value: name,
                     source: Some(url.clone()),
                     relationship: Some(RelationshipType::UsesTechnology),
+                    observation: None,
                     metadata: json!({ "tool": "httpx" }),
                 });
             }
@@ -1585,6 +1714,8 @@ impl Provider for KatanaProvider {
             timed_out: outcome.timed_out,
             started_at: outcome.started_at,
             ended_at: outcome.ended_at,
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -1651,6 +1782,7 @@ impl Provider for KatanaProvider {
                 value: url,
                 source: Some(target.clone()),
                 relationship: Some(RelationshipType::HasEndpoint),
+                observation: None,
                 metadata,
             });
         }
@@ -1914,6 +2046,8 @@ impl Provider for FfufProvider {
             timed_out: outcome.timed_out,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -1964,6 +2098,7 @@ impl Provider for FfufProvider {
                 value: url,
                 source: Some(base.clone()),
                 relationship: Some(RelationshipType::HasEndpoint),
+                observation: None,
                 metadata,
             });
         }
@@ -2250,6 +2385,8 @@ impl Provider for NativeHttpProvider {
             timed_out: false,
             started_at,
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         })
     }
 
@@ -2284,6 +2421,7 @@ impl Provider for NativeHttpProvider {
             value: final_url,
             source: None,
             relationship: None,
+            observation: None,
             metadata,
         }])
     }
@@ -2329,6 +2467,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         }
     }
 
@@ -2594,6 +2734,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         }
     }
 
@@ -2762,6 +2904,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         }
     }
 
@@ -2923,6 +3067,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         }
     }
 
@@ -3002,6 +3148,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         };
         let values: Vec<_> = KatanaProvider
             .parse(&execution)
@@ -3257,6 +3405,8 @@ mod tests {
             timed_out: false,
             started_at: crate::now(),
             ended_at: crate::now(),
+            artifacts: Vec::new(),
+            cancelled: false,
         }
     }
 

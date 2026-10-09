@@ -10,11 +10,16 @@ They store a display value, JSON metadata, and first/last seen times. Repeat
 observations update last-seen without changing identity or deleting provenance.
 
 Implemented asset types: Domain, Subdomain, Hostname, IPAddress, Port, Service,
-Website, URL, Endpoint, Technology, Certificate. Synthetic recon populates Domain, Subdomain, IPAddress, Port, and Service.
+Website, URL, Endpoint, Technology, Certificate, Username, EmailAddress, Account.
+Synthetic recon populates Domain, Subdomain, IPAddress, Port, and Service. OSINT runs
+(see [OSINT](osint.md)) populate Username/EmailAddress subjects, `Account` assets
+(`<platform_key>:<identifier>`, a provider-reported account on one platform, never
+merged across platforms or identifiers), and profile URLs.
 Target classification recognizes domains, HTTP(S) URLs, IPv4/IPv6, CIDRs,
 hostnames, @usernames, and email addresses. PhoneNumber, Repository, and Unknown
-are reserved enum values. CIDR and identity targets currently have no asset nodes
-or providers; domain, hostname, IP, and URL input creates an initial analyst asset.
+are reserved enum values. CIDR targets have no asset nodes; domain, hostname, IP, and
+URL input creates an initial analyst asset. Username/email targets get their subject
+asset when an OSINT run first persists results (adding the target launches nothing).
 
 The URL library supplies URL/IDNA normalization; std IP types and ipnet normalize
 addresses and network prefixes. Domain case and one trailing dot are normalized.
@@ -26,8 +31,11 @@ typed port/service validation before accepting untrusted output of those types.
 
 ## Relationships and provenance
 
-Relations: `has_subdomain`, `resolves_to`, `exposes`, `serves`, `has_endpoint`, and
-`uses_technology`. Each relation is unique by workspace, endpoints, and type.
+Relations: `has_subdomain`, `resolves_to`, `ptr_record`, `exposes`, `serves`,
+`has_endpoint`, `uses_technology`, and (migration 004) `has_account` and `profile_url`.
+Observations gained a nullable JSON `metadata` column in migration 004 for per-run
+provider facts (e.g. OSINT upstream status and bounded public profile fields), kept
+separate from the deduplicated asset. Each relation is unique by workspace, endpoints, and type.
 Assets and edges retain separate observations linked to provider run, evidence,
 source asset, timestamp, and confidence. Original observed values survive
 canonicalization: three reports of `api.example.test` (including uppercase)

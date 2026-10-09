@@ -52,6 +52,7 @@ struct WorkspaceView: View {
                         case .targets: TargetsView(model: model)
                         case .assets: AssetsView(model: model)
                         case .recon: ReconView(model: model)
+                        case .osint: OSINTView(model: model)
                         case .evidence: EvidenceView(model: model)
                         case .activity: ActivityView(model: model)
                         case .toolManager: ToolManagerView(model: model)

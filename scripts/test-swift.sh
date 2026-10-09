@@ -14,6 +14,8 @@ export MACSPLOIT_WEB_FIXTURE="$PWD/fixtures/web-analysis-fixture.json"
 export MACSPLOIT_KATANA="$PWD/fixtures/fake-katana.sh"
 export MACSPLOIT_FFUF="$PWD/fixtures/fake-ffuf.sh"
 export MACSPLOIT_FFUF_WORDLIST="$PWD/fixtures/content-discovery-small.txt"
+# OSINT: offline fake user-scanner (never contacts any platform).
+export MACSPLOIT_USER_SCANNER="$PWD/fixtures/fake-user-scanner.sh"
 # Force the empty, offline managed-download transport so no install path in any
 # bridge test can reach the network (real release assets are never downloaded).
 export MACSPLOIT_DOWNLOAD_FAKE=1

@@ -33,19 +33,20 @@ fn scope_status_reports_coverage_with_core_logic() {
     let url = add("https://app.example.test:8443/admin");
     let outside = add("other.test");
 
-    for (t, expected) in [
-        (&exact, true),
-        (&wildcarded, true),
-        (&ipv4, true),
-        (&ipv6, true),
-        (&url, true),
-        (&outside, false),
+    // Failure messages name the case, never the target value (targets may be
+    // analyst identifiers, which must not be echoed into logs).
+    for (case, t, expected) in [
+        ("exact domain", &exact, true),
+        ("wildcard hostname", &wildcarded, true),
+        ("IPv4 in CIDR", &ipv4, true),
+        ("IPv6 in CIDR", &ipv6, true),
+        ("URL host", &url, true),
+        ("outside", &outside, false),
     ] {
         assert_eq!(
             store.target_scope_status(ws.id, t.id).unwrap().authorized,
             expected,
-            "target {}",
-            t.normalized_value
+            "{case}"
         );
     }
     // The required entry for the URL is the exact host, not a sibling or wildcard.

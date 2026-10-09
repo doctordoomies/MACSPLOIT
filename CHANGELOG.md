@@ -7,6 +7,27 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **OSINT foundation + Username/Email OSINT via user-scanner (M6 / #58, #22):** typed
+  `USERNAME_OSINT` / `EMAIL_OSINT` capabilities and `username_osint` / `email_osint`
+  chains with explicit, compatibility-checked provider selection; a shared `osint`
+  core module (strict subject validation, provider-neutral positive/negative/blocked/
+  error/unknown checks, bounded untrusted fields, graph mapping) for future providers;
+  `Username`, `EmailAddress`, and `Account` assets with `has_account` / `profile_url`
+  relationships and per-run observation metadata (migration 004); a dedicated SwiftUI
+  OSINT section (subject/provider selection, explicit Run, Cancel, run state including
+  `PARTIAL`, summary counts, reported accounts with `REPORTED` confidence, evidence and
+  asset links, history after restart). The `user_scanner` provider supports
+  user-scanner 1.5.x: `--username=`/`--email=` argv only, NSFW excluded, lowered
+  concurrency, 10 s request timeout, 15-minute run limit, private per-run config that
+  disables upstream's PyPI update prompt, and never `--cross-scan`, `--hudson`,
+  proxies, or `--allow-loud`. The JSON report is stored byte-for-byte as its own
+  hashed evidence before parsing; evidence is kept on cancel, timeout, tool failure,
+  and malformed output. Identifier subjects are authorized by the explicit target and
+  Run action, never by host scope, and only passive/low-impact OSINT providers may run.
+  Discovery checks `MACSPLOIT_USER_SCANNER`, `PATH`, and pipx's `~/.local/bin`; install
+  guidance is copy-only. Offline tests use `fixtures/fake-user-scanner.sh`.
+- **Process supervisor:** output past the stdout/stderr cap is now drained and discarded
+  instead of left in the pipe, so a chatty tool can no longer stall until its timeout.
 - **DNS Recon for IP and URL targets (M1.4 follow-up):** DNS Recon now accepts Domain,
   Hostname, IP, and HTTP(S) URL targets. Domains/hostnames (and URL hostnames) resolve
   forward (A/AAAA); an IP target, or a URL whose host is an IP literal, does a reverse
