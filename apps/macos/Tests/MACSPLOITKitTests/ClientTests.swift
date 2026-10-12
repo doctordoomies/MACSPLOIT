@@ -61,8 +61,8 @@ actor ReplyTransport: CoreTransport {
         let result = try await CoreClient(transport: reply).chainResults(workspace: "w", chain: "c")
         #expect(result.chain.status == "PARTIAL")
         #expect(result.chain.errorMessage == "Later provider failed.")
-        #expect(result.observations[0].metadata["status"] == .number(403))
-        #expect(result.observations[0].metadata["content_length"] == .number(7))
+        #expect(result.observations[0].metadata?["status"] == .number(403))
+        #expect(result.observations[0].metadata?["content_length"] == .number(7))
 
         let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
         #expect(object["method"] as? String == "chain_results")
