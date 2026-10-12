@@ -61,7 +61,7 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
     ProviderStatus(
         id: "user_scanner", name: "user-scanner", description: "Username + Email OSINT", version: "external",
         capabilities: ["USERNAME_OSINT", "EMAIL_OSINT"], supportedTargetTypes: ["Username", "EmailAddress"],
-        riskClass: "ACTIVE_LOW_IMPACT", offline: false,
+        riskClass: "ACTIVE_LOW_IMPACT", networkActivity: "NETWORK", offline: false,
         installation: ProviderInstallation(state: state, path: nil, version: version, message: nil),
         setup: ProviderSetup(installCommand: "pipx install user-scanner", homepage: "https://github.com/kaifcodec/user-scanner", documentation: nil),
         install: ProviderInstallInfo(homebrew: false, managedDownload: false, officialInstallerUrl: nil))
@@ -88,7 +88,7 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         #expect(OSINTMode.mode(forTargetType: "Domain") == nil)
         let unrelated = ProviderStatus(
             id: "nmap", name: "Nmap", description: "", version: "external", capabilities: ["PORT_DISCOVERY"],
-            supportedTargetTypes: ["IPAddress"], riskClass: "ACTIVE", offline: false,
+            supportedTargetTypes: ["IPAddress"], riskClass: "ACTIVE", networkActivity: "NETWORK", offline: false,
             installation: ProviderInstallation(state: "INSTALLED", path: nil, version: "7.95", message: nil), setup: nil, install: nil)
         #expect(OSINTMode.username.compatibleProviders([unrelated, osintProviderStatus()]).map(\.id) == ["user_scanner"])
         #expect(providerLabel("USERNAME_OSINT") == "Username OSINT")
