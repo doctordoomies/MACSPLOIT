@@ -713,10 +713,10 @@ fn cancellation_is_durable_and_global_concurrency_is_bounded() {
     engine.cancel(workspace.id, run.id).unwrap();
     let snapshot = wait(&engine, workspace.id);
     assert_eq!(snapshot.chains[0].status, ChainStatus::Cancelled);
-    assert!(snapshot.tasks.iter().all(|t| matches!(
-        t.status,
-        TaskStatus::Cancelled | TaskStatus::Queued
-    )));
+    assert!(snapshot
+        .tasks
+        .iter()
+        .all(|t| matches!(t.status, TaskStatus::Cancelled | TaskStatus::Queued)));
     let count: i64 = engine
         .store
         .connect(workspace.id)
