@@ -30,8 +30,8 @@
 //!   rotation), `--allow-loud`, `--email-domains`, `--update`, file inputs.
 
 use super::{
-    Capability, Execution, ExecutionArtifact, ParsedOutput, Provider, ProviderContext,
-    ProviderMetadata, ProviderSetup, RiskClass,
+    Capability, Execution, ExecutionArtifact, NetworkActivity, ParsedOutput, Provider,
+    ProviderContext, ProviderMetadata, ProviderSetup, RiskClass,
 };
 use crate::{
     assets::{Asset, Discovery},
