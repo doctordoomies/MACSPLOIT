@@ -1189,6 +1189,7 @@ impl Engine {
             cancelled: cancellation.clone(),
         });
         let engine = self.clone();
+        let worker_active = self.active.clone();
         let worker_chain = chain.clone();
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1223,7 +1224,11 @@ impl Engine {
                     );
                 }
             }
-            if let Ok(mut active) = engine.active.lock() {
+            // Drop the worker's Engine clone (and its core.lock handle) before
+            // publishing the idle state. Otherwise callers can observe idle=true
+            // while the worker still briefly owns the storage lock.
+            drop(engine);
+            if let Ok(mut active) = worker_active.lock() {
                 *active = None;
             }
         });
