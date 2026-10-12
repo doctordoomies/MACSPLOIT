@@ -292,7 +292,7 @@ impl Provider for UserScannerProvider {
             // Ordinary requests to third-party public platforms; never to subject-owned
             // infrastructure, and loud (subject-notifying) modules are skipped.
             risk_class: RiskClass::ActiveLowImpact,
-            offline: false,
+            network_activity: NetworkActivity::Network,
         }
     }
 
@@ -494,7 +494,7 @@ mod tests {
             vec![TargetType::Username, TargetType::EmailAddress]
         );
         assert_eq!(m.risk_class, RiskClass::ActiveLowImpact);
-        assert!(!m.offline);
+        assert_eq!(m.network_activity, NetworkActivity::Network);
         assert!(Capability::UsernameOsint.is_osint() && !Capability::WebCrawling.is_osint());
         let setup = UserScannerProvider.setup().unwrap();
         assert_eq!(
