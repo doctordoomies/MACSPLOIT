@@ -302,10 +302,19 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
         .find(|o| o.asset_id == url_asset.id && o.provider_run_id == Some(run_b))
         .unwrap();
     assert_eq!(observation_a.metadata.as_ref().unwrap()["status"], 200);
-    assert_eq!(observation_a.metadata.as_ref().unwrap()["content_length"], 42);
+    assert_eq!(
+        observation_a.metadata.as_ref().unwrap()["content_length"],
+        42
+    );
     assert_eq!(observation_b.metadata.as_ref().unwrap()["status"], 403);
-    assert_eq!(observation_b.metadata.as_ref().unwrap()["content_length"], 7);
-    assert_eq!(observation_b.metadata.as_ref().unwrap()["redirect"], "/login");
+    assert_eq!(
+        observation_b.metadata.as_ref().unwrap()["content_length"],
+        7
+    );
+    assert_eq!(
+        observation_b.metadata.as_ref().unwrap()["redirect"],
+        "/login"
+    );
     assert!(observation_a
         .metadata
         .as_ref()
