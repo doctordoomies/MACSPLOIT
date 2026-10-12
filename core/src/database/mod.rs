@@ -493,7 +493,6 @@ impl Store {
                     evidence_id: None,
                     discovered_by: "Analyst".into(),
                     observed_value: input.trim().into(),
-                    metadata: json!({}),
                     timestamp: crate::now(),
                     confidence: "CONFIRMED".into(),
                     metadata: None,
