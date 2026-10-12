@@ -306,8 +306,18 @@ fn repeated_url_observations_keep_run_specific_metadata_across_restart() {
     assert_eq!(observation_b.metadata.as_ref().unwrap()["status"], 403);
     assert_eq!(observation_b.metadata.as_ref().unwrap()["content_length"], 7);
     assert_eq!(observation_b.metadata.as_ref().unwrap()["redirect"], "/login");
-    assert!(observation_a.metadata.as_ref().unwrap().get("in_scope").is_none());
-    assert!(observation_b.metadata.as_ref().unwrap().get("in_scope").is_none());
+    assert!(observation_a
+        .metadata
+        .as_ref()
+        .unwrap()
+        .get("in_scope")
+        .is_none());
+    assert!(observation_b
+        .metadata
+        .as_ref()
+        .unwrap()
+        .get("in_scope")
+        .is_none());
 
     drop(engine);
     let reopened = Engine::open(Store::open(temp.path()).unwrap(), Duration::ZERO).unwrap();
