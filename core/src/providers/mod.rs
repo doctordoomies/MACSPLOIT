@@ -26,9 +26,10 @@ pub enum RiskClass {
     LabOnly,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NetworkActivity {
+    #[default]
     None,
     Network,
 }
@@ -69,6 +70,7 @@ pub struct ProviderMetadata {
     pub risk_class: RiskClass,
     /// Whether normal provider execution can perform network I/O. This is separate
     /// from built-in/external process state, which comes from Installation.
+    #[serde(default)]
     pub network_activity: NetworkActivity,
 }
 
