@@ -1902,6 +1902,7 @@ mod terminal_state_tests {
                 target.id,
                 ChainKind::Synthetic,
                 serde_json::Value::Null,
+                None,
             )
             .unwrap();
         let stages = store
