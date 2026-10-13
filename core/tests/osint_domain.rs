@@ -333,6 +333,7 @@ fn rdap_records_minimized_registration_and_nameservers() {
         })
         .unwrap();
     assert_eq!(summary["kind"], "osint_run_summary");
+    assert_eq!(summary["subject_kind"], "DOMAIN");
     assert_eq!(summary["registration"]["found"], true);
     assert_eq!(summary["registration"]["entity_roles"]["registrant"], 1);
     assert!(!summary.to_string().contains("Synthetic Registrant"));

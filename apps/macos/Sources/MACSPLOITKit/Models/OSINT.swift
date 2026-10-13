@@ -101,6 +101,57 @@ public enum OSINTMode: String, CaseIterable, Identifiable, Sendable {
     public static let chainNames: Set<String> = Set(allCases.map(\.rawValue))
 }
 
+/// Typed `subject_kind` of an OSINT run summary. The core writes SCREAMING_SNAKE_CASE
+/// (`USERNAME`, `EMAIL`, `PHONE`, `DOMAIN`); parsing is case-insensitive so the
+/// presentation contract cannot silently break on casing.
+public enum OSINTSubjectKind: String, Sendable {
+    case username = "USERNAME", email = "EMAIL", phone = "PHONE", domain = "DOMAIN"
+
+    public init?(wire: String) { self.init(rawValue: wire.uppercased()) }
+
+    /// The workflow that produces this subject kind.
+    public var mode: OSINTMode {
+        switch self {
+        case .username: return .username
+        case .email: return .email
+        case .phone: return .phone
+        case .domain: return .domain
+        }
+    }
+}
+
+/// Which results surface a run uses. Decided from durable state only (the summary's
+/// typed subject kind, else the chain name) — never from live-console text.
+public enum OSINTResultsPresentation: Equatable, Sendable {
+    case accounts, phoneFacts, domain
+
+    init(mode: OSINTMode) {
+        switch mode {
+        case .username, .email: self = .accounts
+        case .phone: self = .phoneFacts
+        case .domain: self = .domain
+        }
+    }
+}
+
+/// Facts one source reported for a phone number (e.g. PhoneInfoga's `local` or `ovh`).
+public struct OSINTSourceFacts: Identifiable, Equatable, Sendable {
+    public let source: String
+    public let facts: [OSINTProfileField]
+    public var id: String { source }
+}
+
+/// Human label for a snake_case fact key (`country_code` → `Country code`).
+public func osintFactLabel(_ key: String) -> String {
+    let words = key.split(separator: "_").map(String.init)
+    guard let first = words.first else { return key }
+    let acronyms: Set<String> = ["e164", "ip", "url", "dns", "asn", "iana"]
+    return words.enumerated().map { index, word in
+        if acronyms.contains(word.lowercased()) { return word.uppercased() }
+        return index == 0 ? first.prefix(1).uppercased() + first.dropFirst() : word
+    }.joined(separator: " ")
+}
+
 /// Provider-neutral status of one platform check.
 public enum OSINTCheckStatus: String, Sendable {
     case positive = "POSITIVE", negative = "NEGATIVE", blocked = "BLOCKED", error = "ERROR", unknown = "UNKNOWN"
@@ -129,6 +180,10 @@ public struct OSINTRunSummary: Equatable, Sendable {
     /// Bounded run-level facts: phone numbering facts per source, or domain
     /// registration facts (RDAP). Contact details are never present.
     public let details: [OSINTProfileField]
+    /// Typed subject kind (nil only for a value this client does not know).
+    public let kind: OSINTSubjectKind?
+    /// Phone: facts grouped by the source that reported them (empty values omitted).
+    public let sourceFacts: [OSINTSourceFacts]
 
     public init?(_ value: JSONValue) {
         guard value["kind"].string == "osint_run_summary" else { return nil }
@@ -144,6 +199,13 @@ public struct OSINTRunSummary: Equatable, Sendable {
         provider = value["provider"].string ?? ""
         subject = value["subject"].string ?? ""
         subjectKind = value["subject_kind"].string ?? ""
+        kind = OSINTSubjectKind(wire: subjectKind)
+        sourceFacts = value["sources"].object.sorted(by: { $0.key < $1.key }).compactMap { source, facts in
+            let fields = facts.object.sorted(by: { $0.key < $1.key }).compactMap { key, value in
+                OSINTProfileField.text(value).map { OSINTProfileField(key: key, value: $0) }
+            }
+            return fields.isEmpty ? nil : OSINTSourceFacts(source: source, facts: Array(fields.prefix(24)))
+        }
         checked = count("checked")
         positive = counts["positive"].int ?? 0
         negative = counts["negative"].int ?? 0
@@ -319,6 +381,24 @@ public enum OSINTRunState: Equatable, Sendable {
         }
     }
 
+    /// Completion copy appropriate to the workflow (platform-check wording is only
+    /// used for Username/Email).
+    public func detail(for mode: OSINTMode?) -> String {
+        switch (mode, self) {
+        case (.phone?, .completed): return "The phone intelligence lookup completed. Reported numbering facts are shown below."
+        case (.phone?, .partial):
+            return "The phone intelligence lookup completed, but a source errored or returned lines MACSPLOIT could not parse. Facts that were reported are shown below."
+        case (.domain?, .completed): return "The passive domain intelligence lookup completed. Observations are shown below."
+        case (.domain?, .partial):
+            return "The passive domain intelligence lookup completed, but some records were malformed, outside the domain, or over a safety bound. Observations that were kept are shown below."
+        case (.phone?, .running), (.domain?, .running):
+            return "The lookup is running. Cancel stops it; anything already captured is kept as evidence."
+        case (.phone?, .cancelled), (.domain?, .cancelled):
+            return "The lookup was stopped before results were parsed; captured output is preserved as evidence."
+        default: return detail
+        }
+    }
+
     public var detail: String {
         switch self {
         case .running:
@@ -344,6 +424,12 @@ public struct OSINTRunResults: Equatable, Sendable {
     public let accounts: [OSINTAccountResult]
     /// Domain-OSINT hosts, emails, IPs, and nameservers (empty for other workflows).
     public let domainResults: [OSINTDomainResult]
+    /// The workflow this run belongs to (typed summary first, then the chain name).
+    public var mode: OSINTMode? { summary?.kind?.mode ?? OSINTMode(rawValue: chain.name) }
+    /// Which results surface to render.
+    public var presentation: OSINTResultsPresentation { mode.map(OSINTResultsPresentation.init) ?? .accounts }
+    /// Workflow-aware state copy.
+    public var stateDetail: String { state.detail(for: mode) }
     public let evidence: [Evidence]
 
     public init?(snapshot: Snapshot, chainId: String) {

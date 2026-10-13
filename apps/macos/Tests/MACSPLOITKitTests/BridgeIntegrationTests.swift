@@ -489,7 +489,7 @@ import Testing
         let snapshot = try await finish(workspace.id, ct.id)
         let ctResults = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: ct.id))
         #expect(ctResults.state == .completed)
-        #expect(ctResults.summary?.subjectKind == "domain")
+        #expect(ctResults.summary?.kind == .domain && ctResults.presentation == .domain)
         #expect(ctResults.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
         // api.example.test is one canonical asset also observed by theHarvester.
         #expect(ctResults.domainResults.first?.alsoObservedBy == ["theHarvester"])
@@ -510,5 +510,9 @@ import Testing
         let phoneResults = try #require(OSINTRunResults.make(snapshot: phoneSnapshot, chainId: call.id))
         #expect(phoneResults.state == .partial)
         #expect(phoneResults.summary?.details.contains(OSINTProfileField(key: "local.country", value: "US")) == true)
+        // Exact Rust -> protocol -> Swift contract: the typed kind selects the facts surface.
+        #expect(phoneResults.summary?.subjectKind == "PHONE")
+        #expect(phoneResults.presentation == .phoneFacts)
+        #expect(phoneResults.summary?.sourceFacts.first?.facts.contains(OSINTProfileField(key: "country", value: "US")) == true)
     }
 }

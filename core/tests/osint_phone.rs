@@ -198,6 +198,11 @@ fn phone_osint_end_to_end_dedups_repeat_runs_and_survives_restart() {
         let meta = o.metadata.as_ref().unwrap();
         assert_eq!(meta["sources"]["local"]["country"], "FR");
         assert_eq!(meta["sources"]["ovh"]["number_range"], "0199xxxxxx");
+        // Typed result discriminator the app dispatches on (Issue #73), after restart.
+        assert_eq!(meta["kind"], "osint_run_summary");
+        assert_eq!(meta["subject_kind"], "PHONE");
+        // Empty upstream values are omitted, never fabricated.
+        assert!(meta["sources"]["local"].get("carrier").is_none());
         // The observation's evidence is this run's own raw console output.
         let raw = engine
             .store

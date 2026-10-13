@@ -182,21 +182,19 @@ struct OSINTView: View {
                     if results.state == .running { ProgressView().controlSize(.small) }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(results.state.title).font(.callout.weight(.medium))
-                        Text(results.state.detail).font(.caption).foregroundStyle(.secondary)
+                        Text(results.stateDetail).font(.caption).foregroundStyle(.secondary)
                         Text("Started \(displayTime(results.chain.createdAt))").font(.caption2).foregroundStyle(.tertiary)
                     }
                 }
                 stageList(results.stages)
-                if let summary = results.summary {
-                    switch summary.subjectKind {
-                    case "domain": domainSummaryView(summary)
-                    case "phone": factsSummaryView(summary)
-                    default: summaryView(summary)
-                    }
-                }
-                if results.chain.name == OSINTMode.domain.rawValue {
+                switch results.presentation {
+                case .phoneFacts:
+                    phoneFactsView(results)
+                case .domain:
+                    if let summary = results.summary { domainSummaryView(summary) }
                     domainList(results)
-                } else if OSINTMode(rawValue: results.chain.name)?.reportsAccounts ?? true {
+                case .accounts:
+                    if let summary = results.summary { summaryView(summary) }
                     accountList(results)
                 }
                 HStack {
@@ -273,17 +271,37 @@ struct OSINTView: View {
         }
     }
 
-    @ViewBuilder private func factsSummaryView(_ summary: OSINTRunSummary) -> some View {
+    @ViewBuilder private func phoneFactsView(_ results: OSINTRunResults) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if summary.details.isEmpty {
-                Text("No numbering facts were reported.").font(.callout).foregroundStyle(.secondary)
+            if let summary = results.summary {
+                HStack(spacing: 8) {
+                    Text(summary.subject).font(.title3.monospaced()).textSelection(.enabled)
+                    Text("E.164").font(.caption2).foregroundStyle(.secondary)
+                }
+                if summary.sourceFacts.isEmpty {
+                    Text("No numbering facts were reported.").font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(summary.sourceFacts) { source in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Reported by \(source.source)").font(.callout.weight(.medium))
+                        ForEach(source.facts) { fact in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(osintFactLabel(fact.key)).font(.caption).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
+                                Text(fact.value).font(.caption.monospaced()).textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                }
+                if !summary.identityNote.isEmpty {
+                    Label(summary.identityNote, systemImage: "person.crop.circle.badge.questionmark").font(.caption).foregroundStyle(.secondary)
+                }
+                if !summary.errors.isEmpty { noteList("Source errors", summary.errors) }
             } else {
-                detailList("Reported numbering facts", summary.details)
+                Text(results.state == .running ? "Results appear when the lookup finishes." : "No numbering facts were saved for this run.")
+                    .font(.callout).foregroundStyle(.secondary)
             }
-            if !summary.identityNote.isEmpty {
-                Label(summary.identityNote, systemImage: "person.crop.circle.badge.questionmark").font(.caption).foregroundStyle(.secondary)
-            }
-            if !summary.errors.isEmpty { noteList("Source errors", summary.errors) }
         }
     }
 

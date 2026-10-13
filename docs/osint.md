@@ -32,9 +32,11 @@ action — see [OSINT correlation](osint-correlation.md).
    existing process supervisor; built-in RDAP/CT through a bounded HTTPS client).
    **Cancel** stops it.
 4. The run ends **Completed**, **Completed with partial results** (`PARTIAL`),
-   **Failed**, or **Cancelled**. Accounts (Username/Email), numbering facts (Phone), or
-   passive observations with "also observed by" provenance (Domain), plus summary
-   counts and links to Assets / Evidence / Activity, are shown.
+   **Failed**, or **Cancelled**. The results surface is chosen from the run summary's
+   typed `subject_kind` (`USERNAME`/`EMAIL` → accounts, `PHONE` → numbering facts grouped
+   by reporting source, `DOMAIN` → registration facts and passive observations with
+   "also observed by" provenance), never from live-console text, with workflow-specific
+   completion copy and links to Assets / Evidence / Activity.
 5. Everything is persisted in the workspace SQLite database and evidence directory and
    is restored after an app or core restart (OSINT history lists every run).
 

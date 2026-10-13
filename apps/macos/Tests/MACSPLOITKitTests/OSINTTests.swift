@@ -200,7 +200,7 @@ let domainSnapshotJSON = #"""
   "observations": [
     {"id": "o-sf", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-sf", "evidence_id": "e-sf", "discovered_by": "Subfinder", "observed_value": "api.example.test", "timestamp": "t", "confidence": "CONFIRMED", "metadata": {"tool": "subfinder"}},
     {"id": "o-sum", "workspace_id": "w", "asset_id": "a-dom", "source_asset_id": null, "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "example.test", "timestamp": "t", "confidence": "REPORTED",
-     "metadata": {"kind": "osint_run_summary", "provider": "native_ct", "subject": "example.test", "subject_kind": "domain", "historical": true, "partial": false,
+     "metadata": {"kind": "osint_run_summary", "provider": "native_ct", "subject": "example.test", "subject_kind": "DOMAIN", "historical": true, "partial": false,
                   "counts": {"hosts": 2, "emails": 0, "ips": 0, "nameservers": 0, "dropped_out_of_domain": 1, "dropped_invalid": 0, "dropped_over_limit": 0},
                   "note": "Certificate-transparency name: Historical; not proof."}},
     {"id": "o-api", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "api.example.test", "timestamp": "t", "confidence": "REPORTED",
@@ -208,9 +208,9 @@ let domainSnapshotJSON = #"""
     {"id": "o-old", "workspace_id": "w", "asset_id": "a-old", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "old.example.test", "timestamp": "t", "confidence": "REPORTED",
      "metadata": {"kind": "osint_domain_observation", "provider": "native_ct", "passive": true, "historical": true, "liveness": "unverified", "note": "n", "facts": {"all_certificates_expired": true}}},
     {"id": "o-tel", "workspace_id": "w", "asset_id": "a-tel", "source_asset_id": null, "provider_run_id": "p-tel", "evidence_id": "e-tel", "discovered_by": "PhoneInfoga", "observed_value": "+12025550143", "timestamp": "t", "confidence": "REPORTED",
-     "metadata": {"kind": "osint_run_summary", "provider": "phoneinfoga", "subject": "+12025550143", "subject_kind": "phone", "partial": true,
+     "metadata": {"kind": "osint_run_summary", "provider": "phoneinfoga", "subject": "+12025550143", "subject_kind": "PHONE", "partial": true,
                   "counts": {"sources_reported": 1, "source_errors": 1, "lines_malformed": 0},
-                  "sources": {"local": {"country": "US", "e164": "+12025550143"}},
+                  "sources": {"local": {"country": "US", "country_code": "1", "e164": "+12025550143", "international": "12025550143"}, "ovh": {"found": "true", "number_range": "0199xxxxxx", "city": "Paris"}},
                   "errors": [{"source": "ovh", "reason": "country lookup failed"}], "identity_note": "Numbering metadata does not identify the subscriber."}}
   ],
   "chains": [
@@ -241,7 +241,9 @@ let domainSnapshotJSON = #"""
         #expect(snapshot.osintChains.map(\.id) == ["c-tel", "c-ct"])
         let results = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: "c-ct"))
         let summary = try #require(results.summary)
-        #expect(summary.subjectKind == "domain" && summary.hosts == 2 && summary.droppedOutOfDomain == 1)
+        #expect(summary.kind == .domain && summary.hosts == 2 && summary.droppedOutOfDomain == 1)
+        #expect(results.presentation == .domain)
+        #expect(results.stateDetail.contains("passive domain intelligence lookup completed"))
         #expect(summary.historical && summary.identityNote.contains("Historical"))
         #expect(results.accounts.isEmpty)
         #expect(results.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
@@ -259,11 +261,36 @@ let domainSnapshotJSON = #"""
         let results = try #require(OSINTRunResults.make(snapshot: try snapshot(), chainId: "c-tel"))
         #expect(results.state == .partial)
         let summary = try #require(results.summary)
-        #expect(summary.subjectKind == "phone")
+        #expect(summary.kind == .phone)
+        // A durable phone summary always selects the facts surface, never the
+        // all-zero account counters.
+        #expect(results.presentation == .phoneFacts)
+        #expect(summary.sourceFacts.map(\.source) == ["local", "ovh"])
+        let local = try #require(summary.sourceFacts.first)
+        #expect(local.facts.contains(OSINTProfileField(key: "country", value: "US")))
+        #expect(local.facts.contains(OSINTProfileField(key: "country_code", value: "1")))
+        // Missing fields (e.g. carrier) are omitted rather than fabricated.
+        #expect(!local.facts.contains { $0.key == "carrier" })
+        #expect(summary.sourceFacts[1].facts.contains(OSINTProfileField(key: "city", value: "Paris")))
+        #expect(osintFactLabel("country_code") == "Country code" && osintFactLabel("e164") == "E164")
+        #expect(!results.stateDetail.contains("platform"))
         #expect(summary.details.contains(OSINTProfileField(key: "local.country", value: "US")))
         #expect(summary.errors.first?.platform == "ovh")
         #expect(summary.identityNote.contains("does not identify"))
         #expect(results.domainResults.isEmpty && results.accounts.isEmpty)
+    }
+
+    @Test func testSubjectKindDispatchIsTypedAndCaseInsensitive() {
+        for (wire, kind) in [("PHONE", OSINTSubjectKind.phone), ("phone", .phone), ("Domain", .domain),
+                             ("DOMAIN", .domain), ("USERNAME", .username), ("EMAIL", .email)] {
+            #expect(OSINTSubjectKind(wire: wire) == kind)
+        }
+        #expect(OSINTSubjectKind(wire: "SOMETHING_NEW") == nil)
+        // Username/Email keep the account-platform presentation and copy.
+        #expect(OSINTResultsPresentation(mode: .username) == .accounts)
+        #expect(OSINTResultsPresentation(mode: .email) == .accounts)
+        #expect(OSINTRunState.completed.detail(for: .email).contains("platform"))
+        #expect(OSINTRunState.completed.detail(for: .phone) == "The phone intelligence lookup completed. Reported numbering facts are shown below.")
     }
 
     @Test func testRegistrationFactsFlattenWithoutContacts() {

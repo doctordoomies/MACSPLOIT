@@ -105,10 +105,11 @@ M6 completion adds `phone_osint` (PhoneNumber target, E.164) and `domain_osint` 
 target that must be in workspace scope; `PASSIVE` providers only — otherwise
 `ScopeViolation`), capability values `PHONE_OSINT` and `DOMAIN_OSINT`, asset type
 `PhoneNumber`, and relationship types `has_email`, `has_nameserver`, and `observed_ip`.
-Domain OSINT run summaries use `subject_kind: "domain"` with host/email/IP/nameserver
+Run summaries carry a typed `subject_kind` (`USERNAME`, `EMAIL`, `PHONE`, `DOMAIN`).
+Domain OSINT run summaries use `subject_kind: "DOMAIN"` with host/email/IP/nameserver
 counts (RDAP adds a minimized `registration` object); their per-asset observations use
 `kind: "osint_domain_observation"` with `passive`, `historical`, `liveness:
-"unverified"`, and bounded `facts`. Phone run summaries use `subject_kind: "phone"` with
+"unverified"`, and bounded `facts`. Phone run summaries use `subject_kind: "PHONE"` with
 per-source `sources` facts and `errors`.
 
 ### Correlation additions (v1 compatible, Issue #67)

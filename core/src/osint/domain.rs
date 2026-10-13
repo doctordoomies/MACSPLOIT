@@ -22,6 +22,8 @@ use std::collections::BTreeMap;
 pub const PASSIVE_NOTE: &str = "Passive public-source observation: not proof that the host exists, resolves, or is live today. MACSPLOIT did not contact it.";
 /// Certificate-transparency names are historical by nature.
 pub const CT_NOTE: &str = "Certificate-transparency name: a publicly logged certificate once named this host. Historical; not proof that it exists, resolves, or is live today. MACSPLOIT did not contact it.";
+/// `subject_kind` of a Domain OSINT run summary.
+pub const DOMAIN_SUBJECT_KIND: &str = "DOMAIN";
 /// Hosts (subdomains) accepted per run; the rest are counted as dropped.
 pub const MAX_HOSTS: usize = 250;
 /// Email addresses accepted per run.
@@ -265,7 +267,9 @@ pub fn build_domain_output(findings: DomainFindings, framing: RunFraming) -> Par
     summary.insert("kind".into(), json!("osint_run_summary"));
     summary.insert("provider".into(), json!(framing.provider_id));
     summary.insert("subject".into(), json!(domain));
-    summary.insert("subject_kind".into(), json!("domain"));
+    // Same SCREAMING_SNAKE_CASE convention as `osint::SubjectKind` (USERNAME, EMAIL,
+    // PHONE): clients dispatch result presentation on this typed value.
+    summary.insert("subject_kind".into(), json!(DOMAIN_SUBJECT_KIND));
     summary.insert(
         "counts".into(),
         json!({
@@ -439,6 +443,7 @@ mod tests {
         assert!(f.dropped.over_limit >= 5);
 
         let out = build_domain_output(f, framing());
+        assert_eq!(out.summary.as_ref().unwrap()["subject_kind"], "DOMAIN");
         assert!(out.partial, "over-limit drops make the run partial");
         assert_eq!(out.discoveries[0].asset_type, AssetType::Domain);
         let ip = out
