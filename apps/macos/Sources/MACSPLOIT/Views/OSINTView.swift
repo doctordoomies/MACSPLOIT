@@ -34,6 +34,33 @@ struct OSINTView: View {
                 correlationPanel
             }
         }
+        .task(id: "\(model.osintMode.rawValue)|\(model.osintTarget?.id ?? "")|\(model.snapshot?.workspace.scope.count ?? 0)") {
+            await model.refreshOSINTScopeStatus()
+        }
+        .sheet(isPresented: $model.osintAuthorizationRequested) { domainAuthorizeDialog }
+    }
+
+    // MARK: Domain OSINT authorization (core-authoritative, exact entry only)
+
+    private var domainAuthorizeDialog: some View {
+        let target = model.osintTarget?.normalizedValue ?? "The target"
+        let entry = model.osintScopeStatus?.requiredScopeEntry ?? target
+        return VStack(alignment: .leading, spacing: 16) {
+            Label("Authorize Target", systemImage: "exclamationmark.shield").font(.title2.weight(.semibold))
+            Text("\(target) is not currently included in this workspace's authorized scope.")
+                .foregroundStyle(.secondary)
+            Text("By continuing, you confirm that you own this domain or have explicit permission to assess it.")
+                .foregroundStyle(.secondary)
+            Text("MACSPLOIT will add only the required exact entry — \(entry) — to this workspace's scope, re-check it, and then start Domain OSINT. Nothing is contacted before you confirm.")
+                .font(.callout)
+            HStack {
+                Spacer()
+                Button("Cancel") { model.cancelOSINTAuthorization() }.keyboardShortcut(.cancelAction)
+                Button("Authorize & Run Domain OSINT") { Task { await model.authorizeAndRunOSINT() } }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(26).frame(width: 480)
     }
 
     // MARK: Execution
@@ -56,7 +83,8 @@ struct OSINTView: View {
                 activityNote
                 HStack(spacing: 12) {
                     Button { Task { await model.runOSINT() } } label: {
-                        Label("Run \(model.osintMode.rawValue)", systemImage: "play.fill")
+                        Label(model.osintNeedsAuthorization ? "Authorize & Run \(model.osintMode.rawValue)" : "Run \(model.osintMode.rawValue)",
+                              systemImage: model.osintNeedsAuthorization ? "lock.open" : "play.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.osintRunBlocker != nil || model.isBusy)

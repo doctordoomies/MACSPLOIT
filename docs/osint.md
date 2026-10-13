@@ -22,7 +22,10 @@ action — see [OSINT correlation](osint-correlation.md).
 1. Add a target in the target bar: `@handle` (Username), `name@example.test` (Email),
    `+1 202 555 0143` (Phone — international format required; MACSPLOIT never guesses
    a country), or a domain (Domain OSINT also requires it in workspace scope). Adding a
-   target **never** starts OSINT.
+   target **never** starts OSINT. For an out-of-scope domain, Run becomes **Authorize &
+   Run Domain OSINT**: the core reports the exact scope entry, the confirmation names it,
+   and only after the core adds and re-checks that entry does the run start (cancel
+   changes nothing; identifier subjects never use host scope).
 2. Open **OSINT** in the sidebar, choose the workflow, the subject, and a compatible
    provider. Provider readiness/version/setup comes from the core.
 3. Press **Run**. The core runs one bounded scan or lookup (external tools through the

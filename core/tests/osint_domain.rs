@@ -589,3 +589,60 @@ fn subfinder_data_is_reused_and_repeated_runs_stay_distinguishable() {
         .iter()
         .any(|o| o.asset_id == api.id && o.discovered_by.to_lowercase().contains("subfinder")));
 }
+
+/// Issue #71: an out-of-scope Domain OSINT target is refused by the core until the
+/// analyst authorizes the exact entry; the entry persists across a restart and the
+/// run then proceeds. Identifier subjects never need host scope.
+#[test]
+fn domain_osint_authorization_is_exact_persistent_and_core_enforced() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("store");
+    let (ws, target) = {
+        let engine = open(&root, web());
+        let ws = workspace(&engine, &["other.test"]);
+        let target = engine.store.add_target(ws, "example.test").unwrap();
+        let status = engine.store.target_scope_status(ws, target.id).unwrap();
+        assert!(!status.authorized);
+        assert_eq!(status.required_scope_entry.as_deref(), Some("example.test"));
+        let err = engine
+            .start(ws, target.id, ChainKind::DomainOsint, Value::Null)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(err.code, "ScopeViolation");
+        let result = engine.store.authorize_target(ws, target.id).unwrap();
+        assert!(result.authorized);
+        assert_eq!(result.added_entry.as_deref(), Some("example.test"));
+        // Exactly the core-reported entry: no wildcard or sibling widening.
+        let mut scope = result.workspace.scope.clone();
+        scope.sort();
+        assert_eq!(scope, ["example.test", "other.test"]);
+        engine.shutdown();
+        (ws, target.id)
+    };
+    let engine = open(&root, web());
+    assert!(
+        engine
+            .store
+            .target_scope_status(ws, target)
+            .unwrap()
+            .authorized
+    );
+    let snap = run(&engine, ws, target, "native_ct");
+    assert_eq!(snap.chains[0].status, ChainStatus::Completed);
+    assert!(!snap
+        .workspace
+        .scope
+        .iter()
+        .any(|entry| entry.starts_with("*.")));
+    // Identifier OSINT is not forced through host scope.
+    let user = engine.store.add_target(ws, "@octo-synthetic").unwrap();
+    assert!(engine
+        .start(
+            ws,
+            user.id,
+            ChainKind::UsernameOsint,
+            json!({"provider_id": "native_ct"})
+        )
+        .map(|_| ())
+        .is_err_and(|e| e.code == "ProviderUnsupported"));
+}

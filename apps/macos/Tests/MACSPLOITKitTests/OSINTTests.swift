@@ -292,8 +292,17 @@ actor OSINTAPI: CoreAPI {
     private(set) var addedTargets: [String] = []
     private(set) var proposals: [(left: String, right: String, basis: String, confidence: String, observations: [String])] = []
     private(set) var reviews: [(correlation: String, decision: String, note: String)] = []
+    private(set) var scopeChecks: [String] = []
+    private(set) var authorizeCalls: [String] = []
+    /// Whether the Domain target is in scope, and whether authorize_target succeeds.
+    private(set) var domainInScope: Bool
+    let authorizeOutcome: Bool
     let providers: [ProviderStatus]
-    init(providers: [ProviderStatus]) { self.providers = providers }
+    init(providers: [ProviderStatus], domainInScope: Bool = false, authorizeOutcome: Bool = true) {
+        self.providers = providers
+        self.domainInScope = domainInScope
+        self.authorizeOutcome = authorizeOutcome
+    }
     func hello() async throws -> CoreHello { CoreHello(coreVersion: "0.1.0", protocolVersion: 1, offlineOnly: false) }
     func listWorkspaces() async throws -> [Workspace] { [try osintSnapshot().workspace] }
     func createWorkspace(name: String, scope: [String]) async throws -> Workspace { try osintSnapshot().workspace }
@@ -311,9 +320,15 @@ actor OSINTAPI: CoreAPI {
     func cancelChain(workspace: String, chain: String) async throws { cancelled.append(chain) }
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent { EvidenceContent(evidenceId: evidence, rawJson: "{}") }
     func listProviders() async throws -> [ProviderStatus] { providers }
-    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus { ScopeStatus(authorized: false, requiredScopeEntry: nil) }
+    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus {
+        scopeChecks.append(target)
+        return ScopeStatus(authorized: domainInScope, requiredScopeEntry: domainInScope ? nil : "example.test")
+    }
     func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
-        AuthorizeResult(workspace: try osintSnapshot().workspace, authorized: false, addedEntry: nil)
+        authorizeCalls.append(target)
+        if authorizeOutcome { domainInScope = true }
+        return AuthorizeResult(workspace: try osintSnapshot().workspace, authorized: authorizeOutcome,
+                               addedEntry: authorizeOutcome ? "example.test" : nil)
     }
     func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
                             rationale: String, observations: [String]) async throws -> Correlation {
@@ -411,7 +426,7 @@ func sampleCorrelation(status: String) throws -> Correlation {
             capabilities: ["DOMAIN_OSINT"], supportedTargetTypes: ["Domain"], riskClass: "PASSIVE",
             networkActivity: "NETWORK", offline: false,
             installation: ProviderInstallation(state: "BUILT_IN", path: nil, version: nil, message: nil), setup: nil, install: nil)
-        let api = OSINTAPI(providers: [osintProviderStatus(), ct])
+        let api = OSINTAPI(providers: [osintProviderStatus(), ct], domainInScope: true)
         let model = WorkspaceModel(client: api)
         await model.boot()
         model.osintMode = .domain
@@ -423,6 +438,82 @@ func sampleCorrelation(status: String) throws -> Correlation {
         #expect(started.first?.chain == "domain_osint")
         #expect(started.first?.target == "t-dom")
         #expect(started.first?.options["provider_id"].string == "native_ct")
+    }
+
+    func domainModel(inScope: Bool, authorizeOutcome: Bool = true) async -> (OSINTAPI, WorkspaceModel) {
+        let ct = ProviderStatus(
+            id: "native_ct", name: "Certificate Transparency (crt.sh)", description: "", version: "built-in",
+            capabilities: ["DOMAIN_OSINT"], supportedTargetTypes: ["Domain"], riskClass: "PASSIVE",
+            networkActivity: "NETWORK", offline: false,
+            installation: ProviderInstallation(state: "BUILT_IN", path: nil, version: nil, message: nil), setup: nil, install: nil)
+        let api = OSINTAPI(providers: [osintProviderStatus(), ct], domainInScope: inScope, authorizeOutcome: authorizeOutcome)
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        model.osintMode = .domain
+        await model.refreshOSINTScopeStatus()
+        return (api, model)
+    }
+
+    @Test func testOutOfScopeDomainOSINTAsksForAuthorizationInsteadOfStarting() async {
+        let (api, model) = await domainModel(inScope: false)
+        #expect(model.osintNeedsAuthorization)
+        #expect(model.osintScopeStatus?.requiredScopeEntry == "example.test")
+        await model.runOSINT()
+        let started = await api.started
+        let authorized = await api.authorizeCalls
+        #expect(started.isEmpty && authorized.isEmpty)
+        #expect(model.osintAuthorizationRequested)
+        // Cancel leaves scope unchanged and launches nothing.
+        model.cancelOSINTAuthorization()
+        #expect(!model.osintAuthorizationRequested)
+        let afterCancel = await api.authorizeCalls
+        #expect(afterCancel.isEmpty)
+    }
+
+    @Test func testConfirmedAuthorizationAddsTheCoreEntryThenRuns() async {
+        let (api, model) = await domainModel(inScope: false)
+        await model.runOSINT()
+        await model.authorizeAndRunOSINT()
+        let authorized = await api.authorizeCalls
+        let started = await api.started
+        #expect(authorized == ["t-dom"])
+        #expect(started.count == 1 && started.first?.chain == "domain_osint" && started.first?.target == "t-dom")
+        #expect(!model.osintNeedsAuthorization)
+    }
+
+    @Test func testAuthorizationFailureLaunchesNothing() async {
+        let (api, model) = await domainModel(inScope: false, authorizeOutcome: false)
+        await model.authorizeAndRunOSINT()
+        let started = await api.started
+        #expect(started.isEmpty)
+        #expect(model.errorMessage?.contains("not started") == true)
+    }
+
+    @Test func testInScopeDomainRunsWithoutAuthorization() async {
+        let (api, model) = await domainModel(inScope: true)
+        #expect(!model.osintNeedsAuthorization)
+        await model.runOSINT()
+        let started = await api.started
+        let authorized = await api.authorizeCalls
+        #expect(started.first?.chain == "domain_osint" && authorized.isEmpty)
+    }
+
+    @Test func testIdentifierOSINTNeverConsultsHostScope() async {
+        let api = OSINTAPI(providers: [osintProviderStatus()], domainInScope: false)
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        let baseline = await api.scopeChecks.count // Recon may check its own selection
+        for mode in [OSINTMode.username, .email] {
+            model.osintMode = mode
+            await model.refreshOSINTScopeStatus()
+            #expect(!model.osintNeedsAuthorization)
+        }
+        model.osintMode = .username
+        await model.runOSINT()
+        let checks = await api.scopeChecks
+        let started = await api.started
+        #expect(checks.count == baseline, "identifier OSINT never queries host scope")
+        #expect(started.first?.chain == "username_osint")
     }
 
     @Test func testCorrelationsAreProposedAndReviewedOnlyExplicitly() async {
