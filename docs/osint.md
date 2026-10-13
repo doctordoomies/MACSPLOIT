@@ -1,11 +1,12 @@
 # OSINT workflow
 
-Status: **BETA — Milestone 6.0 foundation + Issue #22 (user-scanner) first slice.**
-Umbrella: Issue #58. Username and Email OSINT run through one provider today
-(user-scanner). Sherlock, Maigret, socialscan, Holehe, theHarvester, PhoneInfoga,
-passive Amass, native RDAP, and certificate-transparency providers are **not**
-implemented; the shared pieces below are designed so they can be added without a
-second orchestration system.
+Status: **BETA — Milestone 6.0 foundation + Issue #22 (user-scanner) + the Username
+OSINT provider wave (Sherlock, Maigret, socialscan).**
+Umbrella: Issue #58. Email OSINT runs through one provider today (user-scanner);
+Username OSINT runs through four (user-scanner, Sherlock, Maigret, socialscan),
+selectable per run. Holehe, theHarvester, PhoneInfoga, passive Amass, native RDAP, and
+certificate-transparency providers are **not** implemented; the shared pieces below are
+designed so they can be added without a second orchestration system.
 
 ## What works
 
@@ -111,6 +112,37 @@ stdout/stderr, and references to artifact evidence ids/SHA-256) plus, when prese
 the raw upstream report byte-for-byte. Observations link to the report evidence. On
 cancel, timeout, non-zero exit, missing/oversized/malformed report, the evidence that
 exists is kept and the provider run is marked accordingly.
+
+## Username OSINT provider wave (Sherlock, Maigret, socialscan)
+
+Three additional **username-only** providers (capability `USERNAME_OSINT`, target type
+`Username`, risk `ACTIVE_LOW_IMPACT`) plug into the same typed contract and
+`osint::build_output`, so cross-provider results deduplicate into one canonical
+`Account`/profile-`URL` asset while each provider keeps its own observation, evidence,
+and provenance. None of them perform login, credential checks, breach-data ingestion,
+recursion, or proxy/anti-blocking behavior. All are discovered via the shared
+pip/pipx plumbing (`MACSPLOIT_<TOOL>` override, then `PATH`, Homebrew dirs, managed
+dir, `$PIPX_BIN_DIR`/`~/.local/bin`), run in a private contained working directory and
+`HOME`, and capture their structured report as hashed evidence (symlink-safe, ≤1 MiB)
+before parsing. Each is bounded by its own wall-clock timeout plus the OSINT chain
+ceiling, captures ≤256 KiB stdout / ≤64 KiB stderr, and supports cancellation via the
+process group. They are not in the managed-download installer matrix (truthful
+copy-only `pipx`/`pip` setup guidance is shown instead); existing binaries on `PATH`
+or an override are first-class.
+
+| Provider | Upstream | Install | Version | Subject | Structured output | Positive = | Bounds / safety |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Sherlock** | [sherlock-project/sherlock](https://github.com/sherlock-project/sherlock), MIT, console `sherlock` | `pipx install sherlock-project` | `--version` → `sherlock v0.x` (series `0.`) | positional username after `--` (strictly validated) | `--csv --local --no-color --timeout 10` writes `<username>.csv` (`username,name,url_main,url_user,exists,http_status,response_time_s`) in the run dir; no JSON | `exists == Claimed` (`Available`→negative, `Illegal`→blocked, `WAF`/`Unknown`→error, other→unknown) | bundled site list (`--local`), NSFW excluded, no recursion/proxy; minimal CSV parser (quoted fields), columns resolved by header |
+| **Maigret** | [soxoj/maigret](https://github.com/soxoj/maigret), MIT, console `maigret` | `pipx install maigret` | `--version` (series `0.`) | positional username (strictly validated) | `--json simple -fo <dir>` writes `report_<username>_simple.json`, a site-keyed object containing **only claimed sites** (`url_user`, `status`, `ids_data`) | presence in the simple report (claimed) | `--no-recursion --no-extracting --top-sites 500 --timeout 10 --retries 1`; never `-a`/`--permute`/`--parse`/`--proxy`/`--cloudflare-bypass`; `ids_data` bounded into profile metadata |
+| **socialscan** | [iojw/socialscan](https://github.com/iojw/socialscan), MIT, console `socialscan` | `pip install socialscan` | `--version` (series `1.`) | positional query (username; strictly validated) | `--json <file> --show-urls --view-by platform` writes a platform-keyed object of record lists (`query`, `platform`, `available`, `valid`, `success`, `message`, `link`) | `success && !available && valid` (taken); `available`→negative, `!success`→error, `!valid`→unknown | never `--available-only`/`--proxy-list`/`--input`/`--cache-tokens`; availability only — never login, credentials, or private data; less actively maintained upstream, so platform coverage is smaller |
+
+Cross-provider example (all offline fixtures): for `@octo-synthetic`, Sherlock, Maigret,
+and socialscan each report `github.com/octo-synthetic`. The result is **one** canonical
+`github:octo-synthetic` Account and **one** profile URL asset, with **three**
+observations (one per provider run), each attributable to its own provider and evidence;
+Maigret's additional `keybase:octo-synthetic` stays a separate account. Agreement across
+providers is **not** treated as proof the accounts belong to one person — the identity
+note travels with every observation and summary.
 
 ## Known limitations
 

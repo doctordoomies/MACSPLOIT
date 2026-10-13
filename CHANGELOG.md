@@ -7,6 +7,21 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Username OSINT provider wave: Sherlock, Maigret, socialscan (M6 / #58):** three
+  username-only OSINT providers on the existing typed contract, each an evidence-first,
+  bounded, shell-free, cancellable run selectable per OSINT run alongside user-scanner.
+  Sherlock parses its CSV (`exists == Claimed` → account), Maigret its `--json simple`
+  report (claimed sites only), and socialscan its `--json` registration-availability
+  records (taken+valid → account). A shared `providers::osint_cli` module adds the
+  pip/pipx discovery, private contained run directory/`HOME`, symlink-safe ≤1 MiB report
+  capture, and version classification; all three normalize through `osint::build_output`,
+  so cross-provider discoveries of the same public profile deduplicate into one canonical
+  `Account`/profile-`URL` asset while each provider keeps its own observation, evidence,
+  and provenance (nothing silently merges identities). No logins, credential checks,
+  breach data, recursion, proxies, or anti-blocking; not in the managed-download
+  installer (copy-only `pipx`/`pip` setup guidance). Offline fixtures only
+  (`fixtures/fake-{sherlock,maigret,socialscan}.sh`); the Provider Center and OSINT
+  picker list them dynamically.
 - **OSINT foundation + Username/Email OSINT via user-scanner (M6 / #58, #22):** typed
   `USERNAME_OSINT` / `EMAIL_OSINT` capabilities and `username_osint` / `email_osint`
   chains with explicit, compatibility-checked provider selection; a shared `osint`

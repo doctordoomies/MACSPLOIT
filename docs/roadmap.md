@@ -708,15 +708,18 @@ Do not create a second orchestration system.
 ## 6.1 Username + public-profile OSINT
 
 **Issue #22 first slice DONE via PR #60:** Username and Email OSINT through
-user-scanner 1.5.x are merged. Sherlock, Maigret, and socialscan remain to be integrated
-before OSINT exits.
+user-scanner 1.5.x are merged. **Username provider wave (Sherlock, Maigret, socialscan)
+implemented in an open PR against Issue #58 (not yet merged; owner acceptance pending):**
+all three run through the shared typed OSINT contract with cross-provider canonical
+deduplication and per-provider provenance.
 
 Provider set to evaluate/integrate:
 
-- user-scanner;
-- Sherlock;
-- Maigret;
-- socialscan;
+- user-scanner — merged (PR #60);
+- Sherlock — implemented (Username wave PR, pending owner acceptance);
+- Maigret — implemented (Username wave PR, pending owner acceptance);
+- socialscan — implemented, username-only in this slice (Username wave PR, pending
+  owner acceptance); its native email-availability support is a small future addition;
 - additional maintained username providers only when they add distinct coverage.
 
 Use public profile/account results, bounded metadata, evidence, and uncertainty. A
