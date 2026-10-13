@@ -17,11 +17,14 @@ fn tools(root: &Path, body: &str) -> ToolConfig {
     for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
         tools.overrides.insert(name.into(), executable.clone());
     }
-    // Pin user-scanner to an absent path so a developer's real install never leaks
-    // into these deterministic expectations (its own probes live in osint_user_scanner.rs).
-    tools
-        .overrides
-        .insert("user-scanner".into(), root.join("absent-user-scanner"));
+    // Pin the pip/pipx OSINT providers to absent paths so a developer's real install
+    // never leaks into these deterministic expectations (their own probes live in
+    // osint_user_scanner.rs and the provider unit tests).
+    for name in ["user-scanner", "sherlock", "maigret", "socialscan"] {
+        tools
+            .overrides
+            .insert(name.into(), root.join(format!("absent-{name}")));
+    }
     tools
 }
 
@@ -47,15 +50,18 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
     assert!(response.error.is_none());
     assert_eq!(response.protocol_version, 1);
     let statuses: Vec<ProviderStatus> = serde_json::from_value(response.result.unwrap()).unwrap();
-    assert_eq!(statuses.len(), 9);
+    assert_eq!(statuses.len(), 12);
     let mut built_in = 0;
     for status in statuses {
-        if status.metadata.id == "user_scanner" {
+        let install_command = status
+            .setup
+            .as_ref()
+            .and_then(|s| s.install_command.clone())
+            .unwrap_or_default();
+        // pip/pipx OSINT providers (user-scanner, sherlock, maigret, socialscan) are
+        // pinned absent above: Missing, with pip-based setup and no brew/managed route.
+        if install_command.starts_with("pip") {
             assert_eq!(status.installation, Installation::Missing);
-            assert_eq!(
-                status.setup.unwrap().install_command.as_deref(),
-                Some("pipx install user-scanner")
-            );
             assert!(!status.install.homebrew && !status.install.managed_download);
             continue;
         }
@@ -96,11 +102,14 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
         ("invalid executable format", "EXECUTION_ERROR"),
     ] {
         let config = tools(temp.path(), body);
-        for status in registry
-            .status(&config)
-            .into_iter()
-            .filter(|s| s.setup.is_some() && s.metadata.id != "user_scanner")
-        {
+        for status in registry.status(&config).into_iter().filter(|s| {
+            // Only the Homebrew-backed external providers are driven by `fake-tool`
+            // here; the pip/pipx OSINT providers are covered by their own tests.
+            s.setup
+                .as_ref()
+                .and_then(|x| x.install_command.as_deref())
+                .is_some_and(|c| c.starts_with("brew"))
+        }) {
             let value = serde_json::to_value(status).unwrap();
             assert_eq!(value["installation"]["state"], expected);
             if expected == "INSTALLED" {

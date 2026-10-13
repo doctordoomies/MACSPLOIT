@@ -66,6 +66,9 @@ installation output is status only and never enters workspace evidence.
 | ffuf | `ffuf` | supported (pinned v2.3.0, arm64/x86_64) | GitHub releases |
 | Nmap | `nmap` | not appropriate (privileged .dmg) | nmap.org |
 | user-scanner | none (Python package) | not offered | copy-only `pipx install user-scanner` (PyPI) |
+| Sherlock | none (Python package) | not offered | copy-only `pipx install sherlock-project` (PyPI) |
+| Maigret | none (Python package) | not offered | copy-only `pipx install maigret` (PyPI) |
+| socialscan | none (Python package) | not offered | copy-only `pip install socialscan` (PyPI) |
 
 - **Install with Homebrew (implemented):** MACSPLOIT locates the `brew` executable
   (resolving a Homebrew symlink) and runs `brew install <reviewed formula>` as an
@@ -375,6 +378,34 @@ EmailAddress. Runs only from the dedicated `username_osint` / `email_osint` chai
   upstream status and `REPORTED` confidence. Details and limitations: [OSINT](osint.md).
 
 Automated tests use `fixtures/fake-user-scanner.sh` and `fixtures/user-scanner/*.json`.
+
+## SherlockProvider / MaigretProvider / SocialscanProvider
+
+Status: **BETA** (Milestone 6 / Issue #58 — the Username OSINT provider wave). Three
+**username-only** providers (`sherlock`, `maigret`, `socialscan`), each risk
+**ACTIVE_LOW_IMPACT**, capability USERNAME_OSINT, target type Username. They share the
+pip/pipx discovery, private contained run directory + `HOME`, symlink-safe ≤1 MiB
+report capture, bounded output/cancellation plumbing in `core/src/providers/osint_cli.rs`,
+and normalize through `osint::build_output` — so their results deduplicate with each
+other and with user-scanner into canonical `Account`/profile-`URL` assets while every
+provider keeps its own observation, evidence, and provenance.
+
+- **Sherlock** (`pipx install sherlock-project`): `--csv --local --no-color --timeout 10
+  -- <username>` → `<username>.csv`; `exists == Claimed` is a positive account.
+- **Maigret** (`pipx install maigret`): `<username> --json simple -fo <dir>
+  --no-recursion --no-extracting --top-sites 500 --timeout 10 --retries 1` →
+  `report_<username>_simple.json` (claimed sites only).
+- **socialscan** (`pip install socialscan`): `<username> --json <file> --show-urls
+  --view-by platform` → platform-keyed availability records; a taken (registered,
+  valid) result is a positive account. Availability only — never login, credentials,
+  breach data, or private access.
+
+None are in the managed-download installer matrix (truthful copy-only setup guidance is
+shown); never passed: recursion/pivots (`--cross-scan`, `--parse`, `--no-recursion`
+enforced for Maigret), proxies/anti-blocking, NSFW opt-in, `--available-only`, file
+inputs, `--all-sites`/`--permute`. Full per-provider contract, status mapping, bounds,
+and the cross-provider dedup example: [OSINT](osint.md). Automated tests use
+`fixtures/fake-sherlock.sh`, `fixtures/fake-maigret.sh`, and `fixtures/fake-socialscan.sh`.
 
 ## Next adapter boundary
 

@@ -372,7 +372,15 @@ import Testing
         #expect(scanner.installation.version == "1.5.2.1")
         #expect(scanner.capabilities == ["USERNAME_OSINT", "EMAIL_OSINT"])
         #expect(scanner.setup?.installCommand == "pipx install user-scanner")
-        #expect(OSINTMode.username.compatibleProviders(providers).map(\.id) == ["user_scanner"])
+        // The Username workflow now offers the whole provider wave (dynamic picker).
+        #expect(
+            OSINTMode.username.compatibleProviders(providers).map(\.id).sorted()
+                == ["maigret", "sherlock", "socialscan", "user_scanner"]
+        )
+        // The username-only providers are offline fakes that report their versions.
+        let sherlock = try #require(providers.first { $0.id == "sherlock" })
+        #expect(sherlock.installation.isInstalled)
+        #expect(sherlock.capabilities == ["USERNAME_OSINT"])
 
         // Host scope does not cover any platform; OSINT runs on the identifier subject.
         let workspace = try await client.createWorkspace(name: "OSINT bridge test", scope: ["example.test"])
