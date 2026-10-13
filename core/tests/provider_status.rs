@@ -18,6 +18,7 @@ const OSINT_TOOLS: &[(&str, &str)] = &[
     ("maigret", "maigret"),
     ("socialscan", "socialscan"),
     ("phoneinfoga", "phoneinfoga"),
+    ("theHarvester", "theharvester"),
 ];
 
 fn is_osint(id: &str) -> bool {
@@ -62,7 +63,7 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
     assert!(response.error.is_none());
     assert_eq!(response.protocol_version, 1);
     let statuses: Vec<ProviderStatus> = serde_json::from_value(response.result.unwrap()).unwrap();
-    assert_eq!(statuses.len(), 13);
+    assert_eq!(statuses.len(), 16);
     let mut built_in = 0;
     for status in statuses {
         let install_command = status
@@ -102,7 +103,8 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
             state => panic!("unexpected status {state:?}"),
         }
     }
-    assert_eq!(built_in, 3);
+    // Synthetic, native DNS, native HTTP, native CT, native RDAP.
+    assert_eq!(built_in, 5);
 }
 
 #[test]

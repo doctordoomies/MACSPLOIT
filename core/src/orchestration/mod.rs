@@ -98,6 +98,10 @@ pub enum ChainKind {
     /// OSINT for one explicitly selected international PhoneNumber target (public
     /// numbering metadata only; no calls, SMS, or pivots). Never started automatically.
     PhoneOsint,
+    /// Passive public-infrastructure OSINT for one explicitly selected in-scope
+    /// Domain (registration data, certificate transparency, public passive sources).
+    /// Discovered hosts are never resolved or probed; no follow-on scans.
+    DomainOsint,
 }
 
 impl ChainKind {
@@ -107,13 +111,18 @@ impl ChainKind {
             Self::UsernameOsint => Some((Capability::UsernameOsint, TargetType::Username)),
             Self::EmailOsint => Some((Capability::EmailOsint, TargetType::EmailAddress)),
             Self::PhoneOsint => Some((Capability::PhoneOsint, TargetType::PhoneNumber)),
+            Self::DomainOsint => Some((Capability::DomainOsint, TargetType::Domain)),
             _ => None,
         }
     }
 
     /// Every OSINT chain kind.
-    pub const ALL_OSINT: &'static [ChainKind] =
-        &[Self::UsernameOsint, Self::EmailOsint, Self::PhoneOsint];
+    pub const ALL_OSINT: &'static [ChainKind] = &[
+        Self::UsernameOsint,
+        Self::EmailOsint,
+        Self::PhoneOsint,
+        Self::DomainOsint,
+    ];
 
     /// Display name of an OSINT chain (also its stage name), and the error shown
     /// when the selected target has the wrong type.
@@ -127,6 +136,10 @@ impl ChainKind {
             Self::PhoneOsint => (
                 "Phone OSINT",
                 "Phone OSINT requires an international phone target (e.g. +1 202 555 0143).",
+            ),
+            Self::DomainOsint => (
+                "Domain OSINT",
+                "Domain OSINT requires an in-scope domain target.",
             ),
             _ => (
                 "OSINT",
@@ -598,14 +611,24 @@ impl Store {
                     ],
                 )
             }
-            ChainKind::UsernameOsint | ChainKind::EmailOsint | ChainKind::PhoneOsint => {
+            ChainKind::UsernameOsint
+            | ChainKind::EmailOsint
+            | ChainKind::PhoneOsint
+            | ChainKind::DomainOsint => {
                 let (capability, required) = kind.osint().expect("OSINT chain kind");
                 let (title, wrong_target) = kind.osint_labels();
                 if target.target_type != required {
                     return Err(CoreError::new("InvalidTarget", wrong_target));
                 }
-                // Strict subject validation (no option/pattern characters).
-                crate::osint::Subject::from_target(target.target_type, &target.normalized_value)?;
+                if capability.is_identifier_osint() {
+                    // Strict subject validation (no option/pattern characters).
+                    crate::osint::Subject::from_target(
+                        target.target_type,
+                        &target.normalized_value,
+                    )?;
+                } else {
+                    crate::targets::domain(&target.normalized_value)?;
+                }
                 let provider = osint_provider.ok_or_else(|| {
                     CoreError::new(
                         "ProviderUnsupported",
@@ -624,10 +647,11 @@ impl Store {
             }
         };
         // Authorization is mandatory for every preset, real or synthetic. Host-based
-        // presets require the target in workspace scope; OSINT presets operate on an
-        // identifier subject (see scope::authorize_osint_subject) and the provider's
-        // risk class is re-checked before execution.
-        if kind.osint().is_some() {
+        // presets (Domain OSINT included) require the target in workspace scope;
+        // identifier OSINT presets operate on an identifier subject (see
+        // scope::authorize_osint_subject). The provider's risk class is re-checked
+        // before execution.
+        if kind.osint().is_some_and(|(c, _)| c.is_identifier_osint()) {
             crate::scope::authorize_osint_subject(
                 target.target_type,
                 crate::providers::RiskClass::Passive,
@@ -1546,9 +1570,16 @@ impl Engine {
         // Launching a real Recon Chain is the analyst's explicit approval for its
         // active stages; per-asset scope is still enforced by the in-scope filter
         // below, so an out-of-scope resolved IP is never handed to an active tool.
-        // OSINT stages run on an identifier subject, never on a workspace host.
-        if capability.is_osint() {
+        // Identifier OSINT stages run on an identifier subject, never on a workspace
+        // host; Domain OSINT requires the in-scope domain and a passive provider.
+        if capability.is_identifier_osint() {
             crate::scope::authorize_osint_subject(target.target_type, metadata.risk_class, true)?;
+        } else if capability == Capability::DomainOsint {
+            crate::scope::authorize_domain_osint(
+                &scope,
+                &target.normalized_value,
+                metadata.risk_class,
+            )?;
         } else {
             crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
         }

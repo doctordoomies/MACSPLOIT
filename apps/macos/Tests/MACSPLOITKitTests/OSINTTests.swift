@@ -85,7 +85,14 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         #expect(OSINTMode.username.chainKind == "username_osint")
         #expect(OSINTMode.email.chainKind == "email_osint")
         #expect(OSINTMode.mode(forTargetType: "EmailAddress") == .email)
-        #expect(OSINTMode.mode(forTargetType: "Domain") == nil)
+        #expect(OSINTMode.mode(forTargetType: "Domain") == .domain)
+        #expect(OSINTMode.mode(forTargetType: "PhoneNumber") == .phone)
+        #expect(OSINTMode.mode(forTargetType: "IPAddress") == nil)
+        #expect(OSINTMode.domain.compatibleTargets(snapshot.targets).map(\.id) == ["t-dom"])
+        #expect((OSINTMode.phone.chainKind, OSINTMode.phone.capability) == ("phone_osint", "PHONE_OSINT"))
+        #expect((OSINTMode.domain.chainKind, OSINTMode.domain.capability) == ("domain_osint", "DOMAIN_OSINT"))
+        #expect(OSINTMode.domain.riskLabel == "PASSIVE" && !OSINTMode.domain.reportsAccounts)
+        #expect(OSINTMode.chainNames.contains("Domain OSINT") && OSINTMode.chainNames.contains("Phone OSINT"))
         let unrelated = ProviderStatus(
             id: "nmap", name: "Nmap", description: "", version: "external", capabilities: ["PORT_DISCOVERY"],
             supportedTargetTypes: ["IPAddress"], riskClass: "ACTIVE", networkActivity: "NETWORK", offline: false,
@@ -174,6 +181,110 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
     }
 }
 
+/// A Domain OSINT run (native CT) after an earlier Subfinder recon run, plus a
+/// Phone OSINT run, shaped like the core's snapshot.
+let domainSnapshotJSON = #"""
+{
+  "workspace": {"id": "w", "name": "OSINT", "created_at": "t", "updated_at": "t", "scope": ["example.test", "*.example.test"]},
+  "targets": [
+    {"id": "t-dom", "workspace_id": "w", "original_value": "example.test", "normalized_value": "example.test", "target_type": "Domain", "created_at": "t", "asset_id": "a-dom"},
+    {"id": "t-tel", "workspace_id": "w", "original_value": "+1 202 555 0143", "normalized_value": "+12025550143", "target_type": "PhoneNumber", "created_at": "t", "asset_id": "a-tel"}
+  ],
+  "assets": [
+    {"id": "a-dom", "workspace_id": "w", "asset_type": "Domain", "canonical_identity": "example.test", "display_value": "example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-api", "workspace_id": "w", "asset_type": "Subdomain", "canonical_identity": "api.example.test", "display_value": "api.example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-old", "workspace_id": "w", "asset_type": "Subdomain", "canonical_identity": "old.example.test", "display_value": "old.example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-tel", "workspace_id": "w", "asset_type": "PhoneNumber", "canonical_identity": "+12025550143", "display_value": "+12025550143", "metadata": {"in_scope": false}, "first_seen": "t", "last_seen": "t"}
+  ],
+  "relationships": [],
+  "observations": [
+    {"id": "o-sf", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-sf", "evidence_id": "e-sf", "discovered_by": "Subfinder", "observed_value": "api.example.test", "timestamp": "t", "confidence": "CONFIRMED", "metadata": {"tool": "subfinder"}},
+    {"id": "o-sum", "workspace_id": "w", "asset_id": "a-dom", "source_asset_id": null, "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_run_summary", "provider": "native_ct", "subject": "example.test", "subject_kind": "domain", "historical": true, "partial": false,
+                  "counts": {"hosts": 2, "emails": 0, "ips": 0, "nameservers": 0, "dropped_out_of_domain": 1, "dropped_invalid": 0, "dropped_over_limit": 0},
+                  "note": "Certificate-transparency name: Historical; not proof."}},
+    {"id": "o-api", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "api.example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_domain_observation", "provider": "native_ct", "passive": true, "historical": true, "liveness": "unverified", "note": "n", "facts": {"certificates": 2, "wildcard": false}}},
+    {"id": "o-old", "workspace_id": "w", "asset_id": "a-old", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "old.example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_domain_observation", "provider": "native_ct", "passive": true, "historical": true, "liveness": "unverified", "note": "n", "facts": {"all_certificates_expired": true}}},
+    {"id": "o-tel", "workspace_id": "w", "asset_id": "a-tel", "source_asset_id": null, "provider_run_id": "p-tel", "evidence_id": "e-tel", "discovered_by": "PhoneInfoga", "observed_value": "+12025550143", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_run_summary", "provider": "phoneinfoga", "subject": "+12025550143", "subject_kind": "phone", "partial": true,
+                  "counts": {"sources_reported": 1, "source_errors": 1, "lines_malformed": 0},
+                  "sources": {"local": {"country": "US", "e164": "+12025550143"}},
+                  "errors": [{"source": "ovh", "reason": "country lookup failed"}], "identity_note": "Numbering metadata does not identify the subscriber."}}
+  ],
+  "chains": [
+    {"id": "c-recon", "workspace_id": "w", "target_id": "t-dom", "name": "Domain Recon", "status": "COMPLETED", "created_at": "t", "updated_at": "t", "error_code": null},
+    {"id": "c-ct", "workspace_id": "w", "target_id": "t-dom", "name": "Domain OSINT", "status": "COMPLETED", "created_at": "t", "updated_at": "t", "error_code": null},
+    {"id": "c-tel", "workspace_id": "w", "target_id": "t-tel", "name": "Phone OSINT", "status": "PARTIAL", "created_at": "t", "updated_at": "t", "error_code": null}
+  ],
+  "stages": [],
+  "tasks": [],
+  "provider_runs": [
+    {"id": "p-sf", "workspace_id": "w", "chain_id": "c-recon", "stage_id": "s", "provider_id": "subfinder", "provider_version": "2.6.6", "target": "example.test", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-sf", "exit_status": 0},
+    {"id": "p-ct", "workspace_id": "w", "chain_id": "c-ct", "stage_id": "s", "provider_id": "native_ct", "provider_version": "core 0.1.0", "target": "example.test", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-ct", "exit_status": 0},
+    {"id": "p-tel", "workspace_id": "w", "chain_id": "c-tel", "stage_id": "s", "provider_id": "phoneinfoga", "provider_version": "2.11.0", "target": "+12025550143", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-tel", "exit_status": 0}
+  ],
+  "evidence": [],
+  "events": [],
+  "last_sequence": 9
+}
+"""#
+
+@Suite struct OSINTDomainPhonePresentationTests {
+    func snapshot() throws -> Snapshot {
+        try CoreCoding.decoder().decode(Snapshot.self, from: Data(domainSnapshotJSON.utf8))
+    }
+
+    @Test func testDomainRunShowsPassiveHistoricalObservationsAndReusesSubfinderData() throws {
+        let snapshot = try snapshot()
+        #expect(snapshot.osintChains.map(\.id) == ["c-tel", "c-ct"])
+        let results = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: "c-ct"))
+        let summary = try #require(results.summary)
+        #expect(summary.subjectKind == "domain" && summary.hosts == 2 && summary.droppedOutOfDomain == 1)
+        #expect(summary.historical && summary.identityNote.contains("Historical"))
+        #expect(results.accounts.isEmpty)
+        #expect(results.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
+        let api = try #require(results.domainResults.first)
+        #expect(api.assetType == "Subdomain" && api.historical && api.inScope == true)
+        #expect(api.confidence == "REPORTED" && api.provider == "native_ct")
+        // The earlier Subfinder observation of the same canonical asset is surfaced,
+        // not re-collected.
+        #expect(api.alsoObservedBy == ["Subfinder"])
+        #expect(api.facts.contains(OSINTProfileField(key: "certificates", value: "2")))
+        #expect(results.domainResults[1].facts == [OSINTProfileField(key: "all_certificates_expired", value: "true")])
+    }
+
+    @Test func testPhoneRunShowsNumberingFactsAndSourceErrors() throws {
+        let results = try #require(OSINTRunResults.make(snapshot: try snapshot(), chainId: "c-tel"))
+        #expect(results.state == .partial)
+        let summary = try #require(results.summary)
+        #expect(summary.subjectKind == "phone")
+        #expect(summary.details.contains(OSINTProfileField(key: "local.country", value: "US")))
+        #expect(summary.errors.first?.platform == "ovh")
+        #expect(summary.identityNote.contains("does not identify"))
+        #expect(results.domainResults.isEmpty && results.accounts.isEmpty)
+    }
+
+    @Test func testRegistrationFactsFlattenWithoutContacts() {
+        let value: JSONValue = .object([
+            "kind": .string("osint_run_summary"), "subject_kind": .string("domain"),
+            "registration": .object([
+                "found": .bool(true), "status": .array([.string("active"), .string("client hold")]),
+                "registrar": .object(["name": .string("Example Registrar"), "iana_id": .string("9999")]),
+                "events": .array([.object(["action": .string("registration"), "date": .string("2001-02-03")])]),
+                "entity_roles": .object(["registrant": .number(1)]),
+            ]),
+        ])
+        let summary = OSINTRunSummary(value)
+        let keys = summary?.details.map(\.key) ?? []
+        #expect(keys.contains("registration.registrar.name"))
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.status", value: "active, client hold")) == true)
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.events[0]", value: "registration · 2001-02-03")) == true)
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.entity_roles.registrant", value: "1")) == true)
+    }
+}
+
 /// Records chain starts/cancels; returns the OSINT snapshot.
 actor OSINTAPI: CoreAPI {
     private(set) var started: [(target: String, chain: String, options: JSONValue)] = []
@@ -256,6 +367,26 @@ actor OSINTAPI: CoreAPI {
         let none = WorkspaceModel(client: OSINTAPI(providers: []))
         await none.boot()
         #expect(none.osintRunBlocker?.contains("No registered provider") == true)
+    }
+
+    @Test func testDomainModeStartsDomainOSINTWithTheSelectedPassiveProvider() async {
+        let ct = ProviderStatus(
+            id: "native_ct", name: "Certificate Transparency (crt.sh)", description: "", version: "built-in",
+            capabilities: ["DOMAIN_OSINT"], supportedTargetTypes: ["Domain"], riskClass: "PASSIVE",
+            networkActivity: "NETWORK", offline: false,
+            installation: ProviderInstallation(state: "BUILT_IN", path: nil, version: nil, message: nil), setup: nil, install: nil)
+        let api = OSINTAPI(providers: [osintProviderStatus(), ct])
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        model.osintMode = .domain
+        #expect(model.osintTarget?.id == "t-dom")
+        #expect(model.osintProviders.map(\.id) == ["native_ct"])
+        #expect(model.osintRunBlocker == nil)
+        await model.runOSINT()
+        let started = await api.started
+        #expect(started.first?.chain == "domain_osint")
+        #expect(started.first?.target == "t-dom")
+        #expect(started.first?.options["provider_id"].string == "native_ct")
     }
 
     @Test func testRestoredWorkspaceSelectsLatestOSINTRun() async {

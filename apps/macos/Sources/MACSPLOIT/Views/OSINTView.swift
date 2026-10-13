@@ -12,13 +12,13 @@ struct OSINTView: View {
     var body: some View {
         WorkbenchPage(maxWidth: 1200) {
             VStack(alignment: .leading, spacing: 22) {
-                PageHeading(title: "OSINT", subtitle: "Public-source research on one explicitly selected username or email. One bounded scan per Run — nothing starts automatically.")
+                PageHeading(title: "OSINT", subtitle: "Public-source research on one explicitly selected username, email, phone number, or in-scope domain. One bounded scan per Run — nothing starts automatically.")
                 Picker("Workflow", selection: $model.osintMode) {
                     ForEach(OSINTMode.allCases) { Label($0.rawValue, systemImage: $0.icon).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 420)
+                .frame(maxWidth: 680)
                 executionPanel
                 if let results = model.osintResults {
                     resultsPanel(results)
@@ -42,7 +42,7 @@ struct OSINTView: View {
                         Text(model.osintMode.purpose).font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    RiskBadge(risk: "ACTIVE · LOW")
+                    RiskBadge(risk: model.osintMode.riskLabel)
                 }
                 targetRow
                 providerRow
@@ -125,7 +125,7 @@ struct OSINTView: View {
     private var activityNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "network").foregroundStyle(.secondary)
-            Text("Sends ordinary requests to third-party public platforms — never to the subject's own systems — so workspace host scope does not apply to an identifier. Modules that can notify the subject, recursive cross-scanning, breach/infostealer lookups, and proxies are disabled. Runs are bounded (concurrency, request timeout, 15-minute limit) and cancellable.")
+            Text(model.osintMode.activityNote)
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -152,8 +152,18 @@ struct OSINTView: View {
                     }
                 }
                 stageList(results.stages)
-                if let summary = results.summary { summaryView(summary) }
-                accountList(results)
+                if let summary = results.summary {
+                    switch summary.subjectKind {
+                    case "domain": domainSummaryView(summary)
+                    case "phone": factsSummaryView(summary)
+                    default: summaryView(summary)
+                    }
+                }
+                if results.chain.name == OSINTMode.domain.rawValue {
+                    domainList(results)
+                } else if OSINTMode(rawValue: results.chain.name)?.reportsAccounts ?? true {
+                    accountList(results)
+                }
                 HStack {
                     Spacer()
                     Button("View assets") { model.section = .assets }.controlSize(.small)
@@ -205,6 +215,102 @@ struct OSINTView: View {
             if !summary.errors.isEmpty { noteList("Errors (\(summary.error))", summary.errors) }
             if !summary.blockedChecks.isEmpty { noteList("Blocked by policy (\(summary.blocked))", summary.blockedChecks) }
             if !summary.unknownChecks.isEmpty { noteList("Unknown status (\(summary.unknown))", summary.unknownChecks) }
+        }
+    }
+
+    @ViewBuilder private func domainSummaryView(_ summary: OSINTRunSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                countTile("Hosts", summary.hosts, "server.rack", .green)
+                countTile("Emails", summary.emails, "envelope", .secondary)
+                countTile("Passive IPs", summary.ips, "number", .secondary)
+                countTile("Nameservers", summary.nameservers, "point.3.connected.trianglepath.dotted", .secondary)
+            }
+            if summary.droppedOutOfDomain + summary.droppedInvalid + summary.droppedOverLimit > 0 {
+                Text("Not kept: \(summary.droppedOutOfDomain) outside the domain, \(summary.droppedInvalid) invalid, \(summary.droppedOverLimit) over the per-run limit.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !summary.identityNote.isEmpty {
+                Label(summary.identityNote, systemImage: summary.historical ? "clock.arrow.circlepath" : "eye.slash")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !summary.details.isEmpty { detailList("Registration (RDAP)", summary.details) }
+        }
+    }
+
+    @ViewBuilder private func factsSummaryView(_ summary: OSINTRunSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if summary.details.isEmpty {
+                Text("No numbering facts were reported.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                detailList("Reported numbering facts", summary.details)
+            }
+            if !summary.identityNote.isEmpty {
+                Label(summary.identityNote, systemImage: "person.crop.circle.badge.questionmark").font(.caption).foregroundStyle(.secondary)
+            }
+            if !summary.errors.isEmpty { noteList("Source errors", summary.errors) }
+        }
+    }
+
+    private func detailList(_ title: String, _ fields: [OSINTProfileField]) -> some View {
+        DisclosureGroup("\(title) (\(fields.count))") {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(fields) { field in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(field.key).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 220, alignment: .leading)
+                        Text(field.value).font(.caption).textSelection(.enabled)
+                    }
+                }
+            }.padding(.top, 4)
+        }
+        .font(.callout)
+    }
+
+    @ViewBuilder private func domainList(_ results: OSINTRunResults) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Passive observations · \(results.domainResults.count)").font(.headline)
+            if results.domainResults.isEmpty {
+                Text(results.state == .running ? "Results appear when the lookup finishes." : "Nothing was reported in this run.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(results.domainResults) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(item.assetType).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 96, alignment: .leading)
+                        // Untrusted public-source value: shown and selectable, never opened or probed.
+                        Text(item.value).font(.callout.monospaced()).textSelection(.enabled)
+                        if item.historical {
+                            Text("historical").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.gray.opacity(0.16), in: Capsule())
+                                .help("Certificate-transparency name: a certificate once named this host. Not proof it exists or is live.")
+                        }
+                        if item.inScope == false {
+                            Text("out of scope").font(.caption2).foregroundStyle(.orange)
+                        }
+                        Text(item.confidence).font(.system(.caption2, design: .monospaced))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.gray.opacity(0.16), in: Capsule())
+                            .help("REPORTED: a public source reported this; MACSPLOIT did not resolve, probe, or verify it.")
+                        Spacer()
+                        Button("Asset") { model.selectedAssetId = item.assetId; model.section = .assets }
+                            .buttonStyle(.link)
+                        if let evidence = item.evidenceId {
+                            Button("Evidence") { model.showEvidence(evidence) }.buttonStyle(.link)
+                        }
+                    }
+                    if !item.alsoObservedBy.isEmpty {
+                        Text("Also observed by: \(item.alsoObservedBy.joined(separator: ", "))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !item.facts.isEmpty {
+                        Text(item.facts.map { "\($0.key): \($0.value)" }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
 

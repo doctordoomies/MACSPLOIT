@@ -448,4 +448,67 @@ import Testing
         #expect(restored.accounts == results.accounts)
         #expect(restored.summary == results.summary)
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_THEHARVESTER"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_PHONEINFOGA"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_WEB_FIXTURE"] != nil))
+    func testDomainAndPhoneOSINTThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-osint-domain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        let providers = try await client.listProviders()
+        #expect(OSINTMode.domain.compatibleProviders(providers).map(\.id).sorted() == ["native_ct", "native_rdap", "theharvester"])
+        #expect(OSINTMode.phone.compatibleProviders(providers).map(\.id) == ["phoneinfoga"])
+        let harvester = try #require(providers.first { $0.id == "theharvester" })
+        #expect(harvester.installation.isInstalled && harvester.installation.version == "4.11.1")
+        #expect(harvester.riskClass == "PASSIVE")
+
+        func finish(_ workspace: String, _ chain: String) async throws -> Snapshot {
+            let deadline = Date().addingTimeInterval(20)
+            while Date() < deadline {
+                let snapshot = try await client.snapshot(workspace: workspace)
+                if let run = snapshot.chains.first(where: { $0.id == chain }), !run.isRunning { return snapshot }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            throw CancellationError()
+        }
+
+        let workspace = try await client.createWorkspace(name: "Domain OSINT bridge test", scope: ["example.test", "*.example.test"])
+        let domain = try await client.addTarget(workspace: workspace.id, value: "example.test")
+        let harvested = try await client.startChain(workspace: workspace.id, target: domain.id, chain: "domain_osint",
+                                                    options: .object(["provider_id": .string("theharvester")]))
+        _ = try await finish(workspace.id, harvested.id)
+        let ct = try await client.startChain(workspace: workspace.id, target: domain.id, chain: "domain_osint",
+                                             options: .object(["provider_id": .string("native_ct")]))
+        let snapshot = try await finish(workspace.id, ct.id)
+        let ctResults = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: ct.id))
+        #expect(ctResults.state == .completed)
+        #expect(ctResults.summary?.subjectKind == "domain")
+        #expect(ctResults.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
+        // api.example.test is one canonical asset also observed by theHarvester.
+        #expect(ctResults.domainResults.first?.alsoObservedBy == ["theHarvester"])
+        #expect(snapshot.assets.filter { $0.canonicalIdentity == "api.example.test" }.count == 1)
+        #expect(snapshot.relationships.contains { $0.relationshipType == "has_email" })
+        #expect(!snapshot.relationships.contains { $0.relationshipType == "resolves_to" })
+
+        // Out-of-scope domains are refused by the core.
+        let outside = try await client.addTarget(workspace: workspace.id, value: "other.test")
+        await #expect(throws: (any Error).self) {
+            _ = try await client.startChain(workspace: workspace.id, target: outside.id, chain: "domain_osint", options: .object([:]))
+        }
+
+        let phone = try await client.addTarget(workspace: workspace.id, value: "+1 202 555 0143")
+        #expect(phone.targetType == "PhoneNumber" && phone.normalizedValue == "+12025550143")
+        let call = try await client.startChain(workspace: workspace.id, target: phone.id, chain: "phone_osint", options: .object([:]))
+        let phoneSnapshot = try await finish(workspace.id, call.id)
+        let phoneResults = try #require(OSINTRunResults.make(snapshot: phoneSnapshot, chainId: call.id))
+        #expect(phoneResults.state == .partial)
+        #expect(phoneResults.summary?.details.contains(OSINTProfileField(key: "local.country", value: "US")) == true)
+    }
 }

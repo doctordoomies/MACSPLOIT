@@ -301,6 +301,7 @@ mod tests {
             ),
             ("email_osint", crate::orchestration::ChainKind::EmailOsint),
             ("phone_osint", crate::orchestration::ChainKind::PhoneOsint),
+            ("domain_osint", crate::orchestration::ChainKind::DomainOsint),
         ] {
             let request: Request = serde_json::from_value(
                 json!({"protocol_version":1,"request_id":"osint","method":"start_chain","params":{

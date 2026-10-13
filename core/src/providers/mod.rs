@@ -24,6 +24,13 @@ pub use sherlock::SherlockProvider;
 pub use socialscan::SocialscanProvider;
 mod phoneinfoga;
 pub use phoneinfoga::PhoneInfogaProvider;
+mod native_ct;
+mod native_rdap;
+mod passive_web;
+mod theharvester;
+pub use native_ct::NativeCtProvider;
+pub use native_rdap::NativeRdapProvider;
+pub use theharvester::TheHarvesterProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -60,12 +67,22 @@ pub enum Capability {
     EmailOsint,
     /// OSINT: public numbering metadata for an explicit international PhoneNumber.
     PhoneOsint,
+    /// OSINT: passive public-infrastructure records (registration data, certificate
+    /// transparency, public search/passive-DNS sources) for an explicit in-scope
+    /// Domain. Never resolves, probes, or brute-forces discovered hosts.
+    DomainOsint,
 }
 
 impl Capability {
-    /// OSINT capabilities operate on an identifier subject (username/email), not a
-    /// workspace host, and query third-party public platforms chosen by the provider.
+    /// OSINT capabilities query third-party public sources chosen by the provider.
+    /// Identifier OSINT (username/email/phone) runs on an identifier subject;
+    /// Domain OSINT runs on an in-scope Domain (see [`Capability::is_identifier_osint`]).
     pub fn is_osint(self) -> bool {
+        self.is_identifier_osint() || self == Self::DomainOsint
+    }
+
+    /// OSINT on an identifier subject (not a workspace host).
+    pub fn is_identifier_osint(self) -> bool {
         matches!(
             self,
             Self::UsernameOsint | Self::EmailOsint | Self::PhoneOsint
@@ -247,13 +264,16 @@ impl ProviderRegistry {
                 Arc::new(NmapProvider),
                 Arc::new(HttpxProvider),
                 Arc::new(KatanaProvider),
-                Arc::new(NativeHttpProvider::new(web)),
+                Arc::new(NativeHttpProvider::new(web.clone())),
                 Arc::new(FfufProvider),
                 Arc::new(UserScannerProvider),
                 Arc::new(SherlockProvider),
                 Arc::new(MaigretProvider),
                 Arc::new(SocialscanProvider),
                 Arc::new(PhoneInfogaProvider),
+                Arc::new(NativeCtProvider::new(web.clone())),
+                Arc::new(NativeRdapProvider::new(web)),
+                Arc::new(TheHarvesterProvider),
             ],
         }
     }
@@ -499,7 +519,8 @@ impl Provider for SyntheticDiscoveryProvider {
             | Capability::ContentDiscovery
             | Capability::UsernameOsint
             | Capability::EmailOsint
-            | Capability::PhoneOsint => {}
+            | Capability::PhoneOsint
+            | Capability::DomainOsint => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()

@@ -31,5 +31,10 @@
     "status": 200,
     "headers": { "Content-Type": "text/plain" },
     "body": "User-agent: *\nDisallow: /admin\n"
+  },
+  "https://crt.sh/?q=%25.example.test&output=json": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "body": "[{\"id\": 11, \"issuer_name\": \"C=US, O=Example CA\", \"common_name\": \"api.example.test\", \"name_value\": \"api.example.test\\n*.example.test\", \"not_before\": \"2025-01-01T00:00:00\", \"not_after\": \"2099-01-01T00:00:00\"}, {\"id\": 12, \"issuer_name\": \"C=US, O=Example CA\", \"common_name\": \"old.example.test\", \"name_value\": \"old.example.test\", \"not_before\": \"2018-01-01T00:00:00\", \"not_after\": \"2019-01-01T00:00:00\"}]"
   }
 }

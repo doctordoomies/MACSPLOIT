@@ -89,6 +89,10 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_PHONEINFOGA") {
             overrides.insert("phoneinfoga".to_owned(), PathBuf::from(path));
         }
+        // OSINT domain: theHarvester.
+        if let Some(path) = std::env::var_os("MACSPLOIT_THEHARVESTER") {
+            overrides.insert("theHarvester".to_owned(), PathBuf::from(path));
+        }
         // Homebrew executable override (tests inject a fake brew; advanced users may pin).
         if let Some(path) = std::env::var_os("MACSPLOIT_BREW") {
             overrides.insert("brew".to_owned(), PathBuf::from(path));

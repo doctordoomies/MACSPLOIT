@@ -47,6 +47,14 @@ pub enum RelationshipType {
     HasAccount,
     /// OSINT: an Account's public profile URL as reported by the provider.
     ProfileUrl,
+    /// Domain OSINT: a public source reported this email address for the domain
+    /// (e.g. theHarvester). A passive claim; the mailbox was never contacted.
+    HasEmail,
+    /// Domain OSINT: the registry's RDAP record lists this host as a nameserver.
+    HasNameserver,
+    /// Domain OSINT: a passive source (e.g. historical passive DNS) associated this
+    /// IP with the host. Unlike `resolves_to`, MACSPLOIT did not resolve it.
+    ObservedIp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

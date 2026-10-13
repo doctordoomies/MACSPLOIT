@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashSet};
 
+pub mod domain;
+
 /// Maximum upstream records considered from one run (the rest are counted as dropped).
 pub const MAX_RECORDS: usize = 5000;
 /// Maximum positive results normalized into Account assets from one run.
