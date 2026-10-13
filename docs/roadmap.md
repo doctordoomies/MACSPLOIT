@@ -712,7 +712,11 @@ Baseline:
 
 - user-scanner Email OSINT — merged via PR #60.
 
-Remaining focused provider wave:
+**Implementation in the M6 completion PR (owner acceptance pending):** socialscan Email
+support (with the upstream string-boolean fix). Holehe reviewed and **not integrated**
+(drives signup/reset flows — account interaction).
+
+Original focused provider wave:
 
 - Holehe;
 - socialscan Email support.
@@ -726,6 +730,10 @@ password, breach-secret, private-account, login, or evasion behavior.
 
 ## 6.3 Phone OSINT — Issue #65
 
+**Implementation in the M6 completion PR (owner acceptance pending):** PhoneInfoga 2.x
+with an explicit E.164 `PhoneNumber` target (no country guessing), `local` + OVH public
+number-range scanners only.
+
 Integrate PhoneInfoga, or a better-maintained reviewed equivalent if upstream review
 shows PhoneInfoga is unsuitable.
 
@@ -734,6 +742,11 @@ execution, structured parsing where available, evidence/provenance, restart pers
 and no automatic pivots or interaction with the phone/account.
 
 ## 6.4 Domain / Organization / public infrastructure OSINT — Issue #66
+
+**Implementation in the M6 completion PR (owner acceptance pending):** native
+certificate transparency, native RDAP, and theHarvester (passive source allow-list) on
+an in-scope domain; Subfinder data reused via the shared `Subdomain` asset type. OWASP
+Amass reviewed and **not integrated** (v5 has no enforceable passive-only mode).
 
 Add complementary passive/public-source providers:
 
@@ -748,6 +761,11 @@ Historical/passive observations must not be represented as proof that an endpoin
 currently live. Any API configuration remains explicit and optional.
 
 ## 6.5 Correlation, aggregator review, and final acceptance — Issue #67
+
+**Implementation portion in the M6 completion PR:** explicit evidence-backed correlation
+with review log, aggregator decision (SpiderFoot not integrated), acceptance and
+failure-semantics tests. **The owner OSINT walkthrough remains open**; #58 stays open
+until it is done.
 
 After #64–#66:
 
@@ -1176,10 +1194,10 @@ After the agent finishes:
 | Issue #22 / PR #60 — user-scanner Username + Email | Milestone 6 foundation/first slice — DONE; issue closed |
 | PR #63 — Sherlock + Maigret + socialscan Username | Milestone 6.1 — implementation DONE |
 | Issue #58 — OSINT framework and provider coverage completion | Milestone 6 — ACTIVE umbrella |
-| Issue #64 — Email OSINT completion | Milestone 6.2 — NEXT |
-| Issue #65 — Phone OSINT | Milestone 6.3 — QUEUED |
-| Issue #66 — Domain/Public-Infrastructure OSINT | Milestone 6.4 — QUEUED |
-| Issue #67 — correlation + aggregator review + OSINT owner acceptance | Milestone 6 exit gate |
+| Issue #64 — Email OSINT completion | Milestone 6.2 — implementation in M6 completion PR; owner acceptance pending |
+| Issue #65 — Phone OSINT | Milestone 6.3 — implementation in M6 completion PR; owner acceptance pending |
+| Issue #66 — Domain/Public-Infrastructure OSINT | Milestone 6.4 — implementation in M6 completion PR; owner acceptance pending |
+| Issue #67 — correlation + aggregator review + OSINT owner acceptance | Milestone 6 exit gate — implementation portion in M6 completion PR; owner walkthrough pending |
 | Issue #68 — vulnerability scanning completion umbrella | Post-M6 vulnerability block — BLOCKED until #58 closes |
 | Bug bounty workspace/profile | Milestone 2 — broader product UI deferred behind vulnerability gate |
 | Findings foundation | Milestone 2 — only minimum scanner-required substrate advances under #68 |
@@ -1202,10 +1220,8 @@ near-term execution sequence:
 M6 OSINT — ACTIVE (#58)
     PR #60 foundation + user-scanner DONE
     PR #63 Username provider wave DONE
-    → #64 Email OSINT
-    → #65 Phone OSINT
-    → #66 Domain/Public Infrastructure OSINT
-    → #67 Correlation + aggregator review + owner acceptance
+    M6 completion PR: #64 Email, #65 Phone, #66 Domain, #67 implementation (in review)
+    → #67 owner acceptance walkthrough
             ↓
     CLOSE #58 / OWNER OSINT EXIT GATE
             ↓

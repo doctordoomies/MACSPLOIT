@@ -1,10 +1,12 @@
 # Providers
 
-Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, two
-built-in native providers (DNS, HTTP analysis), and six real external providers:
-Subfinder (passive), Nmap (active), HTTPX (active-low-impact), Katana
-(active-low-impact), ffuf (active content discovery), and user-scanner (OSINT,
-active-low-impact against third-party public platforms).
+Status: **IMPLEMENTED** internal Rust provider contract, one offline provider, four
+built-in native providers (DNS, HTTP analysis, and the passive OSINT clients for
+certificate transparency and RDAP), and real external providers: Subfinder (passive),
+Nmap (active), HTTPX (active-low-impact), Katana (active-low-impact), ffuf (active
+content discovery), and the OSINT providers user-scanner, Sherlock, Maigret, socialscan
+(active-low-impact against third-party public platforms), PhoneInfoga, and theHarvester
+(passive).
 
 The `Provider` trait separates `metadata`, `installation`, `execute`, and `parse`.
 Metadata exposes ID, name, description, version, capabilities, supported target
@@ -24,7 +26,7 @@ third-party plugin ABI.
 
 Implemented capabilities: SUBDOMAIN_DISCOVERY, DNS_RESOLUTION, PORT_DISCOVERY,
 SERVICE_FINGERPRINTING, HTTP_PROBING, WEB_CRAWLING, WEB_ANALYSIS, CONTENT_DISCOVERY,
-USERNAME_OSINT, EMAIL_OSINT. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
+USERNAME_OSINT, EMAIL_OSINT, PHONE_OSINT, DOMAIN_OSINT. Risk classes: PASSIVE, ACTIVE_LOW_IMPACT, ACTIVE,
 VALIDATION, LAB_ONLY. Passive and low-impact work runs on any in-scope target;
 full ACTIVE work (Nmap) is authorized by the analyst explicitly launching the
 chain and is still re-checked against per-asset scope before execution;
@@ -35,7 +37,9 @@ Email target), not on a workspace host: the provider queries third-party public
 platforms and never contacts subject-owned infrastructure, so host scope does not
 apply to the identifier. An OSINT run is authorized by the explicit target plus the
 explicit Run action, and only PASSIVE or ACTIVE_LOW_IMPACT OSINT providers may run
-(`scope::authorize_osint_subject`). See [OSINT](osint.md).
+(`scope::authorize_osint_subject`). DOMAIN_OSINT is the exception: the domain must be in
+workspace scope and only PASSIVE providers may run (`scope::authorize_domain_osint`).
+See [OSINT](osint.md).
 
 The URL-based web providers (KatanaProvider, NativeHttpProvider, FfufProvider) accept an
 explicitly scoped local/private URL target (`localhost`, loopback, `::1`, a private
@@ -406,6 +410,54 @@ enforced for Maigret), proxies/anti-blocking, NSFW opt-in, `--available-only`, f
 inputs, `--all-sites`/`--permute`. Full per-provider contract, status mapping, bounds,
 and the cross-provider dedup example: [OSINT](osint.md). Automated tests use
 `fixtures/fake-sherlock.sh`, `fixtures/fake-maigret.sh`, and `fixtures/fake-socialscan.sh`.
+
+Since Issue #64, **socialscan** also advertises EMAIL_OSINT (target type EmailAddress):
+`<email> --json <file> --show-urls --view-by platform`; registered → `Account`, not
+registered → counted, failed lookup → error (never "not registered"). Supported series
+`1.` and `2.` (upstream 2.0.1 emits `"True"`/`"False"` string booleans, which are
+accepted).
+
+## PhoneInfogaProvider
+
+Status: **BETA** (Milestone 6 / Issue #65). `phoneinfoga`, risk **PASSIVE**, network
+activity NETWORK, capability PHONE_OSINT, target type PhoneNumber (E.164; country never
+guessed). Setup `brew install phoneinfoga` (copy-only); override `MACSPLOIT_PHONEINFOGA`.
+Version from `phoneinfoga version` (series `2.`, verified 2.11.0). Argv
+`scan --number=<E.164> --disable=numverify --disable=googlecse --disable=googlesearch`;
+strict console-renderer parser (no JSON in the `scan` CLI); 120 s; stdout 256 KiB.
+Tests: `fixtures/fake-phoneinfoga.sh`.
+
+## NativeCtProvider / NativeRdapProvider
+
+Status: **BETA** (Milestone 6 / Issue #66). Built-in (`native_ct`, `native_rdap`), risk
+**PASSIVE**, network activity NETWORK, capability DOMAIN_OSINT, target type Domain, run
+only on an in-scope domain. Both use the shared `WebTransport::fetch_bounded` (hard body
+caps with truncation detection, deadline, cancellation, no transport-level redirects)
+and `providers::passive_web` (request log as stdout, raw bodies as chunked evidence, a
+transport error/timeout/cancel still produces an execution with evidence).
+
+- **CT:** `https://crt.sh/?q=%25.<domain>&output=json`; 90 s; 4 MiB; 20,000 records;
+  historical host observations with wildcard flag and certificate window.
+- **RDAP:** IANA DNS bootstrap → registry `domain/<name>`; 60 s; 512 KiB / 1 MiB;
+  ≤2 redirects to bootstrap-listed https hosts only; minimized registration facts;
+  `has_nameserver` relationships.
+
+Tests use `StaticWebTransport` (and `MACSPLOIT_WEB_FIXTURE` for the bridge test).
+
+## TheHarvesterProvider
+
+Status: **BETA** (Milestone 6 / Issue #66). `theharvester`, risk **PASSIVE**, capability
+DOMAIN_OSINT, target type Domain. Executable `theHarvester` (override
+`MACSPLOIT_THEHARVESTER`); setup `brew install theharvester` (copy-only); version from
+the `-h` banner, series `4.10.`/`4.11.` (verified 4.11.1). Fixed argv with a key-less
+passive source allow-list, `-l 500 -q -f report` in a private directory; never DNS
+resolve/lookup/brute force, takeover, Shodan, screenshots, API scans, proxies, vhost, or
+breach sources; 300 s; `report.json` ≤1 MiB captured as evidence. Hosts, `host:ip`
+pairs (`observed_ip`), and in-domain emails (`has_email`) are kept; people/URLs only
+counted. Tests: `fixtures/fake-theharvester.sh` (refuses every prohibited option).
+
+Not integrated after review: Holehe, OWASP Amass, SpiderFoot — see
+[OSINT correlation](osint-correlation.md#aggregator-review-and-decision).
 
 ## Next adapter boundary
 

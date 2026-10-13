@@ -7,6 +7,30 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **M6 OSINT provider coverage and correlation (#58; #64, #65, #66, implementation
+  portion of #67) — owner acceptance pending:**
+  - *Email (#64):* socialscan now supports Email OSINT (registered / not registered /
+    failed lookup kept distinct) and accepts upstream 2.x, including its
+    `"True"`/`"False"` string booleans (previously every such record would have been
+    an error and 2.x reported unsupported). Holehe reviewed and not integrated.
+  - *Phone (#65):* `PhoneNumber` target/asset (strict E.164, `+` required, no country
+    guessing) and a PhoneInfoga 2.x provider limited to the offline `local` and OVH
+    public number-range scanners, parsed with a strict console grammar.
+  - *Domain (#66):* `domain_osint` chain on in-scope domains with PASSIVE providers
+    only: built-in certificate transparency (crt.sh) and RDAP (IANA bootstrap,
+    allow-listed redirects, minimized registration facts) over a new bounded
+    `fetch_bounded` transport, and theHarvester 4.10/4.11 with a fixed key-less
+    passive source allow-list. Hosts share Subfinder's `Subdomain` type; new
+    `has_email`, `has_nameserver`, and `observed_ip` relationships (migration 006).
+    OWASP Amass reviewed and not integrated.
+  - *Correlation (#67):* explicit, evidence-backed, reviewable correlations with an
+    append-only review log (migration 007; `propose_correlation`,
+    `review_correlation`, `snapshot.correlations`); never merges assets. SpiderFoot
+    reviewed and not integrated. Four-workflow acceptance, restart, and
+    failure-semantics tests.
+  - OSINT view gains Phone and Domain workflows, domain observation provenance, and
+    correlation review controls (functional changes only). All tests offline.
+
 - **Username OSINT provider wave: Sherlock, Maigret, socialscan (M6 / #58):** three
   username-only OSINT providers on the existing typed contract, each an evidence-first,
   bounded, shell-free, cancellable run selectable per OSINT run alongside user-scanner.

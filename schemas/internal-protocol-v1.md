@@ -34,7 +34,7 @@ empty request ID; an oversized frame closes the helper session.
 | snapshot | workspace_id | Consistent graph, runs, evidence metadata, recent events, cursor |
 | chain_results | workspace_id, chain_id | Read-only durable reconstruction of one Recon Chain: chain/target/stages/provider runs, scoped assets + Observations (including per-run metadata), relationship observations/provenance, and Evidence metadata. No raw Evidence body; no timestamp-only ownership inference. |
 | events_after | workspace_id, after | Up to 256 ascending events, sequence strictly greater than after |
-| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, `content_discovery`, `username_osint`, or `email_osint`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`; OSINT chains accept `{"provider_id": "..."}`) | Pending chain; execution occurs on worker |
+| start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, `content_discovery`, `username_osint`, `email_osint`, `phone_osint`, or `domain_osint`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`; OSINT chains accept `{"provider_id": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
 | list_providers | none | Provider metadata, live installation status (state/version), and `install` (reviewed method availability: `homebrew`, `managed_download`, `official_installer_url?`) |
@@ -100,6 +100,16 @@ provider reports incomplete results. `ProviderResults` event payloads may includ
 `error_code`/`message`. Evidence envelopes may include `cancelled` and `artifacts`
 (name, observed size, over-limit flag, and the evidence id/SHA-256 of a separately
 stored structured report). Older clients ignore all new fields; no version bump.
+
+M6 completion adds `phone_osint` (PhoneNumber target, E.164) and `domain_osint` (Domain
+target that must be in workspace scope; `PASSIVE` providers only — otherwise
+`ScopeViolation`), capability values `PHONE_OSINT` and `DOMAIN_OSINT`, asset type
+`PhoneNumber`, and relationship types `has_email`, `has_nameserver`, and `observed_ip`.
+Domain OSINT run summaries use `subject_kind: "domain"` with host/email/IP/nameserver
+counts (RDAP adds a minimized `registration` object); their per-asset observations use
+`kind: "osint_domain_observation"` with `passive`, `historical`, `liveness:
+"unverified"`, and bounded `facts`. Phone run summaries use `subject_kind: "phone"` with
+per-source `sources` facts and `errors`.
 
 ### Correlation additions (v1 compatible, Issue #67)
 
