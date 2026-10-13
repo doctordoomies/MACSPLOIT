@@ -94,6 +94,42 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         #expect(providerLabel("USERNAME_OSINT") == "Username OSINT")
     }
 
+    @Test func testUsernameWaveProvidersDecodeAndAreOfferedByThePicker() throws {
+        // A list_providers reply including the whole username wave decodes, and the
+        // Username workflow offers every compatible provider (the picker is dynamic;
+        // readiness is carried per provider so a missing one still appears).
+        let json = #"""
+        {"result":[
+          {"id":"sherlock","name":"Sherlock","description":"Username OSINT","version":"external",
+           "capabilities":["USERNAME_OSINT"],"supported_target_types":["Username"],"risk_class":"ACTIVE_LOW_IMPACT",
+           "network_activity":"NETWORK","offline":false,"installation":{"state":"MISSING"},
+           "setup":{"install_command":"pipx install sherlock-project","homepage":"https://github.com/sherlock-project/sherlock","documentation":null},
+           "install":{"homebrew":false,"managed_download":false}},
+          {"id":"maigret","name":"Maigret","description":"Username OSINT","version":"external",
+           "capabilities":["USERNAME_OSINT"],"supported_target_types":["Username"],"risk_class":"ACTIVE_LOW_IMPACT",
+           "network_activity":"NETWORK","offline":false,"installation":{"state":"INSTALLED","version":"0.5.0"},
+           "setup":{"install_command":"pipx install maigret","homepage":"https://github.com/soxoj/maigret","documentation":null},
+           "install":{"homebrew":false,"managed_download":false}},
+          {"id":"socialscan","name":"socialscan","description":"Username OSINT","version":"external",
+           "capabilities":["USERNAME_OSINT"],"supported_target_types":["Username"],"risk_class":"ACTIVE_LOW_IMPACT",
+           "network_activity":"NETWORK","offline":false,"installation":{"state":"MISSING"},
+           "setup":{"install_command":"pip install socialscan","homepage":"https://github.com/iojw/socialscan","documentation":null},
+           "install":{"homebrew":false,"managed_download":false}}
+        ]}
+        """#
+        struct Reply: Decodable { let result: [ProviderStatus] }
+        let providers = try CoreCoding.decoder().decode(Reply.self, from: Data(json.utf8)).result
+            + [osintProviderStatus()]
+        let offered = OSINTMode.username.compatibleProviders(providers).map(\.id).sorted()
+        #expect(offered == ["maigret", "sherlock", "socialscan", "user_scanner"])
+        // Username-only providers never appear under the Email workflow.
+        #expect(OSINTMode.email.compatibleProviders(providers).map(\.id) == ["user_scanner"])
+        // Readiness is independent of listing (a missing provider still appears).
+        let sherlock = try #require(providers.first { $0.id == "sherlock" })
+        #expect(sherlock.installation.state == "MISSING")
+        #expect(sherlock.managedDownloadSupported == false && sherlock.homebrewSupported == false)
+    }
+
     @Test func testRunResultsExposeSummaryAccountsEvidenceAndPartialState() throws {
         let snapshot = try osintSnapshot()
         #expect(snapshot.osintChains.map(\.id) == ["c1"])
