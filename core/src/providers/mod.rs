@@ -131,6 +131,13 @@ pub struct ProviderInstallInfo {
     pub homebrew: bool,
     /// A verified app-managed direct download is available (false for Nmap).
     pub managed_download: bool,
+    /// An app-managed Python install (pinned `uv` runtime) is available.
+    #[serde(default)]
+    pub managed_python: bool,
+    /// Any app-managed method is available — what the "Install with MACSPLOIT" action
+    /// performs. The core resolves the concrete method.
+    #[serde(default)]
+    pub managed: bool,
     /// The provider's official installer/download page, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub official_installer_url: Option<String>,
@@ -396,6 +403,9 @@ impl ProviderRegistry {
                     Some(opts) => ProviderInstallInfo {
                         homebrew: opts.homebrew_formula.is_some(),
                         managed_download: opts.managed_download_supported,
+                        managed_python: crate::install::manifest::python_package(&metadata.id)
+                            .is_some(),
+                        managed: crate::install::managed_method(&metadata.id).is_some(),
                         official_installer_url: opts.official_installer_url.map(str::to_owned),
                     },
                     None => ProviderInstallInfo::default(),

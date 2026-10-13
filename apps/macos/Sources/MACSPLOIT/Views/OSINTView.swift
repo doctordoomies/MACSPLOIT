@@ -145,15 +145,39 @@ struct OSINTView: View {
                     .controlSize(.small).disabled(model.isRefreshingProviders)
                 Button("Provider Center") { model.section = .toolManager }.controlSize(.small)
             }
-            if let provider = model.effectiveOSINTProvider, !provider.installation.isAvailable,
-               let command = provider.setup?.installCommand {
-                HStack(spacing: 8) {
-                    Text("Install it yourself, then Refresh:").font(.caption).foregroundStyle(.secondary)
-                    Text(command).font(.caption.monospaced()).textSelection(.enabled)
-                    Button("Copy") { copy(command) }.controlSize(.small)
-                }
-                .padding(.leading, 102)
+            if let provider = model.effectiveOSINTProvider, !provider.installation.isAvailable {
+                installActions(provider)
+                InstallConsoleView(model: model, providerId: provider.id, providerName: provider.name)
             }
+        }
+    }
+
+    /// Actionable, in-app install for a missing OSINT provider — the same typed,
+    /// reviewed install plans as Provider Center (no raw pip/pipx as the primary path).
+    @ViewBuilder private func installActions(_ provider: ProviderStatus) -> some View {
+        let anyRunning = model.installState?.running != nil
+        let installingHere = model.installState?.running?.providerId == provider.id
+        if !installingHere {
+            HStack(spacing: 8) {
+                if provider.macsploitManagedSupported {
+                    Button { Task { await model.installProvider(provider.id, method: "managed") } } label: {
+                        Label("Install with MACSPLOIT", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(!model.isConnected || anyRunning)
+                }
+                if provider.homebrewSupported {
+                    Button { Task { await model.installProvider(provider.id, method: "homebrew") } } label: {
+                        Label("Install with Homebrew", systemImage: "shippingbox")
+                    }
+                    .controlSize(.small).disabled(!model.isConnected || anyRunning)
+                }
+                if let urlString = provider.install?.officialInstallerUrl, let url = URL(string: urlString) {
+                    Link(destination: url) { Label("Official Installer", systemImage: "arrow.up.forward.app") }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.leading, 102)
         }
     }
 

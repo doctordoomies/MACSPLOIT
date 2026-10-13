@@ -244,6 +244,53 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_UV"] != nil))
+    func testManagedPythonInstallWithMacsploitThroughBridgeOffline() async throws {
+        // "Install with MACSPLOIT" for a Python provider over the pipe, using the offline
+        // fake uv (MACSPLOIT_UV). Verifies the typed install plan streams events to the
+        // Install Console, succeeds without pip/pipx/Homebrew/network, and rediscovers the
+        // provider so Run becomes available — the #72 acceptance flow.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-pyinstall-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        // sherlock offers the app-managed method (the harness also pins a fake
+        // executable override, so its discovered state is not asserted here — the
+        // offline core integration test covers missing→installed rediscovery).
+        let before = try await client.listProviders().first { $0.id == "sherlock" }
+        #expect(before?.macsploitManagedSupported == true)
+
+        // "Install with MACSPLOIT" → the core resolves the managed Python method.
+        try await client.startInstall(provider: "sherlock", method: "managed")
+        var last: InstallOutcome?
+        var sawCommand = false, sawReady = false
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            let state = try await client.installStatus()
+            for event in state.events ?? [] {
+                if event.kind == "COMMAND" && event.text.contains("tool install") { sawCommand = true }
+                if event.kind == "STAGE" && event.text == "READY" { sawReady = true }
+            }
+            if let outcome = state.last, outcome.providerId == "sherlock" { last = outcome; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(last?.status == "SUCCEEDED")
+        #expect(last?.method == "managed_python")
+        #expect(sawCommand && sawReady)
+        // The console script landed under MACSPLOIT's own managed Python bin directory,
+        // installed by the pinned uv runtime — no pip/pipx/Homebrew/network involved.
+        let script = directory.appendingPathComponent("Providers/python-bin/sherlock")
+        #expect(FileManager.default.fileExists(atPath: script.path))
+        // It is discoverable on MACSPLOIT's managed search path afterwards.
+        let after = try await client.listProviders().first { $0.id == "sherlock" }
+        #expect(after?.installation.isAvailable == true)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
     func testIpReconRunsNmapAndHttpxThroughBridgeOffline() async throws {

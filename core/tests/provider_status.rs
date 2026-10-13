@@ -71,12 +71,21 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
             .as_ref()
             .and_then(|s| s.install_command.clone())
             .unwrap_or_default();
-        // External OSINT providers are pinned absent above: Missing, with copy-only
-        // setup guidance and no in-app (brew/managed) install route.
+        // External OSINT providers are pinned absent above → Missing. Their install
+        // affordances reflect the reviewed matrix exactly: the `managed` flag matches
+        // whether the core offers an app-managed method (managed Python for the pip
+        // providers; none for phoneinfoga/theHarvester, which route to Homebrew/official).
         if is_osint(&status.metadata.id) {
             assert_eq!(status.installation, Installation::Missing);
-            assert!(!install_command.is_empty());
-            assert!(!status.install.homebrew && !status.install.managed_download);
+            let _ = install_command;
+            assert_eq!(
+                status.install.managed,
+                macsploit_core::install::managed_method(&status.metadata.id).is_some()
+            );
+            assert_eq!(
+                status.install.managed_python,
+                macsploit_core::install::manifest::python_package(&status.metadata.id).is_some()
+            );
             continue;
         }
         match status.installation {

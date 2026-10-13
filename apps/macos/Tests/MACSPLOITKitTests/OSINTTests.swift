@@ -64,7 +64,7 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         riskClass: "ACTIVE_LOW_IMPACT", networkActivity: "NETWORK", offline: false,
         installation: ProviderInstallation(state: state, path: nil, version: version, message: nil),
         setup: ProviderSetup(installCommand: "pipx install user-scanner", homepage: "https://github.com/kaifcodec/user-scanner", documentation: nil),
-        install: ProviderInstallInfo(homebrew: false, managedDownload: false, officialInstallerUrl: nil))
+        install: ProviderInstallInfo(homebrew: false, managedDownload: false, managedPython: true, managed: true, officialInstallerUrl: nil))
 }
 
 @Suite struct OSINTPresentationTests {

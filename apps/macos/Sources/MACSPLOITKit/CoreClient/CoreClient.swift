@@ -36,7 +36,7 @@ public extension CoreAPI {
         throw CoreFailure(code: "Unsupported", message: "Install not available in this client.")
     }
     func cancelInstall() async throws {}
-    func installStatus() async throws -> InstallState { InstallState(running: nil, last: nil) }
+    func installStatus() async throws -> InstallState { InstallState(running: nil, last: nil, events: nil) }
     func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
                             rationale: String, observations: [String]) async throws -> Correlation {
         throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")

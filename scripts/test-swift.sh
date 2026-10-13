@@ -24,4 +24,6 @@ export MACSPLOIT_THEHARVESTER="$PWD/fixtures/fake-theharvester.sh"
 # Force the empty, offline managed-download transport so no install path in any
 # bridge test can reach the network (real release assets are never downloaded).
 export MACSPLOIT_DOWNLOAD_FAKE=1
+# Offline fake `uv` runtime so managed-Python install flows never touch the network.
+export MACSPLOIT_UV="$PWD/fixtures/fake-uv.sh"
 ./scripts/swift-command.sh test --disable-xctest --enable-swift-testing

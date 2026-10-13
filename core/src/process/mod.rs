@@ -97,6 +97,11 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_BREW") {
             overrides.insert("brew".to_owned(), PathBuf::from(path));
         }
+        // App-managed `uv` runtime override (tests inject a fake uv; advanced users may
+        // pin a verified uv). When unset, MACSPLOIT bootstraps the pinned uv itself.
+        if let Some(path) = std::env::var_os("MACSPLOIT_UV") {
+            overrides.insert("uv".to_owned(), PathBuf::from(path));
+        }
         let managed_dir = std::env::var_os("MACSPLOIT_TOOLS_DIR").map(PathBuf::from);
         Self {
             overrides,
@@ -129,12 +134,38 @@ impl ToolConfig {
         directories.push(PathBuf::from("/usr/local/bin"));
         if let Some(managed) = &self.managed_dir {
             directories.push(managed.clone());
+            // Console scripts installed by the app-managed Python runtime live here.
+            directories.push(managed.join(MANAGED_PYTHON_BIN));
         }
         directories.extend(fallback.iter().cloned());
         directories
             .into_iter()
             .find_map(|directory| usable_executable(&directory.join(tool)))
     }
+
+    /// Directory under the managed providers directory where the app-managed Python
+    /// runtime (`uv`) places reviewed console scripts (also searched by `locate`).
+    pub fn managed_python_bin_dir(&self) -> Option<PathBuf> {
+        self.managed_dir
+            .as_ref()
+            .map(|d| d.join(MANAGED_PYTHON_BIN))
+    }
+
+    /// Directory under the managed providers directory holding the pinned `uv` binary.
+    pub fn managed_runtime_dir(&self) -> Option<PathBuf> {
+        self.managed_dir.as_ref().map(|d| d.join(MANAGED_RUNTIME))
+    }
+}
+
+/// Subdirectory (under the managed providers directory) for app-managed Python
+/// console scripts, and for the pinned `uv` runtime binary.
+pub const MANAGED_PYTHON_BIN: &str = "python-bin";
+pub const MANAGED_RUNTIME: &str = "runtime";
+
+/// Resolve `path` to a canonical, regular, owner-executable file, or `None`. Used to
+/// confirm a freshly installed console script is runnable before reporting success.
+pub fn executable_at(path: &Path) -> Option<PathBuf> {
+    usable_executable(path)
 }
 
 fn usable_executable(path: &Path) -> Option<PathBuf> {

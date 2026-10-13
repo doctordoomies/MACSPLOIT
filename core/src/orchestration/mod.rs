@@ -1041,11 +1041,43 @@ struct ActiveRun {
 struct InstallCoordinator {
     running: Option<RunningInstall>,
     last: Option<crate::install::InstallOutcome>,
+    /// Bounded live event log for the current/last install, streamed to the Install
+    /// Console via `install_status`. Reset when a new install starts.
+    events: Vec<crate::install::InstallEvent>,
+    seq: u64,
 }
 struct RunningInstall {
     provider_id: String,
     method: crate::install::InstallMethod,
     cancelled: Arc<AtomicBool>,
+}
+
+/// Maximum install events retained for the console (older lines are dropped).
+const MAX_INSTALL_EVENTS: usize = 600;
+
+/// An [`InstallReporter`](crate::install::InstallReporter) that appends bounded events
+/// to the install coordinator so `install_status` can stream them to the UI.
+struct CoordinatorReporter {
+    install: Arc<Mutex<InstallCoordinator>>,
+}
+
+impl crate::install::InstallReporter for CoordinatorReporter {
+    fn event(&self, kind: crate::install::InstallEventKind, text: &str) {
+        if let Ok(mut coordinator) = self.install.lock() {
+            coordinator.seq += 1;
+            let event = crate::install::InstallEvent {
+                seq: coordinator.seq,
+                timestamp: crate::now(),
+                kind,
+                text: text.to_owned(),
+            };
+            coordinator.events.push(event);
+            let overflow = coordinator.events.len().saturating_sub(MAX_INSTALL_EVENTS);
+            if overflow > 0 {
+                coordinator.events.drain(0..overflow);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1375,6 +1407,10 @@ impl Engine {
             method,
             cancelled: cancelled.clone(),
         });
+        // Fresh console for this install.
+        install.events.clear();
+        install.seq = 0;
+        install.last = None;
         drop(install);
 
         let engine = self.clone();
@@ -1382,10 +1418,14 @@ impl Engine {
         thread::spawn(move || {
             // Installs can legitimately take minutes; cap generously.
             let deadline = Instant::now() + Duration::from_secs(600);
+            let reporter = CoordinatorReporter {
+                install: engine.install.clone(),
+            };
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 crate::install::install(
                     &engine.tools,
                     engine.downloader.as_ref(),
+                    &reporter,
                     &provider,
                     method,
                     &cancelled,
@@ -1443,6 +1483,7 @@ impl Engine {
         Ok(json!({
             "running": running,
             "last": install.last,
+            "events": install.events,
         }))
     }
 
