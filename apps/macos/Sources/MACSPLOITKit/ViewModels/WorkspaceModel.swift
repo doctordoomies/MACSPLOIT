@@ -26,6 +26,9 @@ public final class WorkspaceModel: ObservableObject {
     @Published public private(set) var providerRefreshError: String?
     @Published public private(set) var providerStatuses: [ProviderStatus] = []
     @Published public private(set) var snapshot: Snapshot?
+    @Published public private(set) var selectedChainResults: ChainResults?
+    @Published public private(set) var chainResultsError: String?
+    @Published public private(set) var isLoadingChainResults = false
     @Published public private(set) var selectedWorkspaceId: String?
     @Published public var section: WorkspaceSection? = .dashboard
     @Published public var selectedTargetId: String?
@@ -40,6 +43,7 @@ public final class WorkspaceModel: ObservableObject {
     @Published public var errorMessage: String?
     @Published public private(set) var connectionError: String?
     @Published public private(set) var evidenceText = "Select evidence to inspect its verified raw JSON."
+    private var chainResultsGeneration = 0
     public let client: any CoreAPI
 
     public init(client: any CoreAPI) { self.client = client }
@@ -58,7 +62,9 @@ public final class WorkspaceModel: ObservableObject {
     }
 
     public func selectWorkspace(_ id: String) async {
-        selectedWorkspaceId = id.isEmpty ? nil : id; snapshot = nil
+        chainResultsGeneration += 1
+        selectedWorkspaceId = id.isEmpty ? nil : id; snapshot = nil; selectedChainResults = nil
+        chainResultsError = nil; isLoadingChainResults = false
         selectedTargetId = nil; selectedAssetId = nil; selectedChainId = nil; selectedEvidenceId = nil
         selectedOSINTChainId = nil; osintTargetId = nil
         lastTargetType = nil; evidenceText = "Select evidence to inspect its verified raw JSON."
@@ -74,6 +80,7 @@ public final class WorkspaceModel: ObservableObject {
         if selectedTargetId == nil { selectedTargetId = updated.targets.first?.id }
         if selectedChainId == nil { selectedChainId = updated.chains.last?.id }
         if selectedOSINTChainId == nil { selectedOSINTChainId = updated.osintChains.first?.id }
+        await refreshSelectedChainResults()
     }
 
     public func pollOnce() async {
@@ -255,6 +262,42 @@ public final class WorkspaceModel: ObservableObject {
             guard await authorizeSelectedTarget() else { return }
         }
         await runRecon(kind: kind, options: options)
+    }
+
+    public func selectChain(_ id: String?) async {
+        selectedChainId = id
+        await refreshSelectedChainResults()
+    }
+
+    /// Fetch one durable run-scoped Results record. A monotonically increasing request
+    /// generation prevents a slower response for an older selection/workspace from
+    /// replacing the Results for the user's newer selection.
+    public func refreshSelectedChainResults() async {
+        chainResultsGeneration += 1
+        let generation = chainResultsGeneration
+        guard isConnected, let workspace = selectedWorkspaceId, let chain = selectedChainId else {
+            selectedChainResults = nil
+            chainResultsError = nil
+            isLoadingChainResults = false
+            return
+        }
+
+        isLoadingChainResults = true
+        chainResultsError = nil
+        do {
+            let results = try await client.chainResults(workspace: workspace, chain: chain)
+            guard generation == chainResultsGeneration,
+                  selectedWorkspaceId == workspace,
+                  selectedChainId == chain else { return }
+            selectedChainResults = results
+        } catch {
+            guard generation == chainResultsGeneration,
+                  selectedWorkspaceId == workspace,
+                  selectedChainId == chain else { return }
+            selectedChainResults = nil
+            chainResultsError = error.localizedDescription
+        }
+        if generation == chainResultsGeneration { isLoadingChainResults = false }
     }
 
     /// Console lines for the selected chain, derived from durable snapshot state.

@@ -173,6 +173,7 @@ struct ReconView: View {
                 Divider()
                 executionPanel
                 liveConsole
+                runResults
                 chainDetail
                 runHistory
             }
@@ -490,6 +491,309 @@ struct ReconView: View {
         }
     }
 
+    // MARK: Run Results
+
+    @ViewBuilder private var runResults: some View {
+        if let chain = model.selectedChain {
+            WorkbenchCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Label("Run Results", systemImage: "list.bullet.rectangle.portrait")
+                            .font(.headline)
+                        Text(String(chain.id.prefix(8)))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        StatusBadge(status: chain.status)
+                    }
+
+                    if model.isLoadingChainResults
+                        && model.selectedChainResults?.chain.id != chain.id {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading durable results for this run…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let error = model.chainResultsError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    } else if let results = model.selectedChainResults,
+                              results.chain.id == chain.id {
+                        resultState(results)
+
+                        HStack(spacing: 18) {
+                            resultMetric("Discoveries", value: discoveryAssetCount(results))
+                            resultMetric("Observations", value: results.observations.count)
+                            resultMetric("Relationships", value: results.relationships.count)
+                            resultMetric("Evidence", value: results.evidence.count)
+                            Spacer()
+                            Text(results.target.normalizedValue)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+
+                        providerRunSummary(results)
+
+                        let types = resultTypes(in: results)
+                        if !types.isEmpty {
+                            Divider()
+                            VStack(alignment: .leading, spacing: 14) {
+                                ForEach(types, id: \.self) { type in
+                                    resultGroup(type: type, results: results)
+                                }
+                            }
+                        }
+
+                        if !results.relationships.isEmpty {
+                            Divider()
+                            DisclosureGroup("Relationships · \(results.relationships.count)") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(results.relationships) { relationship in
+                                        Text("\(resultAssetName(relationship.sourceAssetId, in: results)) → \(prettyToken(relationship.relationshipType)) → \(resultAssetName(relationship.destinationAssetId, in: results))")
+                                            .font(.caption.monospaced())
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
+                    } else {
+                        Text("Results will appear here as this run persists provider observations.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func resultState(_ results: ChainResults) -> some View {
+        let discoveries = discoveryAssetCount(results)
+        switch results.chain.status {
+        case "COMPLETED" where discoveries == 0:
+            Label("No discoveries were produced by this run.", systemImage: "checkmark.circle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case "COMPLETED":
+            Label("Completed with \(discoveries) run-scoped discoveries.", systemImage: "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(.green)
+        case "PARTIAL":
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Partial results — earlier completed stages were preserved.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                if let message = results.chain.errorMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+        case "FAILED":
+            VStack(alignment: .leading, spacing: 4) {
+                Label("This run failed before it completed.", systemImage: "xmark.circle")
+                    .foregroundStyle(.orange)
+                if let message = results.chain.errorMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+        case "CANCELLED":
+            Label("Run cancelled. Any discoveries persisted before cancellation remain below.", systemImage: "stop.circle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        default:
+            Label("Run in progress — results update from durable provider state.", systemImage: "clock")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func resultMetric(_ label: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(String(value)).font(.title3.weight(.semibold))
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private func providerRunSummary(_ results: ChainResults) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Provider stages").font(.callout.weight(.medium))
+            if results.providerRuns.isEmpty {
+                Text("No provider process reached a recorded run.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(results.providerRuns) { run in
+                    HStack(spacing: 10) {
+                        Text(run.providerId).font(.caption.monospaced())
+                        Text(run.providerVersion).font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        StatusBadge(status: run.status)
+                        if let evidence = run.rawOutputReference {
+                            Button("Evidence") { model.showEvidence(evidence) }
+                                .buttonStyle(.link)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private func resultGroup(type: String, results: ChainResults) -> some View {
+        let rows = resultRows(type: type, results: results)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label(resultLabel(type), systemImage: resultIcon(type))
+                        .font(.callout.weight(.semibold))
+                    Text(String(rows.count)).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(row.asset.displayValue)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                            HStack(spacing: 8) {
+                                Text(row.observation.discoveredBy)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                ForEach(metadataPairs(row.observation.metadata), id: \.0) { pair in
+                                    Text("\(prettyToken(pair.0)): \(pair.1)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Spacer()
+                        Button("Asset") {
+                            model.selectedAssetId = row.asset.id
+                            model.section = .assets
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                        if let evidence = row.observation.evidenceId {
+                            Button("Evidence") { model.showEvidence(evidence) }
+                                .buttonStyle(.link)
+                                .controlSize(.small)
+                        }
+                    }
+                    .padding(9)
+                    .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 7))
+                }
+            }
+        }
+    }
+
+    private func resultRows(type: String, results: ChainResults) -> [(observation: Observation, asset: Asset)] {
+        let assets = Dictionary(uniqueKeysWithValues: results.assets.map { ($0.id, $0) })
+        return results.observations.compactMap { observation in
+            guard let asset = assets[observation.assetId], asset.assetType == type else { return nil }
+            return (observation, asset)
+        }
+    }
+
+    private func resultTypes(in results: ChainResults) -> [String] {
+        let present = Set(results.observations.compactMap { observation in
+            results.assets.first(where: { $0.id == observation.assetId })?.assetType
+        })
+        let preferred: [String]
+        switch results.chain.name {
+        case "DNS Recon":
+            preferred = ["IPAddress", "Hostname"]
+        case "Domain Recon":
+            preferred = ["Subdomain", "Hostname", "IPAddress", "Port", "Service", "Website", "Technology"]
+        case "IP Recon":
+            preferred = ["Port", "Service", "Website", "Technology"]
+        case "Web Recon":
+            preferred = ["URL", "Endpoint", "Website"]
+        case "Web Analysis":
+            preferred = ["Website", "URL"]
+        case "Content Discovery":
+            preferred = ["URL", "Endpoint"]
+        default:
+            preferred = ["Subdomain", "Hostname", "IPAddress", "Port", "Service", "Website", "URL", "Endpoint", "Technology"]
+        }
+        return preferred.filter(present.contains)
+            + present.filter { !preferred.contains($0) }.sorted()
+    }
+
+    private func discoveryAssetCount(_ results: ChainResults) -> Int {
+        Set(results.observations.map(\.assetId)).count
+    }
+
+    private func resultAssetName(_ id: String, in results: ChainResults) -> String {
+        results.assets.first { $0.id == id }?.displayValue ?? id
+    }
+
+    private func resultLabel(_ type: String) -> String {
+        switch type {
+        case "IPAddress": return "IP addresses"
+        case "Subdomain": return "Subdomains"
+        case "Hostname": return "Hostnames"
+        case "Port": return "Ports"
+        case "Service": return "Services"
+        case "Website": return "Websites"
+        case "URL", "Endpoint": return "URLs / endpoints"
+        case "Technology": return "Technologies"
+        default: return type
+        }
+    }
+
+    private func resultIcon(_ type: String) -> String {
+        switch type {
+        case "IPAddress": return "network"
+        case "Subdomain", "Hostname": return "globe"
+        case "Port": return "rectangle.connected.to.line.below"
+        case "Service": return "server.rack"
+        case "Website", "URL", "Endpoint": return "safari"
+        case "Technology": return "cpu"
+        default: return "circle.grid.2x2"
+        }
+    }
+
+    private func metadataPairs(_ metadata: JSONValue?) -> [(String, String)] {
+        guard case .object(let fields) = metadata else { return [] }
+        let preferred = [
+            "record_type", "dns_outcome", "status", "status_code", "method",
+            "content_length", "server", "title", "security_headers_present",
+            "cookie_count", "cors_present", "redirect_count", "robots_retrieved",
+            "redirect_location", "host", "protocol", "port", "service"
+        ]
+        let orderedKeys = preferred.filter { fields[$0] != nil }
+            + fields.keys.filter { !preferred.contains($0) && $0 != "tool" }.sorted()
+        return orderedKeys.prefix(6).compactMap { key in
+            guard let value = fields[key], let rendered = compactMetadata(value) else { return nil }
+            return (key, rendered)
+        }
+    }
+
+    private func compactMetadata(_ value: JSONValue) -> String? {
+        switch value {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value.rounded() == value ? String(Int(value)) : String(format: "%.2f", value)
+        case .bool(let value):
+            return value ? "yes" : "no"
+        case .null:
+            return nil
+        case .array(let values):
+            let rendered = values.prefix(4).compactMap(compactMetadata)
+            if rendered.isEmpty { return values.isEmpty ? nil : "\(values.count) items" }
+            return rendered.joined(separator: ", ") + (values.count > 4 ? " …" : "")
+        case .object(let fields):
+            return fields.isEmpty ? nil : "\(fields.count) fields"
+        }
+    }
+
+    private func prettyToken(_ value: String) -> String {
+        value.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
     // MARK: Chain detail + history
 
     @ViewBuilder private var chainDetail: some View {
@@ -502,11 +806,8 @@ struct ReconView: View {
                     Spacer()
                     StatusBadge(status: chain.status)
                 }
-                if chain.status == "COMPLETED" {
-                    // Completion summary from real workspace state (no fabricated counts).
-                    let assets = model.snapshot?.assets.count ?? 0
-                    let evidence = model.snapshot?.evidence.count ?? 0
-                    Text("Completed · \(assets) assets · \(evidence) evidence")
+                if let results = model.selectedChainResults, results.chain.id == chain.id {
+                    Text("\(discoveryAssetCount(results)) discoveries · \(results.evidence.count) evidence")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 let stages = (model.snapshot?.stages ?? []).filter { $0.chainId == chain.id }.sorted { $0.position < $1.position }
@@ -529,7 +830,12 @@ struct ReconView: View {
                 }
                 .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
                 if let code = chain.errorCode {
-                    Label(code, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(code, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        if let message = chain.errorMessage {
+                            Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                    }
                 }
             }
         }
@@ -540,7 +846,7 @@ struct ReconView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Run history").font(.headline)
                 ForEach(chains.reversed()) { chain in
-                    Button { model.selectedChainId = chain.id } label: {
+                    Button { Task { await model.selectChain(chain.id) } } label: {
                         HStack {
                             Text(chain.name).frame(width: 140, alignment: .leading)
                             Text(displayTime(chain.createdAt)).foregroundStyle(.secondary)

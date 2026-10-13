@@ -10,6 +10,7 @@ public protocol CoreAPI: Sendable {
     func updateWorkspaceScope(workspace: String, scope: [String]) async throws -> Workspace
     func addTarget(workspace: String, value: String) async throws -> Target
     func snapshot(workspace: String) async throws -> Snapshot
+    func chainResults(workspace: String, chain: String) async throws -> ChainResults
     func events(workspace: String, after: Int64) async throws -> [CoreEvent]
     func startChain(workspace: String, target: String, chain: String, options: JSONValue) async throws -> ChainRun
     func cancelChain(workspace: String, chain: String) async throws
@@ -23,8 +24,11 @@ public protocol CoreAPI: Sendable {
 }
 
 public extension CoreAPI {
-    // Default no-op/empty implementations so existing test doubles need not implement the
-    // install surface. CoreClient overrides these with the real protocol calls.
+    // Default implementations keep older test doubles source-compatible while new
+    // read/install surfaces are introduced. CoreClient overrides these with protocol calls.
+    func chainResults(workspace: String, chain: String) async throws -> ChainResults {
+        throw CoreFailure(code: "Unsupported", message: "Chain Results are not available in this client.")
+    }
     func startInstall(provider: String, method: String) async throws {
         throw CoreFailure(code: "Unsupported", message: "Install not available in this client.")
     }
@@ -84,6 +88,9 @@ public struct CoreClient: CoreAPI {
     }
     public func snapshot(workspace: String) async throws -> Snapshot {
         try await call("snapshot", ["workspace_id": .string(workspace)])
+    }
+    public func chainResults(workspace: String, chain: String) async throws -> ChainResults {
+        try await call("chain_results", ["workspace_id": .string(workspace), "chain_id": .string(chain)])
     }
     public func events(workspace: String, after: Int64) async throws -> [CoreEvent] {
         try await call("events_after", ["workspace_id": .string(workspace), "after": .number(Double(after))])
