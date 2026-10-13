@@ -594,13 +594,16 @@ mod tests {
         );
         // Contact details never reach normalized results.
         let text = summary.to_string();
-        for secret in [
+        for contact in [
             "Private Person",
             "owner@example.test",
             "2025550143",
             "abuse@registrar.test",
         ] {
-            assert!(!text.contains(secret), "{secret} leaked");
+            assert!(
+                !text.contains(contact),
+                "contact detail leaked into the summary"
+            );
         }
         let ns: Vec<_> = out
             .discoveries
