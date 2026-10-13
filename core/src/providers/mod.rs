@@ -13,8 +13,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod osint_cli;
 mod user_scanner;
 pub use user_scanner::UserScannerProvider;
+mod maigret;
+mod sherlock;
+mod socialscan;
+pub use maigret::MaigretProvider;
+pub use sherlock::SherlockProvider;
+pub use socialscan::SocialscanProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -236,6 +243,9 @@ impl ProviderRegistry {
                 Arc::new(NativeHttpProvider::new(web)),
                 Arc::new(FfufProvider),
                 Arc::new(UserScannerProvider),
+                Arc::new(SherlockProvider),
+                Arc::new(MaigretProvider),
+                Arc::new(SocialscanProvider),
             ],
         }
     }

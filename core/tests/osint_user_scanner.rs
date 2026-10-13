@@ -457,7 +457,7 @@ fn workflow_and_provider_compatibility_is_enforced() {
         code(
             user.id,
             ChainKind::UsernameOsint,
-            json!({"provider_id": "sherlock"})
+            json!({"provider_id": "not_a_registered_provider"})
         ),
         "ProviderUnsupported"
     );

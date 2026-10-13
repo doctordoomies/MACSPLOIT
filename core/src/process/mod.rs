@@ -75,6 +75,16 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_USER_SCANNER") {
             overrides.insert("user-scanner".to_owned(), PathBuf::from(path));
         }
+        // OSINT username wave: Sherlock, Maigret, socialscan (pipx/pip console scripts).
+        if let Some(path) = std::env::var_os("MACSPLOIT_SHERLOCK") {
+            overrides.insert("sherlock".to_owned(), PathBuf::from(path));
+        }
+        if let Some(path) = std::env::var_os("MACSPLOIT_MAIGRET") {
+            overrides.insert("maigret".to_owned(), PathBuf::from(path));
+        }
+        if let Some(path) = std::env::var_os("MACSPLOIT_SOCIALSCAN") {
+            overrides.insert("socialscan".to_owned(), PathBuf::from(path));
+        }
         // Homebrew executable override (tests inject a fake brew; advanced users may pin).
         if let Some(path) = std::env::var_os("MACSPLOIT_BREW") {
             overrides.insert("brew".to_owned(), PathBuf::from(path));
