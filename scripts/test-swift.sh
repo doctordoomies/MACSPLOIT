@@ -19,6 +19,7 @@ export MACSPLOIT_USER_SCANNER="$PWD/fixtures/fake-user-scanner.sh"
 export MACSPLOIT_SHERLOCK="$PWD/fixtures/fake-sherlock.sh"
 export MACSPLOIT_MAIGRET="$PWD/fixtures/fake-maigret.sh"
 export MACSPLOIT_SOCIALSCAN="$PWD/fixtures/fake-socialscan.sh"
+export MACSPLOIT_PHONEINFOGA="$PWD/fixtures/fake-phoneinfoga.sh"
 # Force the empty, offline managed-download transport so no install path in any
 # bridge test can reach the network (real release assets are never downloaded).
 export MACSPLOIT_DOWNLOAD_FAKE=1

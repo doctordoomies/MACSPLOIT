@@ -85,6 +85,10 @@ impl ToolConfig {
         if let Some(path) = std::env::var_os("MACSPLOIT_SOCIALSCAN") {
             overrides.insert("socialscan".to_owned(), PathBuf::from(path));
         }
+        // OSINT phone: PhoneInfoga.
+        if let Some(path) = std::env::var_os("MACSPLOIT_PHONEINFOGA") {
+            overrides.insert("phoneinfoga".to_owned(), PathBuf::from(path));
+        }
         // Homebrew executable override (tests inject a fake brew; advanced users may pin).
         if let Some(path) = std::env::var_os("MACSPLOIT_BREW") {
             overrides.insert("brew".to_owned(), PathBuf::from(path));

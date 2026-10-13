@@ -95,6 +95,9 @@ pub enum ChainKind {
     /// OSINT for one explicitly selected Email target (one bounded provider scan;
     /// no recursion, no breach data). Never started automatically.
     EmailOsint,
+    /// OSINT for one explicitly selected international PhoneNumber target (public
+    /// numbering metadata only; no calls, SMS, or pivots). Never started automatically.
+    PhoneOsint,
 }
 
 impl ChainKind {
@@ -103,7 +106,32 @@ impl ChainKind {
         match self {
             Self::UsernameOsint => Some((Capability::UsernameOsint, TargetType::Username)),
             Self::EmailOsint => Some((Capability::EmailOsint, TargetType::EmailAddress)),
+            Self::PhoneOsint => Some((Capability::PhoneOsint, TargetType::PhoneNumber)),
             _ => None,
+        }
+    }
+
+    /// Every OSINT chain kind.
+    pub const ALL_OSINT: &'static [ChainKind] =
+        &[Self::UsernameOsint, Self::EmailOsint, Self::PhoneOsint];
+
+    /// Display name of an OSINT chain (also its stage name), and the error shown
+    /// when the selected target has the wrong type.
+    fn osint_labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::UsernameOsint => (
+                "Username OSINT",
+                "Username OSINT requires a username target (e.g. @handle).",
+            ),
+            Self::EmailOsint => ("Email OSINT", "Email OSINT requires an email target."),
+            Self::PhoneOsint => (
+                "Phone OSINT",
+                "Phone OSINT requires an international phone target (e.g. +1 202 555 0143).",
+            ),
+            _ => (
+                "OSINT",
+                "This OSINT workflow does not accept the selected target.",
+            ),
         }
     }
 }
@@ -570,17 +598,11 @@ impl Store {
                     ],
                 )
             }
-            ChainKind::UsernameOsint | ChainKind::EmailOsint => {
+            ChainKind::UsernameOsint | ChainKind::EmailOsint | ChainKind::PhoneOsint => {
                 let (capability, required) = kind.osint().expect("OSINT chain kind");
+                let (title, wrong_target) = kind.osint_labels();
                 if target.target_type != required {
-                    return Err(CoreError::new(
-                        "InvalidTarget",
-                        if required == TargetType::Username {
-                            "Username OSINT requires a username target (e.g. @handle)."
-                        } else {
-                            "Email OSINT requires an email target."
-                        },
-                    ));
+                    return Err(CoreError::new("InvalidTarget", wrong_target));
                 }
                 // Strict subject validation (no option/pattern characters).
                 crate::osint::Subject::from_target(target.target_type, &target.normalized_value)?;
@@ -591,22 +613,10 @@ impl Store {
                     )
                 })?;
                 (
-                    if required == TargetType::Username {
-                        "Username OSINT"
-                    } else {
-                        "Email OSINT"
-                    },
+                    title,
                     vec![
                         ("Subject Validation", None, None),
-                        (
-                            if required == TargetType::Username {
-                                "Username OSINT"
-                            } else {
-                                "Email OSINT"
-                            },
-                            Some(capability),
-                            Some(provider),
-                        ),
+                        (title, Some(capability), Some(provider)),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -1266,11 +1276,13 @@ impl Engine {
         if target.target_type != required {
             return Err(CoreError::new(
                 "InvalidTarget",
-                if required == TargetType::Username {
-                    "Username OSINT requires a username target (e.g. @handle)."
-                } else {
-                    "Email OSINT requires an email target."
-                },
+                ChainKind::ALL_OSINT
+                    .iter()
+                    .find(|k| k.osint().map(|(_, t)| t) == Some(required))
+                    .map_or(
+                        "This OSINT workflow does not accept the selected target.",
+                        |k| k.osint_labels().1,
+                    ),
             ));
         }
         Ok(self

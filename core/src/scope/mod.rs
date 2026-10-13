@@ -117,10 +117,13 @@ pub fn authorize(
 /// rejected here. Discovered profile URLs are recorded with their real scope
 /// status and are never dispatched to another provider automatically.
 pub fn authorize_osint_subject(kind: TargetType, risk: RiskClass, approved: bool) -> Result<()> {
-    if !matches!(kind, TargetType::Username | TargetType::EmailAddress) {
+    if !matches!(
+        kind,
+        TargetType::Username | TargetType::EmailAddress | TargetType::PhoneNumber
+    ) {
         return Err(CoreError::new(
             "InvalidTarget",
-            "OSINT requires a username or email target.",
+            "Identifier OSINT requires a username, email, or phone target.",
         ));
     }
     if !matches!(risk, RiskClass::Passive | RiskClass::ActiveLowImpact) {

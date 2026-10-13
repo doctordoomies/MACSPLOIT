@@ -25,6 +25,8 @@ pub enum AssetType {
     /// for one identifier. Canonical identity is `<platform>:<identifier>`. An
     /// Account is never merged with another merely because it shares an identifier.
     Account,
+    /// An OSINT phone subject, canonical E.164 (`+<digits>`).
+    PhoneNumber,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +150,7 @@ pub fn canonical_identity(kind: AssetType, value: &str) -> crate::error::Result<
         AssetType::Username => crate::osint::username_identity(value),
         AssetType::EmailAddress => crate::osint::email_identity(value),
         AssetType::Account => crate::osint::account_identity(value),
+        AssetType::PhoneNumber => crate::osint::phone_identity(value),
         _ if !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control) => {
             Ok(value.into())
         }

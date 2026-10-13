@@ -22,6 +22,8 @@ mod socialscan;
 pub use maigret::MaigretProvider;
 pub use sherlock::SherlockProvider;
 pub use socialscan::SocialscanProvider;
+mod phoneinfoga;
+pub use phoneinfoga::PhoneInfogaProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -56,13 +58,18 @@ pub enum Capability {
     UsernameOsint,
     /// OSINT: public registration/profile presence for an explicit Email subject.
     EmailOsint,
+    /// OSINT: public numbering metadata for an explicit international PhoneNumber.
+    PhoneOsint,
 }
 
 impl Capability {
     /// OSINT capabilities operate on an identifier subject (username/email), not a
     /// workspace host, and query third-party public platforms chosen by the provider.
     pub fn is_osint(self) -> bool {
-        matches!(self, Self::UsernameOsint | Self::EmailOsint)
+        matches!(
+            self,
+            Self::UsernameOsint | Self::EmailOsint | Self::PhoneOsint
+        )
     }
 }
 
@@ -246,6 +253,7 @@ impl ProviderRegistry {
                 Arc::new(SherlockProvider),
                 Arc::new(MaigretProvider),
                 Arc::new(SocialscanProvider),
+                Arc::new(PhoneInfogaProvider),
             ],
         }
     }
@@ -490,7 +498,8 @@ impl Provider for SyntheticDiscoveryProvider {
             | Capability::WebAnalysis
             | Capability::ContentDiscovery
             | Capability::UsernameOsint
-            | Capability::EmailOsint => {}
+            | Capability::EmailOsint
+            | Capability::PhoneOsint => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()
