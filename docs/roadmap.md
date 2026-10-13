@@ -170,25 +170,43 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 - Milestone 1 owner testing exposed provider-setup, authorization-flow, and responsive Recon UI usability gaps tracked by Issue #36;
 - bug bounty program context is not modeled;
 - there is no Findings system yet;
-- OSINT target types existed without providers (being addressed by Milestone 6: the
-  OSINT foundation and user-scanner slice are in review; other OSINT providers remain);
+- OSINT is now first-class: the typed OSINT foundation plus the first user-scanner
+  Username/Email slice merged via PR #60; Sherlock, Maigret, socialscan, Holehe,
+  PhoneInfoga, theHarvester, passive Amass, RDAP, certificate-transparency intelligence,
+  advanced aggregators, and final correlation/acceptance work remain;
 - reports/exports are not implemented;
 - historical URLs, JavaScript analysis, API discovery, and screenshots remain planned.
 
 These gaps define the next roadmap order.
 
-## Owner reprioritization — OSINT completion
+## Owner execution lock — OSINT → vulnerability completion → UI/specification polish
 
-On 2026-10-08 the owner deliberately changed the near-term execution order: finish the
-OSINT workbench before returning to the remaining product milestones.
+On 2026-10-12 the owner deliberately locked the near-term execution order.
 
-- **Issue #58 — OSINT framework and provider coverage completion is ACTIVE.**
-- **Issue #22 — user-scanner remains the first username/email implementation slice.**
-- **PR #46 / Issue #45 — M1.5 Run Results remains preserved but is on HOLD while OSINT is active.**
-- M2–M5 remain queued; they are not silently cancelled.
-- After OSINT acceptance, choose deliberately between resuming the existing
-  Findings/Assessment roadmap and beginning a separately gated Authorized Validation /
-  Lab design. OSINT discoveries must never automatically trigger exploitation.
+1. **Finish all planned OSINT operations first.**
+   - Issue #58 is the ACTIVE umbrella milestone.
+   - PR #60 merged the typed OSINT foundation plus the first user-scanner
+     Username/Email slice.
+   - Remaining Username, Email, Phone, Domain/Organization, public-infrastructure,
+     advanced-aggregator, correlation, persistence, and owner-acceptance work must be
+     completed before the project advances.
+2. **Then complete vulnerability scanning.**
+   - Build only the minimum Findings substrate needed to store scanner output safely.
+   - Complete the detection-oriented vulnerability-assessment surface, including TLS,
+     Nuclei, native analyzer-to-finding rules, service/CVE enrichment, and the planned
+     local-source/dependency vulnerability scanners.
+   - Do not automatically turn OSINT discoveries into exploitation.
+3. **Only after both gates pass may broad UI perfection and specification polish begin.**
+   - Functional UI required to run, review, cancel, and verify OSINT/scanner operations
+     is allowed during the active milestones.
+   - Broad visual redesign, presentation perfection, dashboard/specification polish,
+     and nonessential UI restructuring are deferred until vulnerability scanning is
+     complete.
+
+M1.5 implementation was merged through replacement PR #61; superseded PR #46 is closed.
+Any remaining M1 correctness issues stay on the continuous maintenance track and may
+interrupt only when they block correctness, security, OSINT, or vulnerability-scanning
+acceptance.
 
 This is an intentional roadmap reprioritization under the policy below, not accidental
 parallel feature work.
@@ -223,7 +241,7 @@ This milestone closes the current development burst before new product work star
 
 # Milestone 1 — Real-target usability
 
-**Status: HOLD — PR #46 / Issue #45 preserved while OSINT is ACTIVE**
+**Status: IMPLEMENTATION MERGED via PR #61 — nonblocking follow-ups remain maintenance while OSINT is ACTIVE**
 
 The goal is simple: common authorized targets should work directly without artificial
 dependencies such as requiring public DNS first.
@@ -343,9 +361,10 @@ dashboard preset.
 
 ## 1.5 Real-target acceptance + Run Results UX
 
-**Issue #45 / PR #46 — HOLD.** The implementation branch is preserved and may continue
-after the active OSINT milestone. Do not merge it merely to clear the queue; its owner
-acceptance gate still applies.
+**Issue #45 — implementation merged via replacement PR #61.** PR #46 was superseded
+and closed without merging. Remaining correctness/acceptance follow-ups, if still open,
+stay tracked separately and do not displace the owner-locked OSINT → vulnerability order
+unless they block correctness or security.
 
 When resumed, complete the Run Results experience and maintain an acceptance matrix
 covering at minimum:
@@ -372,7 +391,9 @@ DNS dependency.
 
 # Milestone 2 — Bug bounty workbench + Findings foundation
 
-**Status: QUEUED**
+**Status: NEXT SUPPORTING WORK AFTER M6 — only the minimum Findings substrate required
+by vulnerability scanners may advance before the vulnerability-completion gate. Broader
+bug-bounty workspace/profile UI remains deferred.**
 
 Recon becomes substantially more useful when the workspace understands the engagement
 and can store conclusions, not only discoveries.
@@ -449,7 +470,7 @@ intact.
 
 # Milestone 3 — Complete the web-recon surface
 
-**Status: QUEUED**
+**Status: DEFERRED UNTIL THE VULNERABILITY-COMPLETION GATE PASSES**
 
 Now that the product can handle common targets and findings, finish the major web
 surface before vulnerability automation.
@@ -516,7 +537,8 @@ in one model.
 
 # Milestone 4 — Vulnerability assessment
 
-**Status: QUEUED**
+**Status: NEXT AFTER M6 OSINT — primary product milestone until vulnerability scanning
+is complete.**
 
 Assessment begins only after the Findings model exists.
 
@@ -569,16 +591,36 @@ If service fingerprints are enriched with CVE/product intelligence:
 - preserve version/source evidence;
 - never claim exploitability solely from a banner match.
 
+## Vulnerability-completion gate
+
+The project does not advance into UI/specification perfection when only one scanner
+works. Before this execution block exits:
+
+- the minimum durable Findings model required by scanners is complete;
+- TLS/certificate assessment is complete;
+- conservative Nuclei integration is complete;
+- native HTTP/TLS analyzer observations can become reviewable findings under explicit
+  rules;
+- service/CVE enrichment preserves uncertainty and evidence;
+- planned local source/dependency vulnerability scanning from Milestone 7 is complete
+  enough for its own exit condition;
+- scanner runs are explicit, bounded, cancellable, persisted, and reviewable;
+- docs/features/roadmap match reality;
+- CI and CodeQL are green;
+- the owner completes an end-to-end vulnerability-scanning walkthrough.
+
 ## Exit condition
 
-MACSPLOIT produces evidence-backed, reviewable findings from native analysis and
-conservative assessment providers without automatic exploitation.
+MACSPLOIT produces evidence-backed, reviewable findings across the planned network/web
+and local-source vulnerability-scanning surfaces without automatic exploitation. Broad
+UI perfection/specification work remains blocked until this condition and the linked M7
+scanner gate are satisfied.
 
 ---
 
 # Milestone 5 — Reporting and engagement export
 
-**Status: QUEUED**
+**Status: DEFERRED UNTIL THE VULNERABILITY-COMPLETION GATE PASSES**
 
 At this point the project should support a complete reconnaissance → finding → report
 loop.
@@ -645,9 +687,9 @@ cross-validation; provider count alone is not a success metric.
 
 ## 6.0 OSINT framework foundation
 
-**MERGE GATE — implemented in the OSINT foundation PR (Issue #58 / #22), awaiting owner
-review and macOS acceptance.** See [OSINT](osint.md) for the typed contract, model, and
-limits. Phone/Domain target compatibility arrives with their providers (6.3/6.4).
+**DONE via PR #60.** The typed OSINT foundation and the first user-scanner
+Username/Email slice are merged. See [OSINT](osint.md) for the typed contract, model,
+and limits. Phone/Domain target compatibility arrives with their providers (6.3/6.4).
 
 Before multiplying tools, make OSINT a first-class typed workflow:
 
@@ -665,9 +707,9 @@ Do not create a second orchestration system.
 
 ## 6.1 Username + public-profile OSINT
 
-**Issue #22 — user-scanner is the first implementation slice. MERGE GATE:** Username
-and Email OSINT through user-scanner 1.5.x are implemented in the OSINT foundation PR.
-Sherlock, Maigret, and socialscan remain to be integrated.
+**Issue #22 first slice DONE via PR #60:** Username and Email OSINT through
+user-scanner 1.5.x are merged. Sherlock, Maigret, and socialscan remain to be integrated
+before OSINT exits.
 
 Provider set to evaluate/integrate:
 
@@ -682,8 +724,8 @@ matching handle across sites is not proof that all accounts belong to one person
 
 ## 6.2 Email OSINT
 
-user-scanner email OSINT is implemented in the same PR (MERGE GATE). Holehe,
-socialscan, and theHarvester remain.
+user-scanner email OSINT is merged via PR #60. Holehe, socialscan, and theHarvester
+remain before OSINT exits.
 
 Provider set to evaluate/integrate:
 
@@ -762,15 +804,18 @@ OSINT is complete enough to leave this milestone when:
 - CI and CodeQL are green;
 - the owner completes an end-to-end OSINT walkthrough.
 
-After this exit gate, deliberately choose the next product track. Exploitation or deeper
-validation, if selected, belongs in the separate Authorized Validation / Lab architecture
-with stronger scope/risk gates and must not become an automatic continuation of OSINT.
+After this exit gate, the next product track is already decided: complete the
+vulnerability-scanning block (minimum Findings substrate → Milestone 4 assessment →
+Milestone 7 local-source/dependency scanning). Exploitation or deeper validation remains
+separate in the Authorized Validation / Lab architecture and must not become an
+automatic continuation of OSINT.
 
 ---
 
 # Milestone 7 — Local source and repository analysis
 
-**Status: QUEUED**
+**Status: NEXT — part of the vulnerability-completion block after M6/M4 and before
+UI/specification perfection.**
 
 Expand the local-app workflow into source-assisted assessment without requiring public
 deployment.
@@ -1137,14 +1182,14 @@ After the agent finishes:
 | Issue #33 / PR #35 — Direct IP Recon | Milestone 1.2 — DONE |
 | Issue #36 — UX stabilization | Milestone 1.3 — DONE via PR #39 |
 | Issue #38 / PR #41 — first-run setup and onboarding | Milestone 1.4 — DONE |
-| Issue #45 / PR #46 — Run Results + real-target acceptance | Milestone 1.5 — HOLD |
+| Issue #45 / PR #61 — Run Results + real-target acceptance | Milestone 1.5 — implementation merged; follow-ups are maintenance |
 | Issue #58 — OSINT framework and provider coverage completion | Milestone 6 — ACTIVE |
 | Bug bounty workspace/profile | Milestone 2 — implementation issue to create when work begins |
 | Findings foundation | Milestone 2 — implementation issue to create when work begins |
 | Historical URLs | Milestone 3 — issue to create when active |
 | JavaScript analysis | Milestone 3 — issue to create when active |
 | Nuclei / TLS | Milestone 4 — issues to create when active |
-| Issue #22 — user-scanner OSINT | Milestone 6.1 — ACTIVE implementation slice |
+| Issue #22 — user-scanner OSINT | Milestone 6.1 — first slice DONE via PR #60; broader provider coverage remains under #58 |
 | Local source analysis | Milestone 7 |
 | Issue #21 — AI node UI | Milestone 9 |
 | Issue #9 — AI-assisted agents | Milestone 9 |
@@ -1155,27 +1200,37 @@ After the agent finishes:
 
 # High-level execution order
 
-The milestone numbers remain stable, but the owner has intentionally changed the
+The milestone numbers remain stable, but the owner has intentionally locked the
 near-term execution sequence:
 
 ```text
 M6  OSINT — ACTIVE
-    typed OSINT framework
-    + user-scanner / Sherlock / Maigret / socialscan
-    + Holehe / theHarvester
-    + PhoneInfoga
-    + passive Amass / RDAP / certificate transparency
-    + identity correlation + OSINT UX
+    PR #60 foundation + user-scanner slice DONE
+    → Sherlock / Maigret / socialscan
+    → Holehe / theHarvester
+    → PhoneInfoga
+    → passive Amass / RDAP / certificate transparency
+    → advanced aggregator review where useful
+    → correlation + persistence + OSINT acceptance
             ↓
-    owner OSINT acceptance gate
+    OWNER OSINT EXIT GATE
             ↓
-NEXT DECISION
-    A) resume M1.5 → M2 Findings → M3/M4/M5
-    OR
-    B) deliberately design Authorized Validation / Lab before any exploitation work
-
-M7+ remain queued/future according to their existing sections.
+VULNERABILITY COMPLETION — NEXT
+    minimum M2 Findings substrate required by scanners
+    → M4 TLS / Nuclei / native finding rules / service-CVE enrichment
+    → M7 Semgrep / secret-scanner review / dependency-SBOM vulnerability analysis
+    → owner vulnerability-scanning acceptance
+            ↓
+    OWNER VULNERABILITY EXIT GATE
+            ↓
+UI / SPECIFICATION PERFECTION
+    broad visual polish, dashboard/presentation refinement, nonessential UX
+    restructuring, detailed specification cleanup, and deferred presentation work
 ```
+
+M3, M5, and other queued/future categories do not jump ahead of the vulnerability gate
+unless the owner deliberately reprioritizes this roadmap again. Functional UI necessary
+to operate and verify the active OSINT/scanner work remains allowed.
 
 Distribution/release engineering remains an ongoing controlled track.
 
@@ -1183,17 +1238,22 @@ Distribution/release engineering remains an ongoing controlled track.
 
 ## Immediate next action
 
-OSINT is now the active product milestone.
+OSINT is the active product milestone and PR #60 has already completed the foundation
+plus first user-scanner slice.
 
-1. Land this roadmap reprioritization.
-2. Establish the OSINT typed-provider/model/UI foundation under Issue #58.
-3. Implement Issue #22 (user-scanner Username + Email) as the first real provider slice.
-4. Add complementary username/email providers (Sherlock, Maigret, socialscan, Holehe).
-5. Add PhoneInfoga.
-6. Add domain/public-infrastructure OSINT (theHarvester, passive Amass, RDAP, CT).
-7. Add correlation/review UX, restart persistence, offline fixtures, and complete the
-   owner OSINT acceptance walkthrough.
-8. Only then decide whether to resume M1.5/Findings/Assessment or design the separate
-   Authorized Validation / Lab track.
+1. Land this roadmap-order update.
+2. Integrate the remaining Username providers: Sherlock, Maigret, and socialscan.
+3. Complete Email coverage with Holehe, socialscan, and theHarvester where appropriate.
+4. Add PhoneInfoga.
+5. Add Domain/Organization/public-infrastructure OSINT: theHarvester, passive Amass,
+   native RDAP, and certificate-transparency intelligence.
+6. Evaluate SpiderFoot/read-only aggregators only after the typed contract is stable and
+   only when they add distinct value.
+7. Finish correlation/review UX, provider readiness, restart persistence, offline
+   fixtures, and the owner OSINT acceptance walkthrough.
+8. After the OSINT exit gate, begin the vulnerability-completion block immediately:
+   minimum Findings substrate → M4 assessment → M7 local-source/dependency scanning.
+9. Only after the vulnerability exit gate may broad UI perfection/specification work
+   begin.
 
-PR #46 remains preserved on HOLD and is not automatically merged or discarded.
+PR #61 merged the reconciled M1.5 implementation. PR #46 is superseded and closed.
