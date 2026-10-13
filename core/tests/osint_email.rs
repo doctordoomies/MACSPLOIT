@@ -118,6 +118,8 @@ fn email_providers_dedup_canonically_keep_provenance_and_survive_restart() {
     };
     let engine = open(&root);
     let snap = engine.store.snapshot(ws).unwrap();
+    // Canonical dedup never implies a correlation between distinct identities.
+    assert!(snap.correlations.is_empty());
 
     // One canonical subject and one canonical Pinterest account, reported by both.
     let subjects: Vec<_> = snap

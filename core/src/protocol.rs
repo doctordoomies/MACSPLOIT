@@ -89,6 +89,20 @@ pub enum Command {
     CancelInstall {},
     /// Read-only install status (running provider/method + last outcome).
     InstallStatus {},
+    /// Record an analyst's evidence-backed correlation proposal between two assets
+    /// (Issue #67). Never merges or modifies assets; starts PROPOSED.
+    ProposeCorrelation {
+        workspace_id: Id,
+        #[serde(flatten)]
+        proposal: crate::correlation::Proposal,
+    },
+    /// Apply an explicit review decision (confirm/reject/retract/reopen) with a note.
+    ReviewCorrelation {
+        workspace_id: Id,
+        correlation_id: Id,
+        decision: crate::correlation::ReviewDecision,
+        note: String,
+    },
 }
 
 impl Command {
@@ -111,6 +125,8 @@ impl Command {
             Self::StartInstall { .. } => "start_install",
             Self::CancelInstall { .. } => "cancel_install",
             Self::InstallStatus { .. } => "install_status",
+            Self::ProposeCorrelation { .. } => "propose_correlation",
+            Self::ReviewCorrelation { .. } => "review_correlation",
         }
     }
 }
@@ -216,6 +232,21 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 json!({"cancelled": true})
             }
             Command::InstallStatus {} => engine.install_status()?,
+            Command::ProposeCorrelation {
+                workspace_id,
+                proposal,
+            } => serde_json::to_value(engine.store.propose_correlation(workspace_id, proposal)?)?,
+            Command::ReviewCorrelation {
+                workspace_id,
+                correlation_id,
+                decision,
+                note,
+            } => serde_json::to_value(engine.store.review_correlation(
+                workspace_id,
+                correlation_id,
+                decision,
+                &note,
+            )?)?,
         })
     })();
     match result {

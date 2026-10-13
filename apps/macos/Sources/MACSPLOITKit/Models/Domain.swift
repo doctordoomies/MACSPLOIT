@@ -190,6 +190,8 @@ public struct Snapshot: Codable, Sendable, Equatable {
     public let chains: [ChainRun], stages: [ChainStage], tasks: [TaskRecord], providerRuns: [ProviderRun]
     public let evidence: [Evidence], events: [CoreEvent]
     public let lastSequence: Int64
+    /// Analyst correlations (absent from older cores). Never merges assets.
+    public var correlations: [Correlation]? = nil
 }
 public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String

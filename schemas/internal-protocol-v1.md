@@ -43,6 +43,8 @@ empty request ID; an oversized frame closes the helper session.
 | start_install | provider_id, method (`homebrew`, `managed_download`, `existing_binary`, `official_installer`) | Starts a typed, async provider install (worker thread); returns `{started, provider_id}`. Only the reviewed provider set is installable; execution is shell-free. Observe via `install_status` |
 | cancel_install | none | Requests cancellation of a running install |
 | install_status | none | `{running: {provider_id, method}?, last: InstallOutcome?}` where InstallOutcome is `{provider_id, method, status (SUCCEEDED/FAILED/CANCELLED/UNSUPPORTED), message, detail?}`; read-only |
+| propose_correlation | workspace_id, left_asset_id, right_asset_id, basis (`analyst_review`, `shared_public_record`, `shared_identifier`), confidence (`LOW`, `MEDIUM`, `HIGH`), rationale (1–1,024 bytes), observation_ids (1–20) | A `PROPOSED` Correlation. Refused (`InvalidRequest`) unless both assets are cited by evidence-backed observations; `shared_identifier` is capped at `LOW`; a second proposal for the same pair is `CorrelationExists`. Never modifies assets |
+| review_correlation | workspace_id, correlation_id, decision (`confirm`, `reject`, `retract`, `reopen`), note (1–1,024 bytes) | The updated Correlation; only `PROPOSED→CONFIRMED/REJECTED`, `CONFIRMED→RETRACTED`, `REJECTED/RETRACTED→PROPOSED`; otherwise `InvalidTransition` |
 
 `target_scope_status`, `authorize_target`, `start_install`, `cancel_install`, and
 `install_status` are additive to protocol v1 (no version bump). Installation state is
@@ -98,3 +100,13 @@ provider reports incomplete results. `ProviderResults` event payloads may includ
 `error_code`/`message`. Evidence envelopes may include `cancelled` and `artifacts`
 (name, observed size, over-limit flag, and the evidence id/SHA-256 of a separately
 stored structured report). Older clients ignore all new fields; no version bump.
+
+### Correlation additions (v1 compatible, Issue #67)
+
+`snapshot` gains `correlations`: `[{id, workspace_id, left_asset_id, right_asset_id,
+basis, confidence, status (PROPOSED/CONFIRMED/REJECTED/RETRACTED), rationale,
+observation_ids, evidence_ids, created_by, created_at, updated_at, reviews: [{id,
+from_status?, to_status, note, actor, timestamp}]}]` (absent from older cores; clients
+treat a missing key as empty). Durable events gain `CorrelationProposed` and
+`CorrelationReviewed`. Correlations are created only by `propose_correlation`; no chain
+or provider creates one. See `docs/osint-correlation.md`.

@@ -8,6 +8,12 @@ import MACSPLOITKit
 struct OSINTView: View {
     @ObservedObject var model: WorkspaceModel
     @State private var consoleExpanded = false
+    @State private var correlationLeft: String?
+    @State private var correlationRight: String?
+    @State private var correlationBasis: CorrelationBasisOption = .analystReview
+    @State private var correlationConfidence = "LOW"
+    @State private var correlationRationale = ""
+    @State private var reviewNotes: [String: String] = [:]
 
     var body: some View {
         WorkbenchPage(maxWidth: 1200) {
@@ -25,6 +31,7 @@ struct OSINTView: View {
                     console
                 }
                 history
+                correlationPanel
             }
         }
     }
@@ -438,6 +445,110 @@ struct OSINTView: View {
                 }
             }
         }
+    }
+
+    // MARK: Correlation
+
+    private func assetLabel(_ id: String) -> String {
+        guard let asset = model.snapshot?.assets.first(where: { $0.id == id }) else { return id }
+        return "\(asset.canonicalIdentity) · \(asset.assetType)"
+    }
+
+    @ViewBuilder private var correlationPanel: some View {
+        let candidates = model.snapshot?.correlatableAssets ?? []
+        if candidates.count >= 2 || !model.correlations.isEmpty {
+            WorkbenchCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Correlations · \(model.correlations.count)").font(.headline)
+                    Text("Explicit analyst claims that two different assets may be the same subject. Each cites evidence for both sides, starts Proposed, and changes only through a review you record. Correlation never merges or edits assets; matching identifiers alone are weak evidence.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ForEach(model.correlations) { correlation in correlationRow(correlation) }
+                    if candidates.count >= 2 {
+                        DisclosureGroup("Propose a correlation") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Picker("First asset", selection: $correlationLeft) {
+                                    Text("Choose…").tag(String?.none)
+                                    ForEach(candidates) { Text(assetLabel($0.id)).tag(Optional($0.id)) }
+                                }
+                                Picker("Second asset", selection: $correlationRight) {
+                                    Text("Choose…").tag(String?.none)
+                                    ForEach(candidates) { Text(assetLabel($0.id)).tag(Optional($0.id)) }
+                                }
+                                Picker("Basis", selection: $correlationBasis) {
+                                    ForEach(CorrelationBasisOption.allCases) { Text($0.title).tag($0) }
+                                }
+                                Picker("Confidence", selection: $correlationConfidence) {
+                                    ForEach(correlationBasis == .sharedIdentifier ? ["LOW"] : ["LOW", "MEDIUM", "HIGH"], id: \.self) { Text($0).tag($0) }
+                                }
+                                TextField("Rationale (what in the evidence links them)", text: $correlationRationale)
+                                Button("Propose") {
+                                    guard let left = correlationLeft, let right = correlationRight else { return }
+                                    let confidence = correlationBasis == .sharedIdentifier ? "LOW" : correlationConfidence
+                                    Task {
+                                        if await model.proposeCorrelation(left: left, right: right, basis: correlationBasis.rawValue,
+                                                                          confidence: confidence, rationale: correlationRationale) {
+                                            correlationRationale = ""
+                                        }
+                                    }
+                                }
+                                .disabled(correlationLeft == nil || correlationRight == nil || correlationLeft == correlationRight
+                                          || correlationRationale.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                            .frame(maxWidth: 560, alignment: .leading)
+                            .padding(.top, 6)
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+        }
+    }
+
+    private func correlationRow(_ correlation: Correlation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(assetLabel(correlation.leftAssetId))  ↔  \(assetLabel(correlation.rightAssetId))")
+                    .font(.callout.monospaced()).textSelection(.enabled)
+                Spacer()
+                Text(correlation.status).font(.caption2.monospaced())
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.gray.opacity(0.16), in: Capsule())
+            }
+            Text("\(correlation.basis) · \(correlation.confidence) · \(correlation.evidenceIds.count) evidence record(s)")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(correlation.rationale).font(.caption).textSelection(.enabled)
+            DisclosureGroup("Review history (\(correlation.reviews.count))") {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(correlation.reviews) { review in
+                        Text("\(displayTime(review.timestamp)) · \(review.fromStatus ?? "—") → \(review.toStatus) · \(review.note)")
+                            .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }.padding(.top, 2)
+            }
+            .font(.caption)
+            if !correlation.availableDecisions.isEmpty {
+                HStack(spacing: 8) {
+                    TextField("Review note", text: Binding(get: { reviewNotes[correlation.id] ?? "" },
+                                                           set: { reviewNotes[correlation.id] = $0 }))
+                        .frame(maxWidth: 320)
+                    ForEach(correlation.availableDecisions) { decision in
+                        Button(decision.title) {
+                            let note = reviewNotes[correlation.id] ?? ""
+                            Task {
+                                if await model.reviewCorrelation(correlation.id, decision: decision, note: note) {
+                                    reviewNotes[correlation.id] = nil
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled((reviewNotes[correlation.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func subject(for chain: ChainRun) -> String {

@@ -26,6 +26,10 @@ pub enum EventType {
     ChainCompleted,
     ReconCancelled,
     RecoveryCompleted,
+    /// An analyst proposed an evidence-backed correlation between two assets.
+    CorrelationProposed,
+    /// An analyst reviewed a correlation (confirm / reject / retract / reopen).
+    CorrelationReviewed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

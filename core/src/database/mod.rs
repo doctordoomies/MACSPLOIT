@@ -59,7 +59,7 @@ pub fn rows<T: DeserializeOwned>(
 pub fn migrate(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
-    const LATEST: i64 = 6;
+    const LATEST: i64 = 7;
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > LATEST {
         return Err(CoreError::new(
@@ -115,6 +115,13 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
             6,
             "Domain-OSINT",
         )?;
+    }
+    if version < 7 {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("../../migrations/007_correlations.sql"))
+            .map_err(|_| CoreError::new("MigrationFailure", "Correlation migration failed."))?;
+        tx.pragma_update(None, "user_version", 7)?;
+        tx.commit()?;
     }
     Ok(())
 }
@@ -726,7 +733,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            7
         );
         assert_eq!(
             conn.query_row(
@@ -849,7 +856,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            7
         );
         // The provider_id column added by migration 002 is present.
         assert!(conn

@@ -290,6 +290,8 @@ actor OSINTAPI: CoreAPI {
     private(set) var started: [(target: String, chain: String, options: JSONValue)] = []
     private(set) var cancelled: [String] = []
     private(set) var addedTargets: [String] = []
+    private(set) var proposals: [(left: String, right: String, basis: String, confidence: String, observations: [String])] = []
+    private(set) var reviews: [(correlation: String, decision: String, note: String)] = []
     let providers: [ProviderStatus]
     init(providers: [ProviderStatus]) { self.providers = providers }
     func hello() async throws -> CoreHello { CoreHello(coreVersion: "0.1.0", protocolVersion: 1, offlineOnly: false) }
@@ -312,6 +314,40 @@ actor OSINTAPI: CoreAPI {
     func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus { ScopeStatus(authorized: false, requiredScopeEntry: nil) }
     func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
         AuthorizeResult(workspace: try osintSnapshot().workspace, authorized: false, addedEntry: nil)
+    }
+    func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
+                            rationale: String, observations: [String]) async throws -> Correlation {
+        proposals.append((left, right, basis, confidence, observations))
+        return try sampleCorrelation(status: "PROPOSED")
+    }
+    func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
+        reviews.append((correlation, decision, note))
+        return try sampleCorrelation(status: "CONFIRMED")
+    }
+}
+
+func sampleCorrelation(status: String) throws -> Correlation {
+    let json = #"{"id":"k1","workspace_id":"w","left_asset_id":"a-gh","right_asset_id":"a-user","basis":"shared_identifier","confidence":"LOW","status":"\#(status)","rationale":"Same handle.","observation_ids":["o-gh","o-sum"],"evidence_ids":["e-report"],"created_by":"Analyst","created_at":"t","updated_at":"t","reviews":[{"id":"r1","from_status":null,"to_status":"PROPOSED","note":"Proposed","actor":"Analyst","timestamp":"t"}]}"#
+    return try CoreCoding.decoder().decode(Correlation.self, from: Data(json.utf8))
+}
+
+@Suite struct CorrelationPresentationTests {
+    @Test func testCorrelationDecodesAndOffersOnlyValidDecisions() throws {
+        let proposed = try sampleCorrelation(status: "PROPOSED")
+        #expect(proposed.reviews.first?.fromStatus == nil && proposed.evidenceIds == ["e-report"])
+        #expect(proposed.availableDecisions == [.confirm, .reject])
+        #expect(try sampleCorrelation(status: "CONFIRMED").availableDecisions == [.retract])
+        #expect(try sampleCorrelation(status: "RETRACTED").availableDecisions == [.reopen])
+        // Snapshots from older cores (no correlations key) still decode.
+        #expect(try osintSnapshot().correlations == nil)
+    }
+
+    @Test func testOnlyEvidenceBackedAssetsAreCorrelatable() throws {
+        let snapshot = try osintSnapshot()
+        // a-dom only has an analyst observation without evidence.
+        #expect(snapshot.correlatableAssets.map(\.id) == ["a-gh", "a-user"])
+        #expect(snapshot.citableObservations(for: "a-user") == ["o-sum"])
+        #expect(snapshot.citableObservations(for: "a-dom").isEmpty)
     }
 }
 
@@ -387,6 +423,26 @@ actor OSINTAPI: CoreAPI {
         #expect(started.first?.chain == "domain_osint")
         #expect(started.first?.target == "t-dom")
         #expect(started.first?.options["provider_id"].string == "native_ct")
+    }
+
+    @Test func testCorrelationsAreProposedAndReviewedOnlyExplicitly() async {
+        let api = OSINTAPI(providers: [osintProviderStatus()])
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        #expect(model.correlations.isEmpty)
+        let none = await api.proposals
+        #expect(none.isEmpty) // booting/refreshing never proposes anything
+        let ok = await model.proposeCorrelation(left: "a-user", right: "a-gh", basis: "shared_identifier",
+                                                confidence: "LOW", rationale: "Same handle.")
+        #expect(ok)
+        let proposals = await api.proposals
+        #expect(proposals.count == 1)
+        // Evidence for both sides is cited.
+        #expect(proposals.first?.observations == ["o-sum", "o-gh"])
+        let reviewed = await model.reviewCorrelation("k1", decision: .confirm, note: "Checked.")
+        #expect(reviewed)
+        let reviews = await api.reviews
+        #expect(reviews.first?.decision == "confirm" && reviews.first?.note == "Checked.")
     }
 
     @Test func testRestoredWorkspaceSelectsLatestOSINTRun() async {

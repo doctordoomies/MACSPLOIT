@@ -417,6 +417,44 @@ public final class WorkspaceModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
+    // MARK: Correlation (explicit, evidence-backed, reviewable)
+
+    /// Analyst correlations, oldest first. Never created automatically.
+    public var correlations: [Correlation] { snapshot?.correlations ?? [] }
+
+    /// Propose a correlation between two different assets. The cited evidence is the
+    /// assets' own evidence-backed observations; the core validates everything
+    /// (both sides cited, evidence present, weak-signal confidence cap) and never
+    /// merges or edits the assets.
+    @discardableResult
+    public func proposeCorrelation(left: String, right: String, basis: String, confidence: String, rationale: String) async -> Bool {
+        guard let id = selectedWorkspaceId, let snapshot else { return false }
+        let cited = snapshot.citableObservations(for: left) + snapshot.citableObservations(for: right)
+        do {
+            _ = try await client.proposeCorrelation(workspace: id, left: left, right: right, basis: basis,
+                                                    confidence: confidence, rationale: rationale, observations: cited)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Apply an explicit review decision with a note (appended to the review log).
+    @discardableResult
+    public func reviewCorrelation(_ correlation: String, decision: CorrelationDecision, note: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.reviewCorrelation(workspace: id, correlation: correlation, decision: decision.rawValue, note: note)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     /// Console lines for the selected OSINT run.
     public var osintConsoleLines: [ConsoleLine] {
         guard let snapshot, let chain = selectedOSINTChainId else { return [] }

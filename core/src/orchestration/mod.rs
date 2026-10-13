@@ -188,6 +188,10 @@ pub struct Snapshot {
     pub tasks: Vec<Task>,
     pub provider_runs: Vec<ProviderRun>,
     pub evidence: Vec<Evidence>,
+    /// Analyst correlations with their review history (Issue #67). Separate from
+    /// canonical deduplication; never merges assets.
+    #[serde(default)]
+    pub correlations: Vec<crate::correlation::Correlation>,
     pub events: Vec<Event>,
     pub last_sequence: i64,
 }
@@ -243,6 +247,7 @@ impl Store {
             tasks:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'status',status,'updated_at',updated_at) FROM tasks WHERE workspace_id=?1 ORDER BY updated_at,id",[&key])?,
             provider_runs:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'provider_id',provider_id,'provider_version',provider_version,'target',target,'start_time',start_time,'end_time',end_time,'status',status,'raw_output_reference',raw_output_reference,'exit_status',exit_status) FROM provider_runs WHERE workspace_id=?1 ORDER BY start_time,id",[&key])?,
             evidence:rows(&tx,&format!("{EVIDENCE_SELECT} WHERE workspace_id=?1 ORDER BY timestamp,id"),[&key])?,
+            correlations:crate::correlation::correlations_in(&tx,id)?,
             last_sequence:events.last().map_or(0,|e|e.sequence),events,
         };
         tx.commit()?;
