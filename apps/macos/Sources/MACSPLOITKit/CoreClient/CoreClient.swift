@@ -21,6 +21,9 @@ public protocol CoreAPI: Sendable {
     func startInstall(provider: String, method: String) async throws
     func cancelInstall() async throws
     func installStatus() async throws -> InstallState
+    func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
+                            rationale: String, observations: [String]) async throws -> Correlation
+    func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation
 }
 
 public extension CoreAPI {
@@ -33,7 +36,14 @@ public extension CoreAPI {
         throw CoreFailure(code: "Unsupported", message: "Install not available in this client.")
     }
     func cancelInstall() async throws {}
-    func installStatus() async throws -> InstallState { InstallState(running: nil, last: nil) }
+    func installStatus() async throws -> InstallState { InstallState(running: nil, last: nil, events: nil) }
+    func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
+                            rationale: String, observations: [String]) async throws -> Correlation {
+        throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")
+    }
+    func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
+        throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")
+    }
 }
 
 public extension CoreAPI {
@@ -116,6 +126,20 @@ public struct CoreClient: CoreAPI {
     }
     public func cancelInstall() async throws {
         let _: JSONValue = try await call("cancel_install", [:])
+    }
+    public func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
+                                   rationale: String, observations: [String]) async throws -> Correlation {
+        try await call("propose_correlation", [
+            "workspace_id": .string(workspace), "left_asset_id": .string(left), "right_asset_id": .string(right),
+            "basis": .string(basis), "confidence": .string(confidence), "rationale": .string(rationale),
+            "observation_ids": .array(observations.map { JSONValue.string($0) }),
+        ])
+    }
+    public func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
+        try await call("review_correlation", [
+            "workspace_id": .string(workspace), "correlation_id": .string(correlation),
+            "decision": .string(decision), "note": .string(note),
+        ])
     }
     public func installStatus() async throws -> InstallState {
         try await call("install_status", [:])

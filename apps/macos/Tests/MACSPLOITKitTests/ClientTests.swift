@@ -191,6 +191,35 @@ actor ReplyTransport: CoreTransport {
         #expect(state.last?.detail?.hasSuffix("/Providers/subfinder") == true)
     }
 
+    @Test func testStartInstallEncodesManagedMethod() async throws {
+        let reply = ReplyTransport(#"{"result":{"started":true,"provider_id":"sherlock"}}"#)
+        try await CoreClient(transport: reply).startInstall(provider: "sherlock", method: "managed")
+        let object = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        let params = object["params"] as! [String: Any]
+        #expect(params["provider_id"] as? String == "sherlock")
+        #expect(params["method"] as? String == "managed")
+    }
+
+    @Test func testInstallStatusDecodesEventStreamForTheInstallConsole() async throws {
+        let reply = ReplyTransport(#"""
+        {"result":{"running":{"provider_id":"sherlock","method":"managed_python"},"last":null,"events":[
+          {"seq":1,"timestamp":"t","kind":"STAGE","text":"PREPARING"},
+          {"seq":2,"timestamp":"t","kind":"INFO","text":"Using app-managed method: ManagedPython"},
+          {"seq":3,"timestamp":"t","kind":"COMMAND","text":"$ uv tool install --python 3.12 --force sherlock-project==0.15.0"},
+          {"seq":4,"timestamp":"t","kind":"STDOUT","text":"Resolved sherlock-project==0.15.0"},
+          {"seq":5,"timestamp":"t","kind":"STAGE","text":"INSTALLING"}
+        ]}}
+        """#)
+        let state = try await CoreClient(transport: reply).installStatus()
+        #expect(state.running?.method == "managed_python")
+        #expect(state.events?.count == 5)
+        // The console derives the current stage from the latest STAGE event.
+        #expect(state.currentStage == "INSTALLING")
+        // The reviewed command is surfaced as a COMMAND line, never executed from text.
+        #expect(state.events?.contains { $0.kind == "COMMAND" && $0.text.contains("tool install") } == true)
+        #expect(state.events?.first(where: { $0.kind == "STAGE" })?.stage == "PREPARING")
+    }
+
     @Test func testStartInstallEncodesProviderAndMethod() async throws {
         let reply = ReplyTransport(#"{"result":{"started":true,"provider_id":"httpx"}}"#)
         try await CoreClient(transport: reply).startInstall(provider: "httpx", method: "homebrew")

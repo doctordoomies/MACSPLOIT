@@ -63,8 +63,11 @@ pub fn extract_member(
     dest: &Path,
     max_extracted: u64,
 ) -> Result<()> {
-    // A member must be a single, normal path component (top-level, not nested).
-    if member.is_empty() || Path::new(member).components().count() != 1 {
+    // A member must be a safe relative path whose components are all normal (no
+    // traversal, absolute, or platform-prefix segments). It is usually a single
+    // top-level component (e.g. `subfinder`), but a reviewed nested member such as
+    // uv's `uv-<triple>/uv` is also accepted and matched exactly.
+    if member.is_empty() || !is_safe_relative(Path::new(member)) {
         return Err(unsafe_archive("Invalid expected member."));
     }
     let result = match format {

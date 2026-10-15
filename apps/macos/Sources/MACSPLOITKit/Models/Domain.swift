@@ -190,6 +190,8 @@ public struct Snapshot: Codable, Sendable, Equatable {
     public let chains: [ChainRun], stages: [ChainStage], tasks: [TaskRecord], providerRuns: [ProviderRun]
     public let evidence: [Evidence], events: [CoreEvent]
     public let lastSequence: Int64
+    /// Analyst correlations (absent from older cores). Never merges assets.
+    public var correlations: [Correlation]? = nil
 }
 public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String
@@ -210,12 +212,25 @@ public struct InstallOutcome: Codable, Sendable, Equatable {
     public let providerId: String, method: String, status: String, message: String
     public let detail: String?
 }
-/// Current provider-install state (running + last outcome). Install is global, not
-/// workspace data.
+/// One line in the Install Console event log.
+public struct InstallEvent: Codable, Sendable, Equatable, Identifiable {
+    public let seq: Int
+    public let timestamp: String
+    public let kind: String
+    public let text: String
+    public var id: Int { seq }
+    /// Stage name when this is a STAGE event (PREPARING/DOWNLOADING/…/READY/FAILED).
+    public var stage: String? { kind == "STAGE" ? text : nil }
+}
+/// Current provider-install state (running + last outcome + live console events).
+/// Install is global, not workspace data.
 public struct InstallState: Codable, Sendable, Equatable {
     public struct Running: Codable, Sendable, Equatable { public let providerId: String, method: String }
     public let running: Running?
     public let last: InstallOutcome?
+    public let events: [InstallEvent]?
+    /// The most recent stage reported (drives the Install Console progress label).
+    public var currentStage: String? { events?.last(where: { $0.kind == "STAGE" })?.text }
 }
 public struct ProviderInstallation: Codable, Sendable, Equatable {
     public let state: String
@@ -242,6 +257,10 @@ public struct ProviderInstallation: Codable, Sendable, Equatable {
 public struct ProviderInstallInfo: Codable, Sendable, Equatable {
     public let homebrew: Bool
     public let managedDownload: Bool
+    /// An app-managed Python install (pinned uv runtime) is available.
+    public let managedPython: Bool?
+    /// Any app-managed method is available — what "Install with MACSPLOIT" performs.
+    public let managed: Bool?
     public let officialInstallerUrl: String?
 }
 public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
@@ -265,6 +284,8 @@ public struct ProviderStatus: Codable, Identifiable, Sendable, Equatable {
     public var managedDownloadSupported: Bool { install?.managedDownload ?? false }
     /// Whether a Homebrew install method is offered.
     public var homebrewSupported: Bool { install?.homebrew ?? false }
+    /// Whether "Install with MACSPLOIT" (any reviewed app-managed method) is offered.
+    public var macsploitManagedSupported: Bool { install?.managed ?? install?.managedDownload ?? false }
 }
 public struct CoreHello: Codable, Sendable {
     public let coreVersion: String, protocolVersion: Int, offlineOnly: Bool

@@ -32,7 +32,7 @@ today, not aspirations. Statuses:
 | Persistence | STABLE | Survives restart; migrations versioned |
 | Synthetic Recon (offline demo) | STABLE | Full pipeline with invented data, no network |
 | DNS Recon | BETA | Built-in forward (A/AAAA) for Domain/Hostname/URL-host and reverse (PTR) for IP/URL-IP targets; no external CLI |
-| Provider installation | BETA | Explicit, shell-free install of the reviewed provider set (async, live status): Homebrew, or a verified app-managed direct download (pinned manifest, HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf; Nmap is Homebrew/official only; existing-binary/PATH first-class; no silent installs, no background updates |
+| Provider installation | BETA | Explicit, shell-free **Install with MACSPLOIT** (async, live status + read-only Install Console): a verified app-managed direct download (pinned manifest, HTTPS-only, SHA-256, safe extraction, atomic install) for subfinder/httpx/katana/ffuf, or a pinned/verified `uv` runtime that installs a reviewed pinned Python package into an isolated environment for user-scanner/Sherlock/Maigret/socialscan (no system Python/pip/pipx); Homebrew optional; Nmap/PhoneInfoga/theHarvester Homebrew/official; existing-binary/PATH first-class; auto-rediscovery on completion; no shell/sudo/system-dir writes, no silent installs, no background updates |
 | Recon result summaries | BETA | Bounded, sanitized `ProviderResults` events render concise discoveries in the live console (Assets/Evidence remain authoritative) |
 
 ## Providers (recon pipeline)
@@ -71,21 +71,21 @@ today, not aspirations. Statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| OSINT framework (typed contract) | BETA | `USERNAME_OSINT`/`EMAIL_OSINT` capabilities, `username_osint`/`email_osint` chains with explicit provider selection, identifier-subject authorization, `Username`/`EmailAddress`/`Account` assets, `has_account`/`profile_url` relationships, per-run observation metadata, report-artifact evidence, `PARTIAL` runs — see [OSINT](osint.md). Pending owner macOS acceptance |
+| OSINT framework (typed contract) | BETA | `USERNAME_OSINT`/`EMAIL_OSINT`/`PHONE_OSINT`/`DOMAIN_OSINT` capabilities, `username_osint`/`email_osint`/`phone_osint`/`domain_osint` chains with explicit provider selection, identifier-subject authorization (domain OSINT requires workspace scope), `Username`/`EmailAddress`/`PhoneNumber`/`Account` assets, `has_account`/`profile_url`/`has_email`/`has_nameserver`/`observed_ip` relationships, per-run observation metadata, report-artifact evidence, `PARTIAL` runs — see [OSINT](osint.md). Pending owner macOS acceptance |
 | Username OSINT — user-scanner | BETA | Issue #22. Dedicated OSINT workflow; user-scanner 1.5.x; one bounded scan (no recursion, no breach data, no proxies, notifying modules skipped, NSFW excluded); cancellable; results survive restart. No partial results on cancel/timeout (upstream writes JSON only at the end) |
 | Email OSINT — user-scanner | BETA | Same provider and boundaries; registrations without URLs become `Account` assets |
-| Username OSINT — Sherlock / Maigret / socialscan | BETA | Issue #58. Three username-only providers on the shared OSINT contract: Sherlock (CSV), Maigret (`--json simple`), socialscan (`--json`, registration availability). One bounded scan each; no recursion, proxies, breach data, logins, or credential checks; cancellable; results survive restart. Cross-provider discoveries deduplicate into one canonical account while each provider keeps its own observation/evidence. Copy-only `pipx`/`pip` setup (no managed installer) |
-| Email — Holehe / theHarvester | PLANNED | Not implemented (socialscan email support is a small future addition to the existing provider) |
-| Phone (PhoneInfoga) | PLANNED | |
-| Domain OSINT (theHarvester, passive Amass, native RDAP, certificate transparency) | PLANNED | |
-| Identity correlation | PLANNED | Nothing merges accounts/people today; correlation must be explicit and reviewable |
+| Username OSINT — Sherlock / Maigret / socialscan | BETA | Issue #58. Three username providers on the shared OSINT contract: Sherlock (CSV), Maigret (`--json simple`), socialscan (`--json`, registration availability). One bounded scan each; no recursion, proxies, breach data, logins, or credential checks; cancellable; results survive restart. Cross-provider discoveries deduplicate into one canonical account while each provider keeps its own observation/evidence. Copy-only `pipx`/`pip` setup (no managed installer) |
+| Email OSINT — socialscan | BETA | Issue #64. socialscan 1.x/2.x email availability (registered / not registered / failed lookup kept distinct; a failed lookup is never "not registered"); upstream string booleans handled. Holehe **not integrated** (drives signup/reset flows); theHarvester emails arrive via Domain OSINT |
+| Phone OSINT — PhoneInfoga | BETA | Issue #65. Explicit international `PhoneNumber` target (E.164; no country guessing). PhoneInfoga 2.x `local` + OVH public number-range scanners only (`numverify`, `googlecse`, `googlesearch` disabled); numbering facts on the run summary; no calls/SMS/OTP/recovery/pivots |
+| Domain OSINT — native CT, native RDAP, theHarvester | BETA | Issue #66. In-scope `Domain` only, `PASSIVE` providers only. crt.sh certificate transparency (historical names, wildcard flagging), IANA-bootstrapped RDAP (minimized registration facts, nameservers), theHarvester 4.10/4.11 with a fixed key-less passive source allow-list. Hosts reuse the Subfinder `Subdomain` asset type (deduplicated, "also observed by" shown); nothing is resolved or probed. OWASP Amass **not integrated** (no enforceable passive-only mode in v5) |
+| Identity correlation | BETA | Issue #67 (implementation portion). Explicit analyst proposals citing evidence for both assets; basis + confidence (shared identifier capped at LOW); PROPOSED → reviewed via an append-only log; never merges assets — see [OSINT correlation](osint-correlation.md). SpiderFoot not integrated |
 | Source/secret analysis (Gitleaks/TruffleHog/Semgrep) | FUTURE | Only on explicitly selected repos/files |
 
 ## Platform & tooling
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, copy-only setup help, and explicit per-provider install (Homebrew, or verified managed download for subfinder/httpx/katana/ffuf) — see the Provider installation row. user-scanner is copy-only (`pipx install user-scanner`) with a supported-version check (1.5.x) |
+| Tool Manager (status/version/path/help) | BETA | Global Provider Center with status, version, executable path, filters, diagnostics, and explicit per-provider **Install with MACSPLOIT** / Homebrew / official-installer actions plus a read-only Install Console — see the Provider installation row. Python providers install via the managed `uv` runtime (no pipx needed); raw pip/pipx is a manual fallback |
 | Provider/plugin SDK | EXPERIMENTAL | Internal trait documented; no stable public ABI pre-1.0 |
 | Reporting exports | PLANNED | |
 | Workspace delete/export | PLANNED | Data location documented today |

@@ -64,11 +64,6 @@ private struct ProviderCard: View {
     private var installRunningHere: Bool {
         model.installState?.running?.providerId == provider.id
     }
-    private var lastOutcomeHere: InstallOutcome? {
-        let last = model.installState?.last
-        return last?.providerId == provider.id ? last : nil
-    }
-
     private var statusColor: Color {
         switch provider.installation.state {
         case "BUILT_IN", "INSTALLED": return .green
@@ -118,18 +113,22 @@ private struct ProviderCard: View {
                     installControls
                 }
                 if let setup = provider.setup {
-                    if let command = setup.installCommand {
+                    // Only offer a copy-only command when there is no reviewed in-app
+                    // installer; otherwise "Install with MACSPLOIT" / Homebrew above are
+                    // the primary path and a raw pip/pipx command is just a fallback.
+                    if let command = setup.installCommand,
+                       !provider.macsploitManagedSupported || command.hasPrefix("brew ") {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(command.hasPrefix("brew ")
-                                 ? "Recommended on macOS: Homebrew (optional)"
-                                 : "Recommended install — run it yourself in Terminal, then Refresh. MACSPLOIT never installs this provider.")
+                                 ? "Alternative: Homebrew (optional)"
+                                 : "Manual alternative — run it yourself in Terminal, then Refresh.")
                                 .font(.caption).foregroundStyle(.secondary)
                             HStack {
                                 Text(command).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                                 Button {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(command, forType: .string)
-                                } label: { Label("Copy Recommended Command", systemImage: "doc.on.doc") }.controlSize(.small)
+                                } label: { Label("Copy Command", systemImage: "doc.on.doc") }.controlSize(.small)
                             }
                         }
                     }
@@ -147,59 +146,43 @@ private struct ProviderCard: View {
     /// Install actions for a missing external provider. The user explicitly initiates each
     /// install; MACSPLOIT runs no shell and installs nothing silently.
     @ViewBuilder private var installControls: some View {
-        if installRunningHere {
+        let anyRunning = model.installState?.running != nil
+        if !installRunningHere {
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Installing \(provider.name)…").font(.caption)
-                Button("Cancel") { Task { await model.cancelInstall() } }.controlSize(.small)
-            }
-        } else {
-            HStack(spacing: 8) {
+                if provider.macsploitManagedSupported {
+                    Button {
+                        Task { await model.installProvider(provider.id, method: "managed") }
+                    } label: { Label("Install with MACSPLOIT", systemImage: "arrow.down.circle.fill") }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(!model.isConnected || anyRunning)
+                }
                 if provider.homebrewSupported {
                     Button {
                         Task { await model.installProvider(provider.id, method: "homebrew") }
                     } label: { Label("Install with Homebrew", systemImage: "shippingbox") }
                         .controlSize(.small)
-                        .disabled(!model.isConnected || model.installState?.running != nil)
+                        .disabled(!model.isConnected || anyRunning)
                 }
-                if provider.managedDownloadSupported {
-                    Button {
-                        Task { await model.installProvider(provider.id, method: "managed_download") }
-                    } label: { Label("Install without Homebrew", systemImage: "arrow.down.circle") }
-                        .controlSize(.small)
-                        .disabled(!model.isConnected || model.installState?.running != nil)
-                } else if let urlString = provider.install?.officialInstallerUrl,
-                          let url = URL(string: urlString) {
-                    // No safe app-managed download for this provider (e.g. Nmap):
-                    // offer the official installer page instead of a managed action.
+                if let urlString = provider.install?.officialInstallerUrl, let url = URL(string: urlString) {
                     Link(destination: url) {
-                        Label("Official installer", systemImage: "arrow.up.forward.app")
+                        Label("Open Official Installer", systemImage: "arrow.up.forward.app")
                     }.controlSize(.small)
                 }
             }
-            if !provider.homebrewSupported && !provider.managedDownloadSupported {
-                Text("MACSPLOIT has no in-app install for this provider. Run the recommended command below yourself (for user-scanner, pipx places it in ~/.local/bin, which MACSPLOIT checks), use an existing executable on PATH, or set a provider override; then Refresh.")
-                    .font(.caption2).foregroundStyle(.tertiary)
-            } else if provider.managedDownloadSupported {
-                Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). “Install without Homebrew” downloads the verified, checksummed official release into MACSPLOIT’s own providers directory. Or use an existing executable on PATH / a provider override.")
-                    .font(.caption2).foregroundStyle(.tertiary)
-            } else {
-                Text("You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo). This provider has no app-managed download; use Homebrew, an existing executable on PATH, a provider override, or the official installer.")
-                    .font(.caption2).foregroundStyle(.tertiary)
-            }
+            Text(installExplainer)
+                .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
-        if let outcome = lastOutcomeHere {
-            let color: Color = outcome.status == "SUCCEEDED" ? .green : (outcome.status == "FAILED" ? .orange : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(outcome.message).font(.caption).foregroundStyle(color)
-                if let detail = outcome.detail {
-                    if detail.hasPrefix("https://"), let url = URL(string: detail) {
-                        Link("Official installer", destination: url).font(.caption2)
-                    } else {
-                        Text(detail).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                    }
-                }
-            }
+        // Visible, read-only Install Console (stages + reviewed command + bounded output).
+        InstallConsoleView(model: model, providerId: provider.id, providerName: provider.name)
+    }
+
+    private var installExplainer: String {
+        if provider.macsploitManagedSupported {
+            return "You explicitly start each install. “Install with MACSPLOIT” runs a typed, reviewed install plan — a checksum-verified download (or a pinned uv runtime for Python tools) into MACSPLOIT’s own providers directory. No shell, no sudo, no system changes. Homebrew is optional; an existing executable on PATH or a provider override also works."
+        } else if provider.homebrewSupported {
+            return "You explicitly start each install. Homebrew runs as a normal executable (no shell, no sudo); MACSPLOIT never installs Homebrew itself. Or use an existing executable on PATH, a provider override, or the official installer."
+        } else {
+            return "MACSPLOIT has no reviewed in-app installer for this provider yet. Use the official installer, an existing executable on PATH, or a provider override, then Refresh."
         }
     }
 }

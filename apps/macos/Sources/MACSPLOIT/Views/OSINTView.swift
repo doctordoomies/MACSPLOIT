@@ -8,25 +8,59 @@ import MACSPLOITKit
 struct OSINTView: View {
     @ObservedObject var model: WorkspaceModel
     @State private var consoleExpanded = false
+    @State private var correlationLeft: String?
+    @State private var correlationRight: String?
+    @State private var correlationBasis: CorrelationBasisOption = .analystReview
+    @State private var correlationConfidence = "LOW"
+    @State private var correlationRationale = ""
+    @State private var reviewNotes: [String: String] = [:]
 
     var body: some View {
         WorkbenchPage(maxWidth: 1200) {
             VStack(alignment: .leading, spacing: 22) {
-                PageHeading(title: "OSINT", subtitle: "Public-source research on one explicitly selected username or email. One bounded scan per Run — nothing starts automatically.")
+                PageHeading(title: "OSINT", subtitle: "Public-source research on one explicitly selected username, email, phone number, or in-scope domain. One bounded scan per Run — nothing starts automatically.")
                 Picker("Workflow", selection: $model.osintMode) {
                     ForEach(OSINTMode.allCases) { Label($0.rawValue, systemImage: $0.icon).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 420)
+                .frame(maxWidth: 680)
                 executionPanel
                 if let results = model.osintResults {
                     resultsPanel(results)
                     console
                 }
                 history
+                correlationPanel
             }
         }
+        .task(id: "\(model.osintMode.rawValue)|\(model.osintTarget?.id ?? "")|\(model.snapshot?.workspace.scope.count ?? 0)") {
+            await model.refreshOSINTScopeStatus()
+        }
+        .sheet(isPresented: $model.osintAuthorizationRequested) { domainAuthorizeDialog }
+    }
+
+    // MARK: Domain OSINT authorization (core-authoritative, exact entry only)
+
+    private var domainAuthorizeDialog: some View {
+        let target = model.osintTarget?.normalizedValue ?? "The target"
+        let entry = model.osintScopeStatus?.requiredScopeEntry ?? target
+        return VStack(alignment: .leading, spacing: 16) {
+            Label("Authorize Target", systemImage: "exclamationmark.shield").font(.title2.weight(.semibold))
+            Text("\(target) is not currently included in this workspace's authorized scope.")
+                .foregroundStyle(.secondary)
+            Text("By continuing, you confirm that you own this domain or have explicit permission to assess it.")
+                .foregroundStyle(.secondary)
+            Text("MACSPLOIT will add only the required exact entry — \(entry) — to this workspace's scope, re-check it, and then start Domain OSINT. Nothing is contacted before you confirm.")
+                .font(.callout)
+            HStack {
+                Spacer()
+                Button("Cancel") { model.cancelOSINTAuthorization() }.keyboardShortcut(.cancelAction)
+                Button("Authorize & Run Domain OSINT") { Task { await model.authorizeAndRunOSINT() } }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(26).frame(width: 480)
     }
 
     // MARK: Execution
@@ -42,14 +76,15 @@ struct OSINTView: View {
                         Text(model.osintMode.purpose).font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    RiskBadge(risk: "ACTIVE · LOW")
+                    RiskBadge(risk: model.osintMode.riskLabel)
                 }
                 targetRow
                 providerRow
                 activityNote
                 HStack(spacing: 12) {
                     Button { Task { await model.runOSINT() } } label: {
-                        Label("Run \(model.osintMode.rawValue)", systemImage: "play.fill")
+                        Label(model.osintNeedsAuthorization ? "Authorize & Run \(model.osintMode.rawValue)" : "Run \(model.osintMode.rawValue)",
+                              systemImage: model.osintNeedsAuthorization ? "lock.open" : "play.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.osintRunBlocker != nil || model.isBusy)
@@ -110,22 +145,46 @@ struct OSINTView: View {
                     .controlSize(.small).disabled(model.isRefreshingProviders)
                 Button("Provider Center") { model.section = .toolManager }.controlSize(.small)
             }
-            if let provider = model.effectiveOSINTProvider, !provider.installation.isAvailable,
-               let command = provider.setup?.installCommand {
-                HStack(spacing: 8) {
-                    Text("Install it yourself, then Refresh:").font(.caption).foregroundStyle(.secondary)
-                    Text(command).font(.caption.monospaced()).textSelection(.enabled)
-                    Button("Copy") { copy(command) }.controlSize(.small)
-                }
-                .padding(.leading, 102)
+            if let provider = model.effectiveOSINTProvider, !provider.installation.isAvailable {
+                installActions(provider)
+                InstallConsoleView(model: model, providerId: provider.id, providerName: provider.name)
             }
+        }
+    }
+
+    /// Actionable, in-app install for a missing OSINT provider — the same typed,
+    /// reviewed install plans as Provider Center (no raw pip/pipx as the primary path).
+    @ViewBuilder private func installActions(_ provider: ProviderStatus) -> some View {
+        let anyRunning = model.installState?.running != nil
+        let installingHere = model.installState?.running?.providerId == provider.id
+        if !installingHere {
+            HStack(spacing: 8) {
+                if provider.macsploitManagedSupported {
+                    Button { Task { await model.installProvider(provider.id, method: "managed") } } label: {
+                        Label("Install with MACSPLOIT", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(!model.isConnected || anyRunning)
+                }
+                if provider.homebrewSupported {
+                    Button { Task { await model.installProvider(provider.id, method: "homebrew") } } label: {
+                        Label("Install with Homebrew", systemImage: "shippingbox")
+                    }
+                    .controlSize(.small).disabled(!model.isConnected || anyRunning)
+                }
+                if let urlString = provider.install?.officialInstallerUrl, let url = URL(string: urlString) {
+                    Link(destination: url) { Label("Official Installer", systemImage: "arrow.up.forward.app") }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.leading, 102)
         }
     }
 
     private var activityNote: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "network").foregroundStyle(.secondary)
-            Text("Sends ordinary requests to third-party public platforms — never to the subject's own systems — so workspace host scope does not apply to an identifier. Modules that can notify the subject, recursive cross-scanning, breach/infostealer lookups, and proxies are disabled. Runs are bounded (concurrency, request timeout, 15-minute limit) and cancellable.")
+            Text(model.osintMode.activityNote)
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -147,13 +206,21 @@ struct OSINTView: View {
                     if results.state == .running { ProgressView().controlSize(.small) }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(results.state.title).font(.callout.weight(.medium))
-                        Text(results.state.detail).font(.caption).foregroundStyle(.secondary)
+                        Text(results.stateDetail).font(.caption).foregroundStyle(.secondary)
                         Text("Started \(displayTime(results.chain.createdAt))").font(.caption2).foregroundStyle(.tertiary)
                     }
                 }
                 stageList(results.stages)
-                if let summary = results.summary { summaryView(summary) }
-                accountList(results)
+                switch results.presentation {
+                case .phoneFacts:
+                    phoneFactsView(results)
+                case .domain:
+                    if let summary = results.summary { domainSummaryView(summary) }
+                    domainList(results)
+                case .accounts:
+                    if let summary = results.summary { summaryView(summary) }
+                    accountList(results)
+                }
                 HStack {
                     Spacer()
                     Button("View assets") { model.section = .assets }.controlSize(.small)
@@ -205,6 +272,122 @@ struct OSINTView: View {
             if !summary.errors.isEmpty { noteList("Errors (\(summary.error))", summary.errors) }
             if !summary.blockedChecks.isEmpty { noteList("Blocked by policy (\(summary.blocked))", summary.blockedChecks) }
             if !summary.unknownChecks.isEmpty { noteList("Unknown status (\(summary.unknown))", summary.unknownChecks) }
+        }
+    }
+
+    @ViewBuilder private func domainSummaryView(_ summary: OSINTRunSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                countTile("Hosts", summary.hosts, "server.rack", .green)
+                countTile("Emails", summary.emails, "envelope", .secondary)
+                countTile("Passive IPs", summary.ips, "number", .secondary)
+                countTile("Nameservers", summary.nameservers, "point.3.connected.trianglepath.dotted", .secondary)
+            }
+            if summary.droppedOutOfDomain + summary.droppedInvalid + summary.droppedOverLimit > 0 {
+                Text("Not kept: \(summary.droppedOutOfDomain) outside the domain, \(summary.droppedInvalid) invalid, \(summary.droppedOverLimit) over the per-run limit.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !summary.identityNote.isEmpty {
+                Label(summary.identityNote, systemImage: summary.historical ? "clock.arrow.circlepath" : "eye.slash")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !summary.details.isEmpty { detailList("Registration (RDAP)", summary.details) }
+        }
+    }
+
+    @ViewBuilder private func phoneFactsView(_ results: OSINTRunResults) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let summary = results.summary {
+                HStack(spacing: 8) {
+                    Text(summary.subject).font(.title3.monospaced()).textSelection(.enabled)
+                    Text("E.164").font(.caption2).foregroundStyle(.secondary)
+                }
+                if summary.sourceFacts.isEmpty {
+                    Text("No numbering facts were reported.").font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(summary.sourceFacts) { source in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Reported by \(source.source)").font(.callout.weight(.medium))
+                        ForEach(source.facts) { fact in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(osintFactLabel(fact.key)).font(.caption).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
+                                Text(fact.value).font(.caption.monospaced()).textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                }
+                if !summary.identityNote.isEmpty {
+                    Label(summary.identityNote, systemImage: "person.crop.circle.badge.questionmark").font(.caption).foregroundStyle(.secondary)
+                }
+                if !summary.errors.isEmpty { noteList("Source errors", summary.errors) }
+            } else {
+                Text(results.state == .running ? "Results appear when the lookup finishes." : "No numbering facts were saved for this run.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func detailList(_ title: String, _ fields: [OSINTProfileField]) -> some View {
+        DisclosureGroup("\(title) (\(fields.count))") {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(fields) { field in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(field.key).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 220, alignment: .leading)
+                        Text(field.value).font(.caption).textSelection(.enabled)
+                    }
+                }
+            }.padding(.top, 4)
+        }
+        .font(.callout)
+    }
+
+    @ViewBuilder private func domainList(_ results: OSINTRunResults) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Passive observations · \(results.domainResults.count)").font(.headline)
+            if results.domainResults.isEmpty {
+                Text(results.state == .running ? "Results appear when the lookup finishes." : "Nothing was reported in this run.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(results.domainResults) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(item.assetType).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 96, alignment: .leading)
+                        // Untrusted public-source value: shown and selectable, never opened or probed.
+                        Text(item.value).font(.callout.monospaced()).textSelection(.enabled)
+                        if item.historical {
+                            Text("historical").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.gray.opacity(0.16), in: Capsule())
+                                .help("Certificate-transparency name: a certificate once named this host. Not proof it exists or is live.")
+                        }
+                        if item.inScope == false {
+                            Text("out of scope").font(.caption2).foregroundStyle(.orange)
+                        }
+                        Text(item.confidence).font(.system(.caption2, design: .monospaced))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.gray.opacity(0.16), in: Capsule())
+                            .help("REPORTED: a public source reported this; MACSPLOIT did not resolve, probe, or verify it.")
+                        Spacer()
+                        Button("Asset") { model.selectedAssetId = item.assetId; model.section = .assets }
+                            .buttonStyle(.link)
+                        if let evidence = item.evidenceId {
+                            Button("Evidence") { model.showEvidence(evidence) }.buttonStyle(.link)
+                        }
+                    }
+                    if !item.alsoObservedBy.isEmpty {
+                        Text("Also observed by: \(item.alsoObservedBy.joined(separator: ", "))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !item.facts.isEmpty {
+                        Text(item.facts.map { "\($0.key): \($0.value)" }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
 
@@ -332,6 +515,110 @@ struct OSINTView: View {
                 }
             }
         }
+    }
+
+    // MARK: Correlation
+
+    private func assetLabel(_ id: String) -> String {
+        guard let asset = model.snapshot?.assets.first(where: { $0.id == id }) else { return id }
+        return "\(asset.canonicalIdentity) · \(asset.assetType)"
+    }
+
+    @ViewBuilder private var correlationPanel: some View {
+        let candidates = model.snapshot?.correlatableAssets ?? []
+        if candidates.count >= 2 || !model.correlations.isEmpty {
+            WorkbenchCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Correlations · \(model.correlations.count)").font(.headline)
+                    Text("Explicit analyst claims that two different assets may be the same subject. Each cites evidence for both sides, starts Proposed, and changes only through a review you record. Correlation never merges or edits assets; matching identifiers alone are weak evidence.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ForEach(model.correlations) { correlation in correlationRow(correlation) }
+                    if candidates.count >= 2 {
+                        DisclosureGroup("Propose a correlation") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Picker("First asset", selection: $correlationLeft) {
+                                    Text("Choose…").tag(String?.none)
+                                    ForEach(candidates) { Text(assetLabel($0.id)).tag(Optional($0.id)) }
+                                }
+                                Picker("Second asset", selection: $correlationRight) {
+                                    Text("Choose…").tag(String?.none)
+                                    ForEach(candidates) { Text(assetLabel($0.id)).tag(Optional($0.id)) }
+                                }
+                                Picker("Basis", selection: $correlationBasis) {
+                                    ForEach(CorrelationBasisOption.allCases) { Text($0.title).tag($0) }
+                                }
+                                Picker("Confidence", selection: $correlationConfidence) {
+                                    ForEach(correlationBasis == .sharedIdentifier ? ["LOW"] : ["LOW", "MEDIUM", "HIGH"], id: \.self) { Text($0).tag($0) }
+                                }
+                                TextField("Rationale (what in the evidence links them)", text: $correlationRationale)
+                                Button("Propose") {
+                                    guard let left = correlationLeft, let right = correlationRight else { return }
+                                    let confidence = correlationBasis == .sharedIdentifier ? "LOW" : correlationConfidence
+                                    Task {
+                                        if await model.proposeCorrelation(left: left, right: right, basis: correlationBasis.rawValue,
+                                                                          confidence: confidence, rationale: correlationRationale) {
+                                            correlationRationale = ""
+                                        }
+                                    }
+                                }
+                                .disabled(correlationLeft == nil || correlationRight == nil || correlationLeft == correlationRight
+                                          || correlationRationale.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                            .frame(maxWidth: 560, alignment: .leading)
+                            .padding(.top, 6)
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+        }
+    }
+
+    private func correlationRow(_ correlation: Correlation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(assetLabel(correlation.leftAssetId))  ↔  \(assetLabel(correlation.rightAssetId))")
+                    .font(.callout.monospaced()).textSelection(.enabled)
+                Spacer()
+                Text(correlation.status).font(.caption2.monospaced())
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.gray.opacity(0.16), in: Capsule())
+            }
+            Text("\(correlation.basis) · \(correlation.confidence) · \(correlation.evidenceIds.count) evidence record(s)")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(correlation.rationale).font(.caption).textSelection(.enabled)
+            DisclosureGroup("Review history (\(correlation.reviews.count))") {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(correlation.reviews) { review in
+                        Text("\(displayTime(review.timestamp)) · \(review.fromStatus ?? "—") → \(review.toStatus) · \(review.note)")
+                            .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }.padding(.top, 2)
+            }
+            .font(.caption)
+            if !correlation.availableDecisions.isEmpty {
+                HStack(spacing: 8) {
+                    TextField("Review note", text: Binding(get: { reviewNotes[correlation.id] ?? "" },
+                                                           set: { reviewNotes[correlation.id] = $0 }))
+                        .frame(maxWidth: 320)
+                    ForEach(correlation.availableDecisions) { decision in
+                        Button(decision.title) {
+                            let note = reviewNotes[correlation.id] ?? ""
+                            Task {
+                                if await model.reviewCorrelation(correlation.id, decision: decision, note: note) {
+                                    reviewNotes[correlation.id] = nil
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled((reviewNotes[correlation.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func subject(for chain: ChainRun) -> String {
