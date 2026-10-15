@@ -106,6 +106,24 @@ cannot prove that arbitrary content contains no secret.
   evidence. The download/extraction pipeline is driven through an injectable transport so
   the full logic is exercised offline in tests (`MACSPLOIT_DOWNLOAD_FAKE`), with no real
   release assets fetched.
+- Managed Python providers (user-scanner, Sherlock, Maigret, socialscan) install **without
+  any system Python, pip, or pipx**. "Install with MACSPLOIT" bootstraps a pinned,
+  checksum-verified `uv` (manifest-pinned version + per-arch SHA-256, via the same
+  HTTPS/verify/safe-extract/atomic pipeline) into `~/Library/Application Support/MACSPLOIT/
+  Providers/runtime/`, then runs `uv tool install --python <pinned> <package>==<version>`
+  as an executable + argv (no shell). The package name and version come only from the
+  reviewed manifest — never the UI or provider output — so an install can only ever request
+  that exact reviewed package. All uv state (tool venvs, bin scripts, cache, the uv-managed
+  CPython, and `HOME`) is contained under the managed providers directory; the console
+  script lands in `.../Providers/python-bin/` (searched by discovery) so the provider is
+  rediscovered immediately. No `sudo`, no system-directory writes, no `curl | sh`, no
+  arbitrary package/version, bounded output, cancellation via the process group. Tests use
+  a fake `uv` (`MACSPLOIT_UV`) — no real uv download, no PyPI.
+- Every install streams a bounded, typed event log (stage, the reviewed executable + argv,
+  bounded stdout/stderr, exit, cancellation) through `install_status` to a read-only
+  **Install Console** in the UI. The console shows what ran; it is **not** a shell and
+  cannot accept arbitrary commands — MACSPLOIT only ever runs typed, reviewed install plans.
+  Provider readiness refreshes automatically when an install finishes.
 - Reverse DNS (PTR) is a native, bounded lookup via the system resolver (no shelling to
   dig/host/nslookup). A `ptr_record` relationship records a PTR observation only — it does
   not claim forward-confirmed mapping. DNS Recon on an IP/URL target still requires the

@@ -27,7 +27,12 @@ action — see [OSINT correlation](osint-correlation.md).
    and only after the core adds and re-checks that entry does the run start (cancel
    changes nothing; identifier subjects never use host scope).
 2. Open **OSINT** in the sidebar, choose the workflow, the subject, and a compatible
-   provider. Provider readiness/version/setup comes from the core.
+   provider. Provider readiness/version/setup comes from the core. If the provider is
+   missing, **Install with MACSPLOIT** installs it in place (a verified binary download,
+   or a pinned `uv` runtime for the Python tools — no pip/pipx/Homebrew required) with a
+   read-only **Install Console** streaming the stages, reviewed command, and output;
+   readiness updates automatically when it finishes. Homebrew and the official installer
+   remain available where applicable.
 3. Press **Run**. The core runs one bounded scan or lookup (external tools through the
    existing process supervisor; built-in RDAP/CT through a bounded HTTPS client).
    **Cancel** stops it.
@@ -112,7 +117,7 @@ and do not run.
 
 | Topic | Upstream behavior | MACSPLOIT usage |
 | --- | --- | --- |
-| Install | `pip`/`pipx` package; no Homebrew formula | Copy-only `pipx install user-scanner`; never installed by MACSPLOIT |
+| Install | `pip`/`pipx` package; no Homebrew formula | **Install with MACSPLOIT** via the managed `uv` runtime (pinned `user-scanner==1.5.2.1`, isolated env, no system Python/pip/pipx); `pipx install user-scanner` remains a manual fallback |
 | Discovery | — | `MACSPLOIT_USER_SCANNER` override, then `PATH`, Homebrew dirs, managed dir, then `$PIPX_BIN_DIR` / `~/.local/bin` (the app starts the core with a minimal `PATH`) |
 | Version | `--version` → `user-scanner current version -> X` from bundled `version.json`, exits before any network | 15 s probe |
 | Subject | `-u/--username`, `-e/--email` | `--username=<handle>` / `--email=<address>` (`=` form + strict validation: never parsed as an option) |

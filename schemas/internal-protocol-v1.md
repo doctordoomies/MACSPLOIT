@@ -37,12 +37,12 @@ empty request ID; an oversized frame closes the helper session.
 | start_chain | workspace_id, target_id, chain (optional: `synthetic` default; `dns_recon`, `domain_recon`, `ip_recon`, `web_recon`, `web_analysis`, `content_discovery`, `username_osint`, `email_osint`, `phone_osint`, or `domain_osint`), options (optional object; `content_discovery` requires `{"wordlist_path": "..."}`; OSINT chains accept `{"provider_id": "..."}`) | Pending chain; execution occurs on worker |
 | cancel_chain | workspace_id, chain_id | Cancellation requested |
 | read_evidence | workspace_id, evidence_id | ID and hash-verified raw_json string |
-| list_providers | none | Provider metadata, live installation status (state/version), and `install` (reviewed method availability: `homebrew`, `managed_download`, `official_installer_url?`) |
+| list_providers | none | Provider metadata, live installation status (state/version), and `install` (reviewed method availability: `homebrew`, `managed_download`, `managed_python`, `managed` (any app-managed method = "Install with MACSPLOIT"), `official_installer_url?`) |
 | target_scope_status | workspace_id, target_id | `{authorized, required_scope_entry?}` computed with the core scope matcher; read-only, no network activity |
 | authorize_target | workspace_id, target_id | Adds only the narrowest exact scope entry needed (no-op if already covered), persists it, re-checks authorization, and returns `{workspace, authorized, added_entry?}`; emits `WorkspaceScopeUpdated` (payload `added`, `source: "recon_authorization"`); no network activity |
-| start_install | provider_id, method (`homebrew`, `managed_download`, `existing_binary`, `official_installer`) | Starts a typed, async provider install (worker thread); returns `{started, provider_id}`. Only the reviewed provider set is installable; execution is shell-free. Observe via `install_status` |
+| start_install | provider_id, method (`managed` = "Install with MACSPLOIT"; `homebrew`; `managed_download`; `managed_python`; `existing_binary`; `official_installer`) | Starts a typed, async provider install (worker thread); returns `{started, provider_id}`. `managed` is resolved by the core to the concrete reviewed method (binary download or the pinned-`uv` managed-Python path). Only the reviewed provider set is installable; execution is shell-free. Observe via `install_status` |
 | cancel_install | none | Requests cancellation of a running install |
-| install_status | none | `{running: {provider_id, method}?, last: InstallOutcome?}` where InstallOutcome is `{provider_id, method, status (SUCCEEDED/FAILED/CANCELLED/UNSUPPORTED), message, detail?}`; read-only |
+| install_status | none | `{running: {provider_id, method}?, last: InstallOutcome?, events: [InstallEvent]}` where InstallOutcome is `{provider_id, method, status (SUCCEEDED/FAILED/CANCELLED/UNSUPPORTED), message, detail?}` and InstallEvent is `{seq, timestamp, kind (STAGE/COMMAND/STDOUT/STDERR/INFO), text}`; the bounded event log drives the read-only Install Console (reset per install). Read-only |
 | propose_correlation | workspace_id, left_asset_id, right_asset_id, basis (`analyst_review`, `shared_public_record`, `shared_identifier`), confidence (`LOW`, `MEDIUM`, `HIGH`), rationale (1–1,024 bytes), observation_ids (1–20) | A `PROPOSED` Correlation. Refused (`InvalidRequest`) unless both assets are cited by evidence-backed observations; `shared_identifier` is capped at `LOW`; a second proposal for the same pair is `CorrelationExists`. Never modifies assets |
 | review_correlation | workspace_id, correlation_id, decision (`confirm`, `reject`, `retract`, `reopen`), note (1–1,024 bytes) | The updated Correlation; only `PROPOSED→CONFIRMED/REJECTED`, `CONFIRMED→RETRACTED`, `REJECTED/RETRACTED→PROPOSED`; otherwise `InvalidTransition` |
 
@@ -105,12 +105,14 @@ M6 completion adds `phone_osint` (PhoneNumber target, E.164) and `domain_osint` 
 target that must be in workspace scope; `PASSIVE` providers only — otherwise
 `ScopeViolation`), capability values `PHONE_OSINT` and `DOMAIN_OSINT`, asset type
 `PhoneNumber`, and relationship types `has_email`, `has_nameserver`, and `observed_ip`.
-Run summaries carry a typed `subject_kind` (`USERNAME`, `EMAIL`, `PHONE`, `DOMAIN`).
-Domain OSINT run summaries use `subject_kind: "DOMAIN"` with host/email/IP/nameserver
-counts (RDAP adds a minimized `registration` object); their per-asset observations use
-`kind: "osint_domain_observation"` with `passive`, `historical`, `liveness:
-"unverified"`, and bounded `facts`. Phone run summaries use `subject_kind: "PHONE"` with
-per-source `sources` facts and `errors`.
+Every OSINT run summary's `subject_kind` is SCREAMING_SNAKE_CASE and consistent across
+workflows: `USERNAME`, `EMAIL`, `PHONE`, `DOMAIN` (Domain was normalized from the former
+lowercase `"domain"`). Clients interpret it case-insensitively. Domain OSINT run
+summaries use `subject_kind: "DOMAIN"` with host/email/IP/nameserver counts (RDAP adds a
+minimized `registration` object); their per-asset observations use `kind:
+"osint_domain_observation"` with `passive`, `historical`, `liveness: "unverified"`, and
+bounded `facts`. Phone run summaries use `subject_kind: "PHONE"` with per-source
+`sources` facts and `errors`.
 
 ### Correlation additions (v1 compatible, Issue #67)
 

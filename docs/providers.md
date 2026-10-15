@@ -62,17 +62,24 @@ supply a command or formula. Installs run asynchronously on a worker (they can t
 minutes, longer than the client request timeout) and are observed via `install_status`;
 installation output is status only and never enters workspace evidence.
 
-| Provider | Homebrew formula | App-managed direct download | Official installer |
+"Install with MACSPLOIT" is the one-click action: the core resolves the best reviewed
+app-managed method for the provider (a verified binary download, or the managed-Python
+runtime) and reports the concrete one. Homebrew stays an optional alternative, and a
+provider with no safe automated path offers the official installer page instead.
+
+| Provider | Install with MACSPLOIT | Homebrew formula | Official installer |
 | --- | --- | --- | --- |
-| Subfinder | `subfinder` | supported (pinned v2.16.0, arm64/x86_64) | GitHub releases |
-| HTTPX | `httpx` | supported (pinned v1.12.0, arm64/x86_64) | GitHub releases |
-| Katana | `katana` | supported (pinned v1.8.0, arm64/x86_64) | GitHub releases |
-| ffuf | `ffuf` | supported (pinned v2.3.0, arm64/x86_64) | GitHub releases |
-| Nmap | `nmap` | not appropriate (privileged .dmg) | nmap.org |
-| user-scanner | none (Python package) | not offered | copy-only `pipx install user-scanner` (PyPI) |
-| Sherlock | none (Python package) | not offered | copy-only `pipx install sherlock-project` (PyPI) |
-| Maigret | none (Python package) | not offered | copy-only `pipx install maigret` (PyPI) |
-| socialscan | none (Python package) | not offered | copy-only `pip install socialscan` (PyPI) |
+| Subfinder | managed download (pinned v2.16.0, arm64/x86_64) | `subfinder` | GitHub releases |
+| HTTPX | managed download (pinned v1.12.0, arm64/x86_64) | `httpx` | GitHub releases |
+| Katana | managed download (pinned v1.8.0, arm64/x86_64) | `katana` | GitHub releases |
+| ffuf | managed download (pinned v2.3.0, arm64/x86_64) | `ffuf` | GitHub releases |
+| Nmap | — (privileged .dmg) | `nmap` | nmap.org |
+| user-scanner | managed Python (uv; `user-scanner==1.5.2.1`) | none | PyPI |
+| Sherlock | managed Python (uv; `sherlock-project==0.15.0`) | none | GitHub |
+| Maigret | managed Python (uv; `maigret==0.5.0`) | none | GitHub |
+| socialscan | managed Python (uv; `socialscan==1.4.2`) | none | GitHub |
+| PhoneInfoga | — | `phoneinfoga` | GitHub releases |
+| theHarvester | — | none | GitHub |
 
 - **Install with Homebrew (implemented):** MACSPLOIT locates the `brew` executable
   (resolving a Homebrew symlink) and runs `brew install <reviewed formula>` as an
@@ -104,6 +111,23 @@ installation output is status only and never enters workspace evidence.
     binary is left untouched. There are no background or automatic updates.
   - Nmap is excluded from app-managed download (its official standalone build is a
     privileged `.dmg`); the UI offers Homebrew, an existing binary, or the official page.
+- **Install with MACSPLOIT — managed Python (implemented):** the Python OSINT providers
+  (user-scanner, Sherlock, Maigret, socialscan) install with **no system Python, pip, or
+  pipx**. MACSPLOIT bootstraps a pinned, checksum-verified `uv` (manifest-pinned version +
+  per-arch SHA-256, via the same HTTPS/verify/safe-extract/atomic pipeline, into
+  `~/Library/Application Support/MACSPLOIT/Providers/runtime/`), then runs `uv tool install
+  --python <pinned> <reviewed-package>==<version>` as an executable + argv. The package and
+  version come only from the reviewed manifest. uv's tool venvs, bin scripts, cache,
+  managed CPython, and `HOME` are all contained under the managed providers directory; the
+  console script lands in `.../Providers/python-bin/` (on the discovery path) so the
+  provider is found immediately. No `sudo`, no system dirs, no `curl | sh`, no arbitrary
+  package/version. Tests use a fake `uv` (`MACSPLOIT_UV`); no real uv download or PyPI.
+- **Install Console:** every install streams a bounded, typed event log (stage, the
+  reviewed executable + argv, bounded stdout/stderr, exit, cancellation) through
+  `install_status` to a read-only, terminal-like Install Console in Provider Center and the
+  OSINT provider row. It shows exactly what ran and the detected path/version afterward; it
+  is **not** a shell and accepts no typed commands. Provider readiness refreshes
+  automatically on completion (Refresh remains a manual fallback).
 - **Use existing binary:** a compatible executable already on PATH or named by a provider
   override is first-class and never reinstalled.
 
