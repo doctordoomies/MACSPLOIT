@@ -49,6 +49,23 @@ impl WebResponse {
 /// deadline/cancellation, cap the body, and never follow redirects.
 pub trait WebTransport: Send + Sync {
     fn fetch(&self, url: &str, deadline: Instant, cancelled: &AtomicBool) -> Result<WebResponse>;
+    /// One bounded request whose body is read to at most `cap` bytes; the flag
+    /// reports whether the body was longer than `cap` (and therefore cut). Used by
+    /// the passive OSINT clients (RDAP, certificate transparency), which must
+    /// detect an oversized response instead of parsing a silently truncated one.
+    /// The whole remaining `deadline` applies (no per-request clamp).
+    fn fetch_bounded(
+        &self,
+        url: &str,
+        deadline: Instant,
+        cancelled: &AtomicBool,
+        cap: usize,
+    ) -> Result<(WebResponse, bool)> {
+        let mut response = self.fetch(url, deadline, cancelled)?;
+        let truncated = response.body.len() > cap;
+        response.body.truncate(cap);
+        Ok((response, truncated))
+    }
     fn built_in(&self) -> bool {
         true
     }
@@ -195,6 +212,34 @@ pub struct UreqTransport {
     body_cap: usize,
 }
 
+impl UreqTransport {
+    /// One request with redirects disabled and HTTP statuses returned as responses.
+    fn request(&self, url: &str, timeout: Duration) -> Result<ureq::http::Response<ureq::Body>> {
+        let config = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_global(Some(timeout))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+        agent.get(url).call().map_err(|error| {
+            CoreError::new("ProviderFailure", &format!("HTTP transport error: {error}"))
+        })
+    }
+
+    fn headers(response: &ureq::http::Response<ureq::Body>) -> Vec<(String, String)> {
+        response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect()
+    }
+}
+
 impl Default for UreqTransport {
     fn default() -> Self {
         Self {
@@ -219,23 +264,9 @@ impl WebTransport for UreqTransport {
         // The provider follows redirects itself so every hop is scope-checked.
         // HTTP statuses remain normal responses; only transport/protocol failures
         // become errors. TLS validation stays at ureq's secure default.
-        let config = ureq::Agent::config_builder()
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .timeout_global(Some(budget.min(Duration::from_secs(20))))
-            .build();
-        let agent = ureq::Agent::new_with_config(config);
-        let response = agent.get(url).call().map_err(|error| {
-            CoreError::new("ProviderFailure", &format!("HTTP transport error: {error}"))
-        })?;
+        let response = self.request(url, budget.min(Duration::from_secs(20)))?;
         let status = response.status().as_u16();
-        let mut headers = Vec::new();
-        for (name, value) in response.headers() {
-            headers.push((
-                name.as_str().to_owned(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            ));
-        }
+        let headers = Self::headers(&response);
         let mut body = Vec::new();
         let _ = response
             .into_body()
@@ -247,6 +278,48 @@ impl WebTransport for UreqTransport {
             headers,
             body,
         })
+    }
+
+    fn fetch_bounded(
+        &self,
+        url: &str,
+        deadline: Instant,
+        cancelled: &AtomicBool,
+        cap: usize,
+    ) -> Result<(WebResponse, bool)> {
+        use std::io::Read;
+        if cancelled.load(Ordering::SeqCst) {
+            return Err(CoreError::new("Cancelled", "Request cancelled."));
+        }
+        let budget = deadline.saturating_duration_since(Instant::now());
+        if budget.is_zero() {
+            return Err(CoreError::new(
+                "ProviderTimeout",
+                "Request deadline exceeded.",
+            ));
+        }
+        let response = self.request(url, budget)?;
+        let status = response.status().as_u16();
+        let headers = Self::headers(&response);
+        let mut body = Vec::new();
+        response
+            .into_body()
+            .into_reader()
+            .take(cap as u64 + 1)
+            .read_to_end(&mut body)
+            .map_err(|error| {
+                CoreError::new("ProviderFailure", &format!("HTTP body read error: {error}"))
+            })?;
+        let truncated = body.len() > cap;
+        body.truncate(cap);
+        Ok((
+            WebResponse {
+                status,
+                headers,
+                body,
+            },
+            truncated,
+        ))
     }
 
     fn built_in(&self) -> bool {
@@ -289,6 +362,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(miss.status, 404);
+    }
+
+    #[test]
+    fn bounded_fetch_reports_truncation() {
+        let t = StaticWebTransport::new().with_response(
+            "https://example.test/",
+            200,
+            &[],
+            "0123456789",
+        );
+        let cancelled = AtomicBool::new(false);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (r, cut) = t
+            .fetch_bounded("https://example.test/", deadline, &cancelled, 4)
+            .unwrap();
+        assert!(cut);
+        assert_eq!(r.body, b"0123");
+        let (r, cut) = t
+            .fetch_bounded("https://example.test/", deadline, &cancelled, 10)
+            .unwrap();
+        assert!(!cut);
+        assert_eq!(r.body.len(), 10);
     }
 
     #[test]

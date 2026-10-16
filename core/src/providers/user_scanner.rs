@@ -426,7 +426,8 @@ impl Provider for UserScannerProvider {
         };
         let identifier_key = match subject.kind {
             osint::SubjectKind::Email => "email",
-            osint::SubjectKind::Username => "username",
+            // subject_for only admits username/email subjects.
+            _ => "username",
         };
         let mut checks = Vec::new();
         for record in records.iter().take(osint::MAX_RECORDS) {

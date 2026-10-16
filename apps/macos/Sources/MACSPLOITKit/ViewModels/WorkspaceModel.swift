@@ -392,11 +392,70 @@ public final class WorkspaceModel: ObservableObject {
         return nil
     }
 
+    /// Core-authoritative scope coverage for the selected Domain OSINT target. Only
+    /// Domain OSINT uses host scope; identifier subjects (username/email/phone) use the
+    /// separate OSINT authorization model and never consult it.
+    @Published public private(set) var osintScopeStatus: ScopeStatus?
+    /// Set when a Domain OSINT run was requested for an out-of-scope target; the view
+    /// shows the explicit Authorize & Run confirmation instead of launching.
+    @Published public var osintAuthorizationRequested = false
+
+    /// Whether the selected workflow needs host-scope authorization before it can run.
+    public var osintNeedsAuthorization: Bool {
+        osintMode == .domain && osintTarget != nil && osintScopeStatus?.authorized != true
+    }
+
+    public func refreshOSINTScopeStatus() async {
+        guard isConnected, osintMode == .domain, let id = selectedWorkspaceId, let target = osintTarget?.id else {
+            osintScopeStatus = nil
+            return
+        }
+        do {
+            let status = try await client.targetScopeStatus(workspace: id, target: target)
+            guard selectedWorkspaceId == id, osintMode == .domain, osintTarget?.id == target else { return }
+            osintScopeStatus = status
+        } catch { osintScopeStatus = nil }
+    }
+
+    /// Confirmed "Authorize & Run Domain OSINT": the core adds only the exact entry it
+    /// reports, persists it, and re-checks; the run starts only if the core then
+    /// reports the target authorized. Nothing is launched on failure.
+    public func authorizeAndRunOSINT() async {
+        osintAuthorizationRequested = false
+        guard osintMode == .domain, let id = selectedWorkspaceId, let target = osintTarget?.id else { return }
+        do {
+            let result = try await client.authorizeTarget(workspace: id, target: target)
+            guard selectedWorkspaceId == id else { return }
+            if let index = workspaces.firstIndex(where: { $0.id == id }) { workspaces[index] = result.workspace }
+            try await refresh()
+            await refreshOSINTScopeStatus()
+            guard result.authorized, osintScopeStatus?.authorized == true else {
+                errorMessage = "The core did not authorize \(osintTarget?.normalizedValue ?? "the target"); Domain OSINT was not started."
+                return
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        await runOSINT()
+    }
+
+    /// Dismiss the Authorize & Run confirmation without changing scope.
+    public func cancelOSINTAuthorization() { osintAuthorizationRequested = false }
+
     /// Start one bounded OSINT run for the selected subject with the selected provider.
+    /// An out-of-scope Domain OSINT target requests explicit authorization instead.
     public func runOSINT() async {
         guard let id = selectedWorkspaceId, let target = osintTarget, osintRunBlocker == nil else {
             if let blocker = osintRunBlocker { errorMessage = blocker }
             return
+        }
+        if osintMode == .domain {
+            await refreshOSINTScopeStatus()
+            if osintScopeStatus?.authorized != true {
+                osintAuthorizationRequested = true
+                return
+            }
         }
         isBusy = true; defer { isBusy = false }
         var options: [String: JSONValue] = [:]
@@ -415,6 +474,44 @@ public final class WorkspaceModel: ObservableObject {
         guard let id = selectedWorkspaceId, let chain = selectedOSINTChainId else { return }
         do { try await client.cancelChain(workspace: id, chain: chain); try await refresh() }
         catch { errorMessage = error.localizedDescription }
+    }
+
+    // MARK: Correlation (explicit, evidence-backed, reviewable)
+
+    /// Analyst correlations, oldest first. Never created automatically.
+    public var correlations: [Correlation] { snapshot?.correlations ?? [] }
+
+    /// Propose a correlation between two different assets. The cited evidence is the
+    /// assets' own evidence-backed observations; the core validates everything
+    /// (both sides cited, evidence present, weak-signal confidence cap) and never
+    /// merges or edits the assets.
+    @discardableResult
+    public func proposeCorrelation(left: String, right: String, basis: String, confidence: String, rationale: String) async -> Bool {
+        guard let id = selectedWorkspaceId, let snapshot else { return false }
+        let cited = snapshot.citableObservations(for: left) + snapshot.citableObservations(for: right)
+        do {
+            _ = try await client.proposeCorrelation(workspace: id, left: left, right: right, basis: basis,
+                                                    confidence: confidence, rationale: rationale, observations: cited)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Apply an explicit review decision with a note (appended to the review log).
+    @discardableResult
+    public func reviewCorrelation(_ correlation: String, decision: CorrelationDecision, note: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.reviewCorrelation(workspace: id, correlation: correlation, decision: decision.rawValue, note: note)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     /// Console lines for the selected OSINT run.

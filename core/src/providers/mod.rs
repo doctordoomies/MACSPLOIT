@@ -22,6 +22,15 @@ mod socialscan;
 pub use maigret::MaigretProvider;
 pub use sherlock::SherlockProvider;
 pub use socialscan::SocialscanProvider;
+mod phoneinfoga;
+pub use phoneinfoga::PhoneInfogaProvider;
+mod native_ct;
+mod native_rdap;
+mod passive_web;
+mod theharvester;
+pub use native_ct::NativeCtProvider;
+pub use native_rdap::NativeRdapProvider;
+pub use theharvester::TheHarvesterProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -56,13 +65,28 @@ pub enum Capability {
     UsernameOsint,
     /// OSINT: public registration/profile presence for an explicit Email subject.
     EmailOsint,
+    /// OSINT: public numbering metadata for an explicit international PhoneNumber.
+    PhoneOsint,
+    /// OSINT: passive public-infrastructure records (registration data, certificate
+    /// transparency, public search/passive-DNS sources) for an explicit in-scope
+    /// Domain. Never resolves, probes, or brute-forces discovered hosts.
+    DomainOsint,
 }
 
 impl Capability {
-    /// OSINT capabilities operate on an identifier subject (username/email), not a
-    /// workspace host, and query third-party public platforms chosen by the provider.
+    /// OSINT capabilities query third-party public sources chosen by the provider.
+    /// Identifier OSINT (username/email/phone) runs on an identifier subject;
+    /// Domain OSINT runs on an in-scope Domain (see [`Capability::is_identifier_osint`]).
     pub fn is_osint(self) -> bool {
-        matches!(self, Self::UsernameOsint | Self::EmailOsint)
+        self.is_identifier_osint() || self == Self::DomainOsint
+    }
+
+    /// OSINT on an identifier subject (not a workspace host).
+    pub fn is_identifier_osint(self) -> bool {
+        matches!(
+            self,
+            Self::UsernameOsint | Self::EmailOsint | Self::PhoneOsint
+        )
     }
 }
 
@@ -107,6 +131,13 @@ pub struct ProviderInstallInfo {
     pub homebrew: bool,
     /// A verified app-managed direct download is available (false for Nmap).
     pub managed_download: bool,
+    /// An app-managed Python install (pinned `uv` runtime) is available.
+    #[serde(default)]
+    pub managed_python: bool,
+    /// Any app-managed method is available — what the "Install with MACSPLOIT" action
+    /// performs. The core resolves the concrete method.
+    #[serde(default)]
+    pub managed: bool,
     /// The provider's official installer/download page, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub official_installer_url: Option<String>,
@@ -240,12 +271,16 @@ impl ProviderRegistry {
                 Arc::new(NmapProvider),
                 Arc::new(HttpxProvider),
                 Arc::new(KatanaProvider),
-                Arc::new(NativeHttpProvider::new(web)),
+                Arc::new(NativeHttpProvider::new(web.clone())),
                 Arc::new(FfufProvider),
                 Arc::new(UserScannerProvider),
                 Arc::new(SherlockProvider),
                 Arc::new(MaigretProvider),
                 Arc::new(SocialscanProvider),
+                Arc::new(PhoneInfogaProvider),
+                Arc::new(NativeCtProvider::new(web.clone())),
+                Arc::new(NativeRdapProvider::new(web)),
+                Arc::new(TheHarvesterProvider),
             ],
         }
     }
@@ -368,6 +403,9 @@ impl ProviderRegistry {
                     Some(opts) => ProviderInstallInfo {
                         homebrew: opts.homebrew_formula.is_some(),
                         managed_download: opts.managed_download_supported,
+                        managed_python: crate::install::manifest::python_package(&metadata.id)
+                            .is_some(),
+                        managed: crate::install::managed_method(&metadata.id).is_some(),
                         official_installer_url: opts.official_installer_url.map(str::to_owned),
                     },
                     None => ProviderInstallInfo::default(),
@@ -490,7 +528,9 @@ impl Provider for SyntheticDiscoveryProvider {
             | Capability::WebAnalysis
             | Capability::ContentDiscovery
             | Capability::UsernameOsint
-            | Capability::EmailOsint => {}
+            | Capability::EmailOsint
+            | Capability::PhoneOsint
+            | Capability::DomainOsint => {}
             Capability::ServiceFingerprinting => {
                 for input in inputs
                     .iter()

@@ -64,7 +64,7 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         riskClass: "ACTIVE_LOW_IMPACT", networkActivity: "NETWORK", offline: false,
         installation: ProviderInstallation(state: state, path: nil, version: version, message: nil),
         setup: ProviderSetup(installCommand: "pipx install user-scanner", homepage: "https://github.com/kaifcodec/user-scanner", documentation: nil),
-        install: ProviderInstallInfo(homebrew: false, managedDownload: false, officialInstallerUrl: nil))
+        install: ProviderInstallInfo(homebrew: false, managedDownload: false, managedPython: true, managed: true, officialInstallerUrl: nil))
 }
 
 @Suite struct OSINTPresentationTests {
@@ -85,7 +85,14 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
         #expect(OSINTMode.username.chainKind == "username_osint")
         #expect(OSINTMode.email.chainKind == "email_osint")
         #expect(OSINTMode.mode(forTargetType: "EmailAddress") == .email)
-        #expect(OSINTMode.mode(forTargetType: "Domain") == nil)
+        #expect(OSINTMode.mode(forTargetType: "Domain") == .domain)
+        #expect(OSINTMode.mode(forTargetType: "PhoneNumber") == .phone)
+        #expect(OSINTMode.mode(forTargetType: "IPAddress") == nil)
+        #expect(OSINTMode.domain.compatibleTargets(snapshot.targets).map(\.id) == ["t-dom"])
+        #expect((OSINTMode.phone.chainKind, OSINTMode.phone.capability) == ("phone_osint", "PHONE_OSINT"))
+        #expect((OSINTMode.domain.chainKind, OSINTMode.domain.capability) == ("domain_osint", "DOMAIN_OSINT"))
+        #expect(OSINTMode.domain.riskLabel == "PASSIVE" && !OSINTMode.domain.reportsAccounts)
+        #expect(OSINTMode.chainNames.contains("Domain OSINT") && OSINTMode.chainNames.contains("Phone OSINT"))
         let unrelated = ProviderStatus(
             id: "nmap", name: "Nmap", description: "", version: "external", capabilities: ["PORT_DISCOVERY"],
             supportedTargetTypes: ["IPAddress"], riskClass: "ACTIVE", networkActivity: "NETWORK", offline: false,
@@ -174,13 +181,155 @@ func osintProviderStatus(state: String = "INSTALLED", version: String? = "1.5.2.
     }
 }
 
+/// A Domain OSINT run (native CT) after an earlier Subfinder recon run, plus a
+/// Phone OSINT run, shaped like the core's snapshot.
+let domainSnapshotJSON = #"""
+{
+  "workspace": {"id": "w", "name": "OSINT", "created_at": "t", "updated_at": "t", "scope": ["example.test", "*.example.test"]},
+  "targets": [
+    {"id": "t-dom", "workspace_id": "w", "original_value": "example.test", "normalized_value": "example.test", "target_type": "Domain", "created_at": "t", "asset_id": "a-dom"},
+    {"id": "t-tel", "workspace_id": "w", "original_value": "+1 202 555 0143", "normalized_value": "+12025550143", "target_type": "PhoneNumber", "created_at": "t", "asset_id": "a-tel"}
+  ],
+  "assets": [
+    {"id": "a-dom", "workspace_id": "w", "asset_type": "Domain", "canonical_identity": "example.test", "display_value": "example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-api", "workspace_id": "w", "asset_type": "Subdomain", "canonical_identity": "api.example.test", "display_value": "api.example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-old", "workspace_id": "w", "asset_type": "Subdomain", "canonical_identity": "old.example.test", "display_value": "old.example.test", "metadata": {"in_scope": true}, "first_seen": "t", "last_seen": "t"},
+    {"id": "a-tel", "workspace_id": "w", "asset_type": "PhoneNumber", "canonical_identity": "+12025550143", "display_value": "+12025550143", "metadata": {"in_scope": false}, "first_seen": "t", "last_seen": "t"}
+  ],
+  "relationships": [],
+  "observations": [
+    {"id": "o-sf", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-sf", "evidence_id": "e-sf", "discovered_by": "Subfinder", "observed_value": "api.example.test", "timestamp": "t", "confidence": "CONFIRMED", "metadata": {"tool": "subfinder"}},
+    {"id": "o-sum", "workspace_id": "w", "asset_id": "a-dom", "source_asset_id": null, "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_run_summary", "provider": "native_ct", "subject": "example.test", "subject_kind": "DOMAIN", "historical": true, "partial": false,
+                  "counts": {"hosts": 2, "emails": 0, "ips": 0, "nameservers": 0, "dropped_out_of_domain": 1, "dropped_invalid": 0, "dropped_over_limit": 0},
+                  "note": "Certificate-transparency name: Historical; not proof."}},
+    {"id": "o-api", "workspace_id": "w", "asset_id": "a-api", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "api.example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_domain_observation", "provider": "native_ct", "passive": true, "historical": true, "liveness": "unverified", "note": "n", "facts": {"certificates": 2, "wildcard": false}}},
+    {"id": "o-old", "workspace_id": "w", "asset_id": "a-old", "source_asset_id": "a-dom", "provider_run_id": "p-ct", "evidence_id": "e-ct", "discovered_by": "Certificate Transparency (crt.sh)", "observed_value": "old.example.test", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_domain_observation", "provider": "native_ct", "passive": true, "historical": true, "liveness": "unverified", "note": "n", "facts": {"all_certificates_expired": true}}},
+    {"id": "o-tel", "workspace_id": "w", "asset_id": "a-tel", "source_asset_id": null, "provider_run_id": "p-tel", "evidence_id": "e-tel", "discovered_by": "PhoneInfoga", "observed_value": "+12025550143", "timestamp": "t", "confidence": "REPORTED",
+     "metadata": {"kind": "osint_run_summary", "provider": "phoneinfoga", "subject": "+12025550143", "subject_kind": "PHONE", "partial": true,
+                  "counts": {"sources_reported": 1, "source_errors": 1, "lines_malformed": 0},
+                  "sources": {"local": {"country": "US", "country_code": "1", "e164": "+12025550143", "international": "12025550143"}, "ovh": {"found": "true", "number_range": "0199xxxxxx", "city": "Paris"}},
+                  "errors": [{"source": "ovh", "reason": "country lookup failed"}], "identity_note": "Numbering metadata does not identify the subscriber."}}
+  ],
+  "chains": [
+    {"id": "c-recon", "workspace_id": "w", "target_id": "t-dom", "name": "Domain Recon", "status": "COMPLETED", "created_at": "t", "updated_at": "t", "error_code": null},
+    {"id": "c-ct", "workspace_id": "w", "target_id": "t-dom", "name": "Domain OSINT", "status": "COMPLETED", "created_at": "t", "updated_at": "t", "error_code": null},
+    {"id": "c-tel", "workspace_id": "w", "target_id": "t-tel", "name": "Phone OSINT", "status": "PARTIAL", "created_at": "t", "updated_at": "t", "error_code": null}
+  ],
+  "stages": [],
+  "tasks": [],
+  "provider_runs": [
+    {"id": "p-sf", "workspace_id": "w", "chain_id": "c-recon", "stage_id": "s", "provider_id": "subfinder", "provider_version": "2.6.6", "target": "example.test", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-sf", "exit_status": 0},
+    {"id": "p-ct", "workspace_id": "w", "chain_id": "c-ct", "stage_id": "s", "provider_id": "native_ct", "provider_version": "core 0.1.0", "target": "example.test", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-ct", "exit_status": 0},
+    {"id": "p-tel", "workspace_id": "w", "chain_id": "c-tel", "stage_id": "s", "provider_id": "phoneinfoga", "provider_version": "2.11.0", "target": "+12025550143", "start_time": "t", "end_time": "t", "status": "COMPLETED", "raw_output_reference": "e-tel", "exit_status": 0}
+  ],
+  "evidence": [],
+  "events": [],
+  "last_sequence": 9
+}
+"""#
+
+@Suite struct OSINTDomainPhonePresentationTests {
+    func snapshot() throws -> Snapshot {
+        try CoreCoding.decoder().decode(Snapshot.self, from: Data(domainSnapshotJSON.utf8))
+    }
+
+    @Test func testDomainRunShowsPassiveHistoricalObservationsAndReusesSubfinderData() throws {
+        let snapshot = try snapshot()
+        #expect(snapshot.osintChains.map(\.id) == ["c-tel", "c-ct"])
+        let results = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: "c-ct"))
+        let summary = try #require(results.summary)
+        #expect(summary.kind == .domain && summary.hosts == 2 && summary.droppedOutOfDomain == 1)
+        #expect(results.presentation == .domain)
+        #expect(results.stateDetail.contains("passive domain intelligence lookup completed"))
+        #expect(summary.historical && summary.identityNote.contains("Historical"))
+        #expect(results.accounts.isEmpty)
+        #expect(results.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
+        let api = try #require(results.domainResults.first)
+        #expect(api.assetType == "Subdomain" && api.historical && api.inScope == true)
+        #expect(api.confidence == "REPORTED" && api.provider == "native_ct")
+        // The earlier Subfinder observation of the same canonical asset is surfaced,
+        // not re-collected.
+        #expect(api.alsoObservedBy == ["Subfinder"])
+        #expect(api.facts.contains(OSINTProfileField(key: "certificates", value: "2")))
+        #expect(results.domainResults[1].facts == [OSINTProfileField(key: "all_certificates_expired", value: "true")])
+    }
+
+    @Test func testPhoneRunShowsNumberingFactsAndSourceErrors() throws {
+        let results = try #require(OSINTRunResults.make(snapshot: try snapshot(), chainId: "c-tel"))
+        #expect(results.state == .partial)
+        let summary = try #require(results.summary)
+        #expect(summary.kind == .phone)
+        // A durable phone summary always selects the facts surface, never the
+        // all-zero account counters.
+        #expect(results.presentation == .phoneFacts)
+        #expect(summary.sourceFacts.map(\.source) == ["local", "ovh"])
+        let local = try #require(summary.sourceFacts.first)
+        #expect(local.facts.contains(OSINTProfileField(key: "country", value: "US")))
+        #expect(local.facts.contains(OSINTProfileField(key: "country_code", value: "1")))
+        // Missing fields (e.g. carrier) are omitted rather than fabricated.
+        #expect(!local.facts.contains { $0.key == "carrier" })
+        #expect(summary.sourceFacts[1].facts.contains(OSINTProfileField(key: "city", value: "Paris")))
+        #expect(osintFactLabel("country_code") == "Country code" && osintFactLabel("e164") == "E164")
+        #expect(!results.stateDetail.contains("platform"))
+        #expect(summary.details.contains(OSINTProfileField(key: "local.country", value: "US")))
+        #expect(summary.errors.first?.platform == "ovh")
+        #expect(summary.identityNote.contains("does not identify"))
+        #expect(results.domainResults.isEmpty && results.accounts.isEmpty)
+    }
+
+    @Test func testSubjectKindDispatchIsTypedAndCaseInsensitive() {
+        for (wire, kind) in [("PHONE", OSINTSubjectKind.phone), ("phone", .phone), ("Domain", .domain),
+                             ("DOMAIN", .domain), ("USERNAME", .username), ("EMAIL", .email)] {
+            #expect(OSINTSubjectKind(wire: wire) == kind)
+        }
+        #expect(OSINTSubjectKind(wire: "SOMETHING_NEW") == nil)
+        // Username/Email keep the account-platform presentation and copy.
+        #expect(OSINTResultsPresentation(mode: .username) == .accounts)
+        #expect(OSINTResultsPresentation(mode: .email) == .accounts)
+        #expect(OSINTRunState.completed.detail(for: .email).contains("platform"))
+        #expect(OSINTRunState.completed.detail(for: .phone) == "The phone intelligence lookup completed. Reported numbering facts are shown below.")
+    }
+
+    @Test func testRegistrationFactsFlattenWithoutContacts() {
+        let value: JSONValue = .object([
+            "kind": .string("osint_run_summary"), "subject_kind": .string("domain"),
+            "registration": .object([
+                "found": .bool(true), "status": .array([.string("active"), .string("client hold")]),
+                "registrar": .object(["name": .string("Example Registrar"), "iana_id": .string("9999")]),
+                "events": .array([.object(["action": .string("registration"), "date": .string("2001-02-03")])]),
+                "entity_roles": .object(["registrant": .number(1)]),
+            ]),
+        ])
+        let summary = OSINTRunSummary(value)
+        let keys = summary?.details.map(\.key) ?? []
+        #expect(keys.contains("registration.registrar.name"))
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.status", value: "active, client hold")) == true)
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.events[0]", value: "registration · 2001-02-03")) == true)
+        #expect(summary?.details.contains(OSINTProfileField(key: "registration.entity_roles.registrant", value: "1")) == true)
+    }
+}
+
 /// Records chain starts/cancels; returns the OSINT snapshot.
 actor OSINTAPI: CoreAPI {
     private(set) var started: [(target: String, chain: String, options: JSONValue)] = []
     private(set) var cancelled: [String] = []
     private(set) var addedTargets: [String] = []
+    private(set) var proposals: [(left: String, right: String, basis: String, confidence: String, observations: [String])] = []
+    private(set) var reviews: [(correlation: String, decision: String, note: String)] = []
+    private(set) var scopeChecks: [String] = []
+    private(set) var authorizeCalls: [String] = []
+    /// Whether the Domain target is in scope, and whether authorize_target succeeds.
+    private(set) var domainInScope: Bool
+    let authorizeOutcome: Bool
     let providers: [ProviderStatus]
-    init(providers: [ProviderStatus]) { self.providers = providers }
+    init(providers: [ProviderStatus], domainInScope: Bool = false, authorizeOutcome: Bool = true) {
+        self.providers = providers
+        self.domainInScope = domainInScope
+        self.authorizeOutcome = authorizeOutcome
+    }
     func hello() async throws -> CoreHello { CoreHello(coreVersion: "0.1.0", protocolVersion: 1, offlineOnly: false) }
     func listWorkspaces() async throws -> [Workspace] { [try osintSnapshot().workspace] }
     func createWorkspace(name: String, scope: [String]) async throws -> Workspace { try osintSnapshot().workspace }
@@ -198,9 +347,49 @@ actor OSINTAPI: CoreAPI {
     func cancelChain(workspace: String, chain: String) async throws { cancelled.append(chain) }
     func readEvidence(workspace: String, evidence: String) async throws -> EvidenceContent { EvidenceContent(evidenceId: evidence, rawJson: "{}") }
     func listProviders() async throws -> [ProviderStatus] { providers }
-    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus { ScopeStatus(authorized: false, requiredScopeEntry: nil) }
+    func targetScopeStatus(workspace: String, target: String) async throws -> ScopeStatus {
+        scopeChecks.append(target)
+        return ScopeStatus(authorized: domainInScope, requiredScopeEntry: domainInScope ? nil : "example.test")
+    }
     func authorizeTarget(workspace: String, target: String) async throws -> AuthorizeResult {
-        AuthorizeResult(workspace: try osintSnapshot().workspace, authorized: false, addedEntry: nil)
+        authorizeCalls.append(target)
+        if authorizeOutcome { domainInScope = true }
+        return AuthorizeResult(workspace: try osintSnapshot().workspace, authorized: authorizeOutcome,
+                               addedEntry: authorizeOutcome ? "example.test" : nil)
+    }
+    func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
+                            rationale: String, observations: [String]) async throws -> Correlation {
+        proposals.append((left, right, basis, confidence, observations))
+        return try sampleCorrelation(status: "PROPOSED")
+    }
+    func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
+        reviews.append((correlation, decision, note))
+        return try sampleCorrelation(status: "CONFIRMED")
+    }
+}
+
+func sampleCorrelation(status: String) throws -> Correlation {
+    let json = #"{"id":"k1","workspace_id":"w","left_asset_id":"a-gh","right_asset_id":"a-user","basis":"shared_identifier","confidence":"LOW","status":"\#(status)","rationale":"Same handle.","observation_ids":["o-gh","o-sum"],"evidence_ids":["e-report"],"created_by":"Analyst","created_at":"t","updated_at":"t","reviews":[{"id":"r1","from_status":null,"to_status":"PROPOSED","note":"Proposed","actor":"Analyst","timestamp":"t"}]}"#
+    return try CoreCoding.decoder().decode(Correlation.self, from: Data(json.utf8))
+}
+
+@Suite struct CorrelationPresentationTests {
+    @Test func testCorrelationDecodesAndOffersOnlyValidDecisions() throws {
+        let proposed = try sampleCorrelation(status: "PROPOSED")
+        #expect(proposed.reviews.first?.fromStatus == nil && proposed.evidenceIds == ["e-report"])
+        #expect(proposed.availableDecisions == [.confirm, .reject])
+        #expect(try sampleCorrelation(status: "CONFIRMED").availableDecisions == [.retract])
+        #expect(try sampleCorrelation(status: "RETRACTED").availableDecisions == [.reopen])
+        // Snapshots from older cores (no correlations key) still decode.
+        #expect(try osintSnapshot().correlations == nil)
+    }
+
+    @Test func testOnlyEvidenceBackedAssetsAreCorrelatable() throws {
+        let snapshot = try osintSnapshot()
+        // a-dom only has an analyst observation without evidence.
+        #expect(snapshot.correlatableAssets.map(\.id) == ["a-gh", "a-user"])
+        #expect(snapshot.citableObservations(for: "a-user") == ["o-sum"])
+        #expect(snapshot.citableObservations(for: "a-dom").isEmpty)
     }
 }
 
@@ -256,6 +445,122 @@ actor OSINTAPI: CoreAPI {
         let none = WorkspaceModel(client: OSINTAPI(providers: []))
         await none.boot()
         #expect(none.osintRunBlocker?.contains("No registered provider") == true)
+    }
+
+    @Test func testDomainModeStartsDomainOSINTWithTheSelectedPassiveProvider() async {
+        let ct = ProviderStatus(
+            id: "native_ct", name: "Certificate Transparency (crt.sh)", description: "", version: "built-in",
+            capabilities: ["DOMAIN_OSINT"], supportedTargetTypes: ["Domain"], riskClass: "PASSIVE",
+            networkActivity: "NETWORK", offline: false,
+            installation: ProviderInstallation(state: "BUILT_IN", path: nil, version: nil, message: nil), setup: nil, install: nil)
+        let api = OSINTAPI(providers: [osintProviderStatus(), ct], domainInScope: true)
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        model.osintMode = .domain
+        #expect(model.osintTarget?.id == "t-dom")
+        #expect(model.osintProviders.map(\.id) == ["native_ct"])
+        #expect(model.osintRunBlocker == nil)
+        await model.runOSINT()
+        let started = await api.started
+        #expect(started.first?.chain == "domain_osint")
+        #expect(started.first?.target == "t-dom")
+        #expect(started.first?.options["provider_id"].string == "native_ct")
+    }
+
+    func domainModel(inScope: Bool, authorizeOutcome: Bool = true) async -> (OSINTAPI, WorkspaceModel) {
+        let ct = ProviderStatus(
+            id: "native_ct", name: "Certificate Transparency (crt.sh)", description: "", version: "built-in",
+            capabilities: ["DOMAIN_OSINT"], supportedTargetTypes: ["Domain"], riskClass: "PASSIVE",
+            networkActivity: "NETWORK", offline: false,
+            installation: ProviderInstallation(state: "BUILT_IN", path: nil, version: nil, message: nil), setup: nil, install: nil)
+        let api = OSINTAPI(providers: [osintProviderStatus(), ct], domainInScope: inScope, authorizeOutcome: authorizeOutcome)
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        model.osintMode = .domain
+        await model.refreshOSINTScopeStatus()
+        return (api, model)
+    }
+
+    @Test func testOutOfScopeDomainOSINTAsksForAuthorizationInsteadOfStarting() async {
+        let (api, model) = await domainModel(inScope: false)
+        #expect(model.osintNeedsAuthorization)
+        #expect(model.osintScopeStatus?.requiredScopeEntry == "example.test")
+        await model.runOSINT()
+        let started = await api.started
+        let authorized = await api.authorizeCalls
+        #expect(started.isEmpty && authorized.isEmpty)
+        #expect(model.osintAuthorizationRequested)
+        // Cancel leaves scope unchanged and launches nothing.
+        model.cancelOSINTAuthorization()
+        #expect(!model.osintAuthorizationRequested)
+        let afterCancel = await api.authorizeCalls
+        #expect(afterCancel.isEmpty)
+    }
+
+    @Test func testConfirmedAuthorizationAddsTheCoreEntryThenRuns() async {
+        let (api, model) = await domainModel(inScope: false)
+        await model.runOSINT()
+        await model.authorizeAndRunOSINT()
+        let authorized = await api.authorizeCalls
+        let started = await api.started
+        #expect(authorized == ["t-dom"])
+        #expect(started.count == 1 && started.first?.chain == "domain_osint" && started.first?.target == "t-dom")
+        #expect(!model.osintNeedsAuthorization)
+    }
+
+    @Test func testAuthorizationFailureLaunchesNothing() async {
+        let (api, model) = await domainModel(inScope: false, authorizeOutcome: false)
+        await model.authorizeAndRunOSINT()
+        let started = await api.started
+        #expect(started.isEmpty)
+        #expect(model.errorMessage?.contains("not started") == true)
+    }
+
+    @Test func testInScopeDomainRunsWithoutAuthorization() async {
+        let (api, model) = await domainModel(inScope: true)
+        #expect(!model.osintNeedsAuthorization)
+        await model.runOSINT()
+        let started = await api.started
+        let authorized = await api.authorizeCalls
+        #expect(started.first?.chain == "domain_osint" && authorized.isEmpty)
+    }
+
+    @Test func testIdentifierOSINTNeverConsultsHostScope() async {
+        let api = OSINTAPI(providers: [osintProviderStatus()], domainInScope: false)
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        let baseline = await api.scopeChecks.count // Recon may check its own selection
+        for mode in [OSINTMode.username, .email] {
+            model.osintMode = mode
+            await model.refreshOSINTScopeStatus()
+            #expect(!model.osintNeedsAuthorization)
+        }
+        model.osintMode = .username
+        await model.runOSINT()
+        let checks = await api.scopeChecks
+        let started = await api.started
+        #expect(checks.count == baseline, "identifier OSINT never queries host scope")
+        #expect(started.first?.chain == "username_osint")
+    }
+
+    @Test func testCorrelationsAreProposedAndReviewedOnlyExplicitly() async {
+        let api = OSINTAPI(providers: [osintProviderStatus()])
+        let model = WorkspaceModel(client: api)
+        await model.boot()
+        #expect(model.correlations.isEmpty)
+        let none = await api.proposals
+        #expect(none.isEmpty) // booting/refreshing never proposes anything
+        let ok = await model.proposeCorrelation(left: "a-user", right: "a-gh", basis: "shared_identifier",
+                                                confidence: "LOW", rationale: "Same handle.")
+        #expect(ok)
+        let proposals = await api.proposals
+        #expect(proposals.count == 1)
+        // Evidence for both sides is cited.
+        #expect(proposals.first?.observations == ["o-sum", "o-gh"])
+        let reviewed = await model.reviewCorrelation("k1", decision: .confirm, note: "Checked.")
+        #expect(reviewed)
+        let reviews = await api.reviews
+        #expect(reviews.first?.decision == "confirm" && reviews.first?.note == "Checked.")
     }
 
     @Test func testRestoredWorkspaceSelectsLatestOSINTRun() async {

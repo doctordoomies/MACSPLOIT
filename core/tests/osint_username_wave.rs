@@ -303,8 +303,9 @@ fn provider_compatibility_is_enforced_for_the_new_providers() {
     let engine = open(temp.path(), tools());
     let ws = workspace(&engine);
     let email = engine.store.add_target(ws, "person@example.test").unwrap();
-    // Username-only providers refuse an email target.
-    for provider in ["sherlock", "maigret", "socialscan"] {
+    // Username-only providers refuse an email target (socialscan supports Email
+    // since Issue #64 and is covered by tests/osint_email.rs).
+    for provider in ["sherlock", "maigret"] {
         let err = engine
             .start(
                 ws,
@@ -316,4 +317,13 @@ fn provider_compatibility_is_enforced_for_the_new_providers() {
             .unwrap_err();
         assert_eq!(err.code, "ProviderUnsupported");
     }
+    engine
+        .start(
+            ws,
+            email.id,
+            ChainKind::EmailOsint,
+            json!({ "provider_id": "socialscan" }),
+        )
+        .unwrap();
+    wait(&engine, ws);
 }

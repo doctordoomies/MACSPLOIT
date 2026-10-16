@@ -1,14 +1,20 @@
-//! socialscan (iojw/socialscan, MIT) — Username OSINT provider.
+//! socialscan (iojw/socialscan, MIT) — Username and Email OSINT provider.
 //!
-//! Verified against the upstream `socialscan` CLI. Behavior this integration depends on:
+//! Verified against the upstream `socialscan` source for 1.4.2 and 2.0.0/2.0.1 (the
+//! current PyPI release, 2024-01). Behavior this integration depends on:
 //!
 //! * Executable: the `socialscan` console script (`pip install socialscan`).
 //! * Version: `socialscan --version` prints `socialscan <X.Y.Z>` and exits.
-//! * Subject: one positional query (username; strictly validated here).
+//! * Subject: one positional query (username or email; strictly validated here).
+//!   socialscan treats a query that matches its email pattern as an email and runs
+//!   only its email-capable platforms (Instagram, GitHub, Tumblr, Twitter, Pinterest,
+//!   Last.fm, Firefox in 2.0.x); usernames run only the username-capable ones.
 //! * Structured output: `--json <file>` writes a JSON object keyed by platform (we
 //!   pass `--view-by platform`) whose values are lists of per-platform records:
-//!   `{query, platform, available, valid, success, message, link?}` (null fields are
-//!   omitted; `link` only with `--show-urls`). socialscan reports *registration
+//!   `{query, platform, available, valid, success, message, link?}`. Upstream's
+//!   serializer passes every field through `str()` and omits `None`, so booleans are
+//!   written as the strings `"True"`/`"False"` (both 1.x and 2.x); real JSON
+//!   booleans are also accepted. `link` appears only with `--show-urls`. socialscan reports *registration
 //!   availability*: `available=false` with `valid=true` and `success=true` means the
 //!   identifier is taken (registered) — a positive OSINT result. It performs only
 //!   public availability checks (never login, credential, or private-data access).
@@ -43,8 +49,8 @@ pub struct SocialscanProvider;
 pub const SOCIALSCAN_TOOL: &str = "socialscan";
 pub const REPORT_ARTIFACT: &str = "socialscan_json";
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(300);
-/// Upstream versions whose CLI/JSON schema were verified (1.x series).
-pub const SUPPORTED_SERIES: &str = "1.";
+/// Upstream series whose CLI/JSON schema were verified (1.4.x and 2.0.x share it).
+pub const SUPPORTED_SERIES: &[&str] = &["1.", "2."];
 
 impl SocialscanProvider {
     /// The exact, bounded argument array. The report is written to `output`.
@@ -65,17 +71,29 @@ impl SocialscanProvider {
 
     /// Map socialscan's availability booleans to a provider-neutral status and a
     /// short upstream label. A taken (registered) identifier is a positive result.
-    fn classify(record: &Map<String, Value>) -> (CheckStatus, String) {
-        let flag = |key: &str| record.get(key).and_then(Value::as_bool);
-        let success = flag("success").unwrap_or(false);
-        let available = flag("available");
-        let valid = flag("valid").unwrap_or(true);
-        if !success {
+    fn classify(record: &Map<String, Value>, email: bool) -> (CheckStatus, String) {
+        // Upstream writes str(bool) ("True"/"False"); accept JSON booleans as well.
+        // Anything else is "unknown", never silently true or false.
+        let flag = |key: &str| match record.get(key) {
+            Some(Value::Bool(b)) => Some(*b),
+            Some(Value::String(s)) if s.eq_ignore_ascii_case("true") => Some(true),
+            Some(Value::String(s)) if s.eq_ignore_ascii_case("false") => Some(false),
+            _ => None,
+        };
+        // A failed lookup is an error — never reinterpreted as "not registered".
+        if flag("success") != Some(true) {
             return (CheckStatus::Error, "error".into());
         }
-        match available {
-            Some(true) => (CheckStatus::Negative, "available".into()),
-            Some(false) if valid => (CheckStatus::Positive, "taken".into()),
+        let valid = flag("valid").unwrap_or(true);
+        match flag("available") {
+            Some(true) => (
+                CheckStatus::Negative,
+                if email { "not registered" } else { "available" }.into(),
+            ),
+            Some(false) if valid => (
+                CheckStatus::Positive,
+                if email { "registered" } else { "taken" }.into(),
+            ),
             // Reported unavailable but the identifier is not valid for this platform —
             // ambiguous, never counted as a confirmed account.
             Some(false) => (CheckStatus::Unknown, "invalid".into()),
@@ -83,14 +101,14 @@ impl SocialscanProvider {
         }
     }
 
-    fn check(record: &Value) -> Option<OsintCheck> {
+    fn check(record: &Value, email: bool) -> Option<OsintCheck> {
         let record = record.as_object()?;
         let platform = osint::clean_text(
             record.get("platform").and_then(Value::as_str)?,
             osint::MAX_FIELD_BYTES,
         );
         let platform_key = osint::platform_key(&platform)?;
-        let (status, upstream_status) = Self::classify(record);
+        let (status, upstream_status) = Self::classify(record, email);
         let raw_url = record.get("link").and_then(Value::as_str).unwrap_or("");
         let url = osint::safe_url(raw_url);
         let reason = record
@@ -136,10 +154,10 @@ impl Provider for SocialscanProvider {
         ProviderMetadata {
             id: "socialscan".into(),
             name: "socialscan".into(),
-            description: "Username OSINT: checks public registration availability for one explicitly selected username across a small set of platforms (availability only — never login, credentials, or private data).".into(),
+            description: "Username + Email OSINT: checks public registration availability for one explicitly selected username or email across a small set of platforms (availability only — never login, credentials, or private data).".into(),
             version: "external".into(),
-            capabilities: vec![Capability::UsernameOsint],
-            supported_target_types: vec![TargetType::Username],
+            capabilities: vec![Capability::UsernameOsint, Capability::EmailOsint],
+            supported_target_types: vec![TargetType::Username, TargetType::EmailAddress],
             risk_class: RiskClass::ActiveLowImpact,
             network_activity: NetworkActivity::Network,
         }
@@ -175,7 +193,7 @@ impl Provider for SocialscanProvider {
             Ok(outcome) => {
                 let text = String::from_utf8_lossy(&outcome.stdout);
                 let version = text.lines().find_map(process::scan_version);
-                osint_cli::classify_version(version, SUPPORTED_SERIES, executable)
+                osint_cli::classify_version_series(version, SUPPORTED_SERIES, executable)
             }
             Err(error) => Installation::ExecutionError {
                 message: error.message,
@@ -195,7 +213,7 @@ impl Provider for SocialscanProvider {
         ctx: &ProviderContext,
     ) -> Result<Execution> {
         let started_at = crate::now();
-        let subject = osint_cli::username_subject(target, capability)?;
+        let subject = osint_cli::identifier_subject(target, capability)?;
         let executable = Self::locate(ctx.tools).ok_or_else(|| {
             CoreError::new(
                 "ProviderMissing",
@@ -243,7 +261,7 @@ impl Provider for SocialscanProvider {
     }
 
     fn parse_outcome(&self, execution: &Execution) -> Result<ParsedOutput> {
-        let subject = osint_cli::username_subject(&execution.target, execution.capability)?;
+        let subject = osint_cli::identifier_subject(&execution.target, execution.capability)?;
         let bytes = osint_cli::report_bytes(
             execution,
             REPORT_ARTIFACT,
@@ -268,6 +286,7 @@ impl Provider for SocialscanProvider {
             dropped_over_limit: records.len().saturating_sub(osint::MAX_RECORDS),
             ..ParseStats::default()
         };
+        let email = subject.kind == osint::SubjectKind::Email;
         let mut checks = Vec::new();
         for record in records.into_iter().take(osint::MAX_RECORDS) {
             if let Some(query) = Self::record_query(record) {
@@ -276,7 +295,7 @@ impl Provider for SocialscanProvider {
                     continue;
                 }
             }
-            match Self::check(record) {
+            match Self::check(record, email) {
                 Some(check) => checks.push(check),
                 None => stats.malformed += 1,
             }
@@ -296,9 +315,13 @@ mod tests {
     }
 
     fn exec(target: &str, json: Option<&str>) -> Execution {
+        exec_as(Capability::UsernameOsint, target, json)
+    }
+
+    fn exec_as(capability: Capability, target: &str, json: Option<&str>) -> Execution {
         Execution {
             target: target.into(),
-            capability: Capability::UsernameOsint,
+            capability,
             command: vec!["socialscan".into()],
             stdout: Vec::new(),
             stderr: Vec::new(),
@@ -321,11 +344,17 @@ mod tests {
     }
 
     #[test]
-    fn metadata_is_username_osint_only() {
+    fn metadata_is_username_and_email_osint() {
         let m = SocialscanProvider.metadata();
         assert_eq!(m.id, "socialscan");
-        assert_eq!(m.capabilities, vec![Capability::UsernameOsint]);
-        assert_eq!(m.supported_target_types, vec![TargetType::Username]);
+        assert_eq!(
+            m.capabilities,
+            vec![Capability::UsernameOsint, Capability::EmailOsint]
+        );
+        assert_eq!(
+            m.supported_target_types,
+            vec![TargetType::Username, TargetType::EmailAddress]
+        );
         assert_eq!(
             SocialscanProvider
                 .setup()
@@ -434,6 +463,83 @@ mod tests {
                 .code,
             "ProviderFailure"
         );
+    }
+
+    /// The exact shape upstream writes: `str()`-ed booleans, `None` fields omitted.
+    #[test]
+    fn upstream_string_booleans_map_correctly() {
+        let json = r#"{
+          "GitHub": [{"platform":"GitHub","query":"octo","available":"False","valid":"True","success":"True","message":"Username is already taken","link":"https://github.com/octo"}],
+          "Reddit": [{"platform":"Reddit","query":"octo","available":"True","valid":"True","success":"True","message":"Available"}],
+          "Tumblr": [{"platform":"Tumblr","query":"octo","valid":"True","success":"False","message":"Rate limited"}]
+        }"#;
+        let out = SocialscanProvider
+            .parse_outcome(&exec("@octo", Some(json)))
+            .unwrap();
+        let s = out.summary.unwrap();
+        assert_eq!(s["counts"]["positive"], 1);
+        assert_eq!(s["counts"]["negative"], 1);
+        assert_eq!(s["counts"]["error"], 1);
+        assert!(out.discoveries.iter().any(|d| d.value == "github:octo"));
+    }
+
+    #[test]
+    fn email_registered_not_registered_and_failed_lookup() {
+        let json = r#"{
+          "Pinterest": [{"platform":"Pinterest","query":"a@example.test","available":"False","valid":"True","success":"True","message":"Email is already registered"}],
+          "Firefox": [{"platform":"Firefox","query":"a@example.test","available":"True","valid":"True","success":"True","message":"Available"}],
+          "GitHub": [{"platform":"GitHub","query":"a@example.test","valid":"True","success":"False","message":"Unexpected response"}]
+        }"#;
+        let out = SocialscanProvider
+            .parse_outcome(&exec_as(
+                Capability::EmailOsint,
+                "a@example.test",
+                Some(json),
+            ))
+            .unwrap();
+        assert!(out.partial, "a failed lookup makes the run partial");
+        let s = out.summary.clone().unwrap();
+        assert_eq!(s["subject_kind"], "EMAIL");
+        assert_eq!(s["counts"]["positive"], 1);
+        assert_eq!(s["counts"]["negative"], 1);
+        // A failed lookup is an error, never "not registered".
+        assert_eq!(s["counts"]["error"], 1);
+        assert_eq!(s["errors"][0]["platform"], "GitHub");
+        assert_eq!(out.discoveries[0].asset_type, AssetType::EmailAddress);
+        let account = out
+            .discoveries
+            .iter()
+            .find(|d| d.value == "pinterest:a@example.test")
+            .unwrap();
+        let obs = account.observation.as_ref().unwrap();
+        assert_eq!(obs.metadata["upstream_status"], "registered");
+        assert_eq!(obs.confidence, "REPORTED");
+    }
+
+    #[test]
+    fn non_identifier_capabilities_are_rejected() {
+        assert!(SocialscanProvider
+            .parse_outcome(&exec_as(Capability::WebCrawling, "@octo", Some("{}")))
+            .is_err());
+        // A username target cannot be scanned as an email (and vice versa).
+        assert!(SocialscanProvider
+            .parse_outcome(&exec_as(Capability::EmailOsint, "@octo", Some("{}")))
+            .is_err());
+    }
+
+    #[test]
+    fn version_series_one_and_two_are_supported() {
+        let exe = std::path::PathBuf::from("/x/socialscan");
+        for v in ["1.4.2", "2.0.1"] {
+            assert!(matches!(
+                osint_cli::classify_version_series(Some(v.into()), SUPPORTED_SERIES, exe.clone()),
+                Installation::Installed { .. }
+            ));
+        }
+        assert!(matches!(
+            osint_cli::classify_version_series(Some("3.0.0".into()), SUPPORTED_SERIES, exe),
+            Installation::UnsupportedVersion { .. }
+        ));
     }
 
     #[test]

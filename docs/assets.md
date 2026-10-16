@@ -10,14 +10,18 @@ They store a display value, JSON metadata, and first/last seen times. Repeat
 observations update last-seen without changing identity or deleting provenance.
 
 Implemented asset types: Domain, Subdomain, Hostname, IPAddress, Port, Service,
-Website, URL, Endpoint, Technology, Certificate, Username, EmailAddress, Account.
+Website, URL, Endpoint, Technology, Certificate, Username, EmailAddress, Account,
+PhoneNumber.
 Synthetic recon populates Domain, Subdomain, IPAddress, Port, and Service. OSINT runs
 (see [OSINT](osint.md)) populate Username/EmailAddress subjects, `Account` assets
 (`<platform_key>:<identifier>`, a provider-reported account on one platform, never
-merged across platforms or identifiers), and profile URLs.
+merged across platforms or identifiers), profile URLs, `PhoneNumber` subjects
+(canonical E.164), and — for Domain OSINT — `Subdomain`, `EmailAddress`, `IPAddress`,
+and nameserver `Hostname` assets from passive public sources.
 Target classification recognizes domains, HTTP(S) URLs, IPv4/IPv6, CIDRs,
-hostnames, @usernames, and email addresses. PhoneNumber, Repository, and Unknown
-are reserved enum values. CIDR targets have no asset nodes; domain, hostname, IP, and
+hostnames, @usernames, email addresses, and international phone numbers (`+` and a
+country code required; no country is guessed). Repository and Unknown are reserved
+enum values. CIDR targets have no asset nodes; domain, hostname, IP, and
 URL input creates an initial analyst asset. Username/email targets get their subject
 asset when an OSINT run first persists results (adding the target launches nothing).
 
@@ -32,7 +36,9 @@ typed port/service validation before accepting untrusted output of those types.
 ## Relationships and provenance
 
 Relations: `has_subdomain`, `resolves_to`, `ptr_record`, `exposes`, `serves`,
-`has_endpoint`, `uses_technology`, and (migration 004) `has_account` and `profile_url`.
+`has_endpoint`, `uses_technology`, (migration 004) `has_account` and `profile_url`, and
+(migration 006) `has_email`, `has_nameserver`, and `observed_ip` (a passive source
+associated the IP; unlike `resolves_to`, MACSPLOIT did not resolve it).
 Observations gained a nullable JSON `metadata` column in migration 004 for per-run
 provider facts (e.g. OSINT upstream status and bounded public profile fields), kept
 separate from the deduplicated asset. Each relation is unique by workspace, endpoints, and type.
@@ -47,6 +53,11 @@ path. Evidence reads check containment and hash integrity. The asset inspector
 shows incoming/outgoing relationships, observation source/value/time,
 and links to evidence. Relationship observations remain available in storage;
 a dedicated edge inspector is future work.
+
+Correlations (migration 007) are a separate table, not relationships: an analyst's
+evidence-backed claim that two different assets may be one subject, with basis,
+confidence, status, and an append-only review log. They never merge or edit assets —
+see [OSINT correlation](osint-correlation.md).
 
 ## Migration 001
 
