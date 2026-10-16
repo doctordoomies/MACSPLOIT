@@ -9,6 +9,22 @@ use macsploit_core::{
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 
+/// External OSINT providers (tool name, provider id). They are pinned to absent
+/// paths below so a developer's real install never leaks into these deterministic
+/// expectations; each has its own probe tests (tests/osint_*.rs and unit tests).
+const OSINT_TOOLS: &[(&str, &str)] = &[
+    ("user-scanner", "user_scanner"),
+    ("sherlock", "sherlock"),
+    ("maigret", "maigret"),
+    ("socialscan", "socialscan"),
+    ("phoneinfoga", "phoneinfoga"),
+    ("theHarvester", "theharvester"),
+];
+
+fn is_osint(id: &str) -> bool {
+    OSINT_TOOLS.iter().any(|(_, pid)| *pid == id)
+}
+
 fn tools(root: &Path, body: &str) -> ToolConfig {
     let executable = root.join("fake-tool");
     fs::write(&executable, body).unwrap();
@@ -17,10 +33,7 @@ fn tools(root: &Path, body: &str) -> ToolConfig {
     for name in ["subfinder", "nmap", "httpx", "katana", "ffuf"] {
         tools.overrides.insert(name.into(), executable.clone());
     }
-    // Pin the pip/pipx OSINT providers to absent paths so a developer's real install
-    // never leaks into these deterministic expectations (their own probes live in
-    // osint_user_scanner.rs and the provider unit tests).
-    for name in ["user-scanner", "sherlock", "maigret", "socialscan"] {
+    for &(name, _) in OSINT_TOOLS {
         tools
             .overrides
             .insert(name.into(), root.join(format!("absent-{name}")));
@@ -50,7 +63,7 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
     assert!(response.error.is_none());
     assert_eq!(response.protocol_version, 1);
     let statuses: Vec<ProviderStatus> = serde_json::from_value(response.result.unwrap()).unwrap();
-    assert_eq!(statuses.len(), 12);
+    assert_eq!(statuses.len(), 16);
     let mut built_in = 0;
     for status in statuses {
         let install_command = status
@@ -58,11 +71,21 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
             .as_ref()
             .and_then(|s| s.install_command.clone())
             .unwrap_or_default();
-        // pip/pipx OSINT providers (user-scanner, sherlock, maigret, socialscan) are
-        // pinned absent above: Missing, with pip-based setup and no brew/managed route.
-        if install_command.starts_with("pip") {
+        // External OSINT providers are pinned absent above → Missing. Their install
+        // affordances reflect the reviewed matrix exactly: the `managed` flag matches
+        // whether the core offers an app-managed method (managed Python for the pip
+        // providers; none for phoneinfoga/theHarvester, which route to Homebrew/official).
+        if is_osint(&status.metadata.id) {
             assert_eq!(status.installation, Installation::Missing);
-            assert!(!status.install.homebrew && !status.install.managed_download);
+            let _ = install_command;
+            assert_eq!(
+                status.install.managed,
+                macsploit_core::install::managed_method(&status.metadata.id).is_some()
+            );
+            assert_eq!(
+                status.install.managed_python,
+                macsploit_core::install::manifest::python_package(&status.metadata.id).is_some()
+            );
             continue;
         }
         match status.installation {
@@ -89,7 +112,8 @@ fn registry_and_protocol_report_paths_setup_and_native_providers_without_workspa
             state => panic!("unexpected status {state:?}"),
         }
     }
-    assert_eq!(built_in, 3);
+    // Synthetic, native DNS, native HTTP, native CT, native RDAP.
+    assert_eq!(built_in, 5);
 }
 
 #[test]
@@ -109,6 +133,7 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
                 .as_ref()
                 .and_then(|x| x.install_command.as_deref())
                 .is_some_and(|c| c.starts_with("brew"))
+                && !is_osint(&s.metadata.id)
         }) {
             let value = serde_json::to_value(status).unwrap();
             assert_eq!(value["installation"]["state"], expected);
@@ -118,14 +143,10 @@ fn probes_distinguish_unknown_version_missing_and_execution_errors() {
         }
     }
     let mut config = ToolConfig::default();
-    for name in [
-        "subfinder",
-        "nmap",
-        "httpx",
-        "katana",
-        "ffuf",
-        "user-scanner",
-    ] {
+    let all = ["subfinder", "nmap", "httpx", "katana", "ffuf"]
+        .into_iter()
+        .chain(OSINT_TOOLS.iter().map(|(tool, _)| *tool));
+    for name in all {
         config
             .overrides
             .insert(name.into(), temp.path().join("missing"));

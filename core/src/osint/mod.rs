@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashSet};
 
+pub mod domain;
+
 /// Maximum upstream records considered from one run (the rest are counted as dropped).
 pub const MAX_RECORDS: usize = 5000;
 /// Maximum positive results normalized into Account assets from one run.
@@ -61,6 +63,7 @@ pub const IDENTITY_NOTE: &str = "A provider reporting the same username or email
 pub enum SubjectKind {
     Username,
     Email,
+    Phone,
 }
 
 /// A validated OSINT subject.
@@ -95,9 +98,17 @@ impl Subject {
                     canonical,
                 })
             }
+            TargetType::PhoneNumber => {
+                let canonical = phone_identity(normalized)?;
+                Ok(Self {
+                    kind: SubjectKind::Phone,
+                    query: canonical.clone(),
+                    canonical,
+                })
+            }
             _ => Err(CoreError::new(
                 "InvalidTarget",
-                "OSINT requires a username or email target.",
+                "Identifier OSINT requires a username, email, or phone target.",
             )),
         }
     }
@@ -106,6 +117,7 @@ impl Subject {
         match self.kind {
             SubjectKind::Username => AssetType::Username,
             SubjectKind::Email => AssetType::EmailAddress,
+            SubjectKind::Phone => AssetType::PhoneNumber,
         }
     }
 }
@@ -159,6 +171,24 @@ pub fn email_identity(value: &str) -> Result<String> {
         return Err(bad());
     }
     Ok(format!("{local}@{domain}"))
+}
+
+/// Canonical phone identity: strict E.164 (`+` then 7–15 digits, no leading 0 in
+/// the country code). Callers pass an already-normalized target value; no country
+/// is ever inferred here.
+pub fn phone_identity(value: &str) -> Result<String> {
+    let digits = value.strip_prefix('+').ok_or_else(|| {
+        invalid_subject("A phone subject must be in international E.164 form (+<digits>).")
+    })?;
+    if !(7..=15).contains(&digits.len())
+        || digits.starts_with('0')
+        || !digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(invalid_subject(
+            "A phone subject must be in international E.164 form (+<digits>).",
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 /// Canonical Account identity `<platform>:<identifier>`. The platform key is a
@@ -500,6 +530,100 @@ pub fn build_output(
     }
 }
 
+/// Note carried with every phone OSINT summary.
+pub const PHONE_NOTE: &str = "Numbering metadata (country, carrier, number range) describes the number block and can be outdated after porting; it does not identify the subscriber.";
+
+/// One section of provider-reported phone facts (e.g. one PhoneInfoga scanner).
+#[derive(Debug, Clone)]
+pub struct PhoneFacts {
+    /// Provider-side source name (e.g. `local`, `ovh`).
+    pub source: String,
+    /// Bounded scalar facts as reported (keys normalized to snake_case).
+    pub facts: Map<String, Value>,
+}
+
+/// Map phone OSINT results into the graph: the PhoneNumber subject asset only, with
+/// every reported fact kept on this run's observation (`REPORTED`). No accounts,
+/// people, or follow-on targets are created. `errors` lists provider-side source
+/// failures; `mismatch` records an E.164 form the provider reported that differs
+/// from the subject (kept, flagged, and marking the run partial).
+pub fn build_phone_output(
+    provider_id: &str,
+    subject: &Subject,
+    sections: Vec<PhoneFacts>,
+    errors: Vec<(String, String)>,
+    malformed_lines: usize,
+) -> ParsedOutput {
+    let mut sources = Map::new();
+    let mut mismatch = None;
+    for section in sections.into_iter().take(MAX_METADATA_KEYS) {
+        if let Some(Value::String(e164)) = section.facts.get("e164") {
+            let reported: String = e164
+                .chars()
+                .filter(|c| *c == '+' || c.is_ascii_digit())
+                .collect();
+            if !reported.is_empty() && reported != subject.canonical {
+                mismatch = Some(reported);
+            }
+        }
+        sources.insert(section.source, Value::Object(section.facts));
+    }
+    let error_list: Vec<Value> = errors
+        .iter()
+        .take(MAX_SUMMARY_LIST)
+        .map(|(source, message)| json!({"source": source, "reason": message}))
+        .collect();
+    let partial = !errors.is_empty() || malformed_lines > 0 || mismatch.is_some();
+    let summary = json!({
+        "kind": "osint_run_summary",
+        "provider": provider_id,
+        "subject": subject.canonical,
+        "subject_kind": subject.kind,
+        "counts": {
+            "sources_reported": sources.len(),
+            "source_errors": errors.len(),
+            "lines_malformed": malformed_lines,
+        },
+        "sources": Value::Object(sources.clone()),
+        "errors": error_list,
+        "reported_e164_mismatch": mismatch,
+        "partial": partial,
+        "identity_note": PHONE_NOTE,
+    });
+    ParsedOutput {
+        discoveries: vec![Discovery {
+            asset_type: AssetType::PhoneNumber,
+            value: subject.canonical.clone(),
+            source: None,
+            relationship: None,
+            observation: Some(ObservationDetail {
+                confidence: CONFIDENCE_REPORTED.into(),
+                metadata: summary.clone(),
+            }),
+            metadata: json!({"source": "Analyst", "osint_subject": true}),
+        }],
+        partial,
+        summary: Some(summary),
+    }
+}
+
+/// Normalize a human label ("Country code") into a bounded snake_case key.
+pub fn fact_key(label: &str) -> Option<String> {
+    let mut key = String::new();
+    for c in label.trim().chars() {
+        if c.is_ascii_alphanumeric() {
+            key.push(c.to_ascii_lowercase());
+        } else if !key.ends_with('_') && !key.is_empty() {
+            key.push('_');
+        }
+        if key.len() >= MAX_KEY_BYTES {
+            break;
+        }
+    }
+    let key = key.trim_matches('_').to_owned();
+    (!key.is_empty()).then_some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,6 +713,29 @@ mod tests {
             assert!(safe_url(bad).is_none(), "accepted {bad:?}");
         }
         assert!(safe_url(&format!("https://example.test/{}", "a".repeat(3000))).is_none());
+    }
+
+    #[test]
+    fn phone_identity_is_strict_e164() {
+        assert_eq!(phone_identity("+12025550143").unwrap(), "+12025550143");
+        for bad in [
+            "12025550143",
+            "+0123456",
+            "+12",
+            "+1202555014x",
+            "+1 202",
+            "",
+        ] {
+            assert!(phone_identity(bad).is_err(), "{bad}");
+        }
+        let s = Subject::from_target(TargetType::PhoneNumber, "+12025550143").unwrap();
+        assert_eq!(
+            (s.kind, s.asset_type()),
+            (SubjectKind::Phone, AssetType::PhoneNumber)
+        );
+        assert_eq!(fact_key("Country code").as_deref(), Some("country_code"));
+        assert_eq!(fact_key(" E164 ").as_deref(), Some("e164"));
+        assert_eq!(fact_key("  ::  "), None);
     }
 
     #[test]

@@ -73,8 +73,60 @@ fn invalid() -> CoreError {
     )
 }
 
+/// Characters allowed in a phone number as typed (digits plus common separators).
+fn phone_shaped(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, ' ' | '-' | '.' | '(' | ')'))
+}
+
+/// Normalize an international phone number to E.164 (`+` followed by 7–15 digits,
+/// country code not starting with 0). Only explicit international input is
+/// accepted: a number without a leading `+` (or `tel:+`) is ambiguous and is
+/// rejected rather than guessing a country. Returns `None` when `value` is not
+/// phone-shaped at all, so other target classes can be tried.
+pub fn phone(value: &str) -> Option<Result<String>> {
+    let rest = value
+        .strip_prefix("tel:")
+        .or_else(|| value.strip_prefix("TEL:"))
+        .unwrap_or(value);
+    let ambiguous = || {
+        CoreError::new(
+            "InvalidTarget",
+            "Enter a phone number in international format starting with + and the country code (e.g. +1 202 555 0143). MACSPLOIT does not guess the country.",
+        )
+    };
+    match rest.strip_prefix('+') {
+        Some(body) => {
+            if !phone_shaped(body) {
+                return None;
+            }
+            let digits: String = body.chars().filter(char::is_ascii_digit).collect();
+            if !(7..=15).contains(&digits.len()) || digits.starts_with('0') {
+                return Some(Err(ambiguous()));
+            }
+            Some(Ok(format!("+{digits}")))
+        }
+        None => {
+            // National-format input such as "(202) 555-0143" or "202-555-0143":
+            // phone-shaped with separators and at least 7 digits, but no country.
+            let digits = rest.chars().filter(char::is_ascii_digit).count();
+            let has_separator = rest.chars().any(|c| matches!(c, ' ' | '-' | '(' | ')'));
+            (phone_shaped(rest) && has_separator && digits >= 7 && !rest.contains('.'))
+                .then(|| Err(ambiguous()))
+        }
+    }
+}
+
 pub fn classify(input: &str) -> Result<(TargetType, String)> {
     let value = input.trim();
+    // Phone numbers are the only class that may contain inner spaces.
+    if !value.is_empty() && value.len() <= 64 && !value.chars().any(char::is_control) {
+        if let Some(result) = phone(value) {
+            return result.map(|e164| (TargetType::PhoneNumber, e164));
+        }
+    }
     if value.is_empty()
         || value.len() > 2048
         || value.chars().any(|c| c.is_control() || c.is_whitespace())
@@ -151,6 +203,37 @@ mod tests {
             assert_eq!(classify(input).unwrap(), (kind, normalized.into()));
         }
     }
+    #[test]
+    fn phone_numbers_require_international_format() {
+        for (input, normalized) in [
+            ("+12025550143", "+12025550143"),
+            ("+1 202 555 0143", "+12025550143"),
+            ("+1 (202) 555-0143", "+12025550143"),
+            ("tel:+33.1.99.00.12.34", "+33199001234"),
+        ] {
+            assert_eq!(
+                classify(input).unwrap(),
+                (TargetType::PhoneNumber, normalized.into()),
+                "{input}"
+            );
+        }
+        // Ambiguous national formats and impossible lengths are rejected, never guessed.
+        for input in [
+            "(202) 555-0143",
+            "202-555-0143",
+            "+0123456789",
+            "+12",
+            "+1234567890123456",
+        ] {
+            let err = classify(input).unwrap_err();
+            assert!(err.message.contains("international format"), "{input}");
+        }
+        // Not phone-shaped: other classes are unaffected.
+        assert_eq!(classify("192.0.2.1").unwrap().0, TargetType::IPAddress);
+        assert!(classify("+1;rm").is_err());
+        assert!(classify("+1 202 555 0143 ext").is_err());
+    }
+
     #[test]
     fn unicode_domain_uses_idna() {
         assert_eq!(

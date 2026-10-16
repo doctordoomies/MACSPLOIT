@@ -44,7 +44,6 @@ pub fn locate(tools: &ToolConfig, tool: &str) -> Option<PathBuf> {
 }
 
 /// Validate that an OSINT run is a username workflow and build the strict subject.
-/// These three providers are username-only in this wave.
 pub fn username_subject(target: &str, capability: Capability) -> Result<Subject> {
     if capability != Capability::UsernameOsint {
         return Err(CoreError::new(
@@ -53,6 +52,22 @@ pub fn username_subject(target: &str, capability: Capability) -> Result<Subject>
         ));
     }
     Subject::from_target(TargetType::Username, target)
+}
+
+/// Validate a username-or-email OSINT run and build the strict subject for the
+/// capability's target type (`UsernameOsint` → Username, `EmailOsint` → Email).
+pub fn identifier_subject(target: &str, capability: Capability) -> Result<Subject> {
+    let kind = match capability {
+        Capability::UsernameOsint => TargetType::Username,
+        Capability::EmailOsint => TargetType::EmailAddress,
+        _ => {
+            return Err(CoreError::new(
+                "ProviderUnsupported",
+                "This OSINT provider only supports username and email OSINT.",
+            ))
+        }
+    };
+    Subject::from_target(kind, target)
 }
 
 /// A private, contained run directory. Reports and any dotfile writes stay here
@@ -141,8 +156,18 @@ pub fn classify_version(
     series: &str,
     executable: PathBuf,
 ) -> Installation {
+    classify_version_series(version, &[series], executable)
+}
+
+/// [`classify_version`] for a provider whose reviewed CLI/schema spans several
+/// major series (e.g. socialscan 1.x and 2.x).
+pub fn classify_version_series(
+    version: Option<String>,
+    series: &[&str],
+    executable: PathBuf,
+) -> Installation {
     match version {
-        Some(version) if version.starts_with(series) => Installation::Installed {
+        Some(version) if series.iter().any(|s| version.starts_with(s)) => Installation::Installed {
             version,
             path: Some(executable),
         },

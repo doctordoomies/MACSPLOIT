@@ -95,6 +95,13 @@ pub enum ChainKind {
     /// OSINT for one explicitly selected Email target (one bounded provider scan;
     /// no recursion, no breach data). Never started automatically.
     EmailOsint,
+    /// OSINT for one explicitly selected international PhoneNumber target (public
+    /// numbering metadata only; no calls, SMS, or pivots). Never started automatically.
+    PhoneOsint,
+    /// Passive public-infrastructure OSINT for one explicitly selected in-scope
+    /// Domain (registration data, certificate transparency, public passive sources).
+    /// Discovered hosts are never resolved or probed; no follow-on scans.
+    DomainOsint,
 }
 
 impl ChainKind {
@@ -103,7 +110,41 @@ impl ChainKind {
         match self {
             Self::UsernameOsint => Some((Capability::UsernameOsint, TargetType::Username)),
             Self::EmailOsint => Some((Capability::EmailOsint, TargetType::EmailAddress)),
+            Self::PhoneOsint => Some((Capability::PhoneOsint, TargetType::PhoneNumber)),
+            Self::DomainOsint => Some((Capability::DomainOsint, TargetType::Domain)),
             _ => None,
+        }
+    }
+
+    /// Every OSINT chain kind.
+    pub const ALL_OSINT: &'static [ChainKind] = &[
+        Self::UsernameOsint,
+        Self::EmailOsint,
+        Self::PhoneOsint,
+        Self::DomainOsint,
+    ];
+
+    /// Display name of an OSINT chain (also its stage name), and the error shown
+    /// when the selected target has the wrong type.
+    fn osint_labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::UsernameOsint => (
+                "Username OSINT",
+                "Username OSINT requires a username target (e.g. @handle).",
+            ),
+            Self::EmailOsint => ("Email OSINT", "Email OSINT requires an email target."),
+            Self::PhoneOsint => (
+                "Phone OSINT",
+                "Phone OSINT requires an international phone target (e.g. +1 202 555 0143).",
+            ),
+            Self::DomainOsint => (
+                "Domain OSINT",
+                "Domain OSINT requires an in-scope domain target.",
+            ),
+            _ => (
+                "OSINT",
+                "This OSINT workflow does not accept the selected target.",
+            ),
         }
     }
 }
@@ -147,6 +188,10 @@ pub struct Snapshot {
     pub tasks: Vec<Task>,
     pub provider_runs: Vec<ProviderRun>,
     pub evidence: Vec<Evidence>,
+    /// Analyst correlations with their review history (Issue #67). Separate from
+    /// canonical deduplication; never merges assets.
+    #[serde(default)]
+    pub correlations: Vec<crate::correlation::Correlation>,
     pub events: Vec<Event>,
     pub last_sequence: i64,
 }
@@ -202,6 +247,7 @@ impl Store {
             tasks:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'status',status,'updated_at',updated_at) FROM tasks WHERE workspace_id=?1 ORDER BY updated_at,id",[&key])?,
             provider_runs:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'provider_id',provider_id,'provider_version',provider_version,'target',target,'start_time',start_time,'end_time',end_time,'status',status,'raw_output_reference',raw_output_reference,'exit_status',exit_status) FROM provider_runs WHERE workspace_id=?1 ORDER BY start_time,id",[&key])?,
             evidence:rows(&tx,&format!("{EVIDENCE_SELECT} WHERE workspace_id=?1 ORDER BY timestamp,id"),[&key])?,
+            correlations:crate::correlation::correlations_in(&tx,id)?,
             last_sequence:events.last().map_or(0,|e|e.sequence),events,
         };
         tx.commit()?;
@@ -570,20 +616,24 @@ impl Store {
                     ],
                 )
             }
-            ChainKind::UsernameOsint | ChainKind::EmailOsint => {
+            ChainKind::UsernameOsint
+            | ChainKind::EmailOsint
+            | ChainKind::PhoneOsint
+            | ChainKind::DomainOsint => {
                 let (capability, required) = kind.osint().expect("OSINT chain kind");
+                let (title, wrong_target) = kind.osint_labels();
                 if target.target_type != required {
-                    return Err(CoreError::new(
-                        "InvalidTarget",
-                        if required == TargetType::Username {
-                            "Username OSINT requires a username target (e.g. @handle)."
-                        } else {
-                            "Email OSINT requires an email target."
-                        },
-                    ));
+                    return Err(CoreError::new("InvalidTarget", wrong_target));
                 }
-                // Strict subject validation (no option/pattern characters).
-                crate::osint::Subject::from_target(target.target_type, &target.normalized_value)?;
+                if capability.is_identifier_osint() {
+                    // Strict subject validation (no option/pattern characters).
+                    crate::osint::Subject::from_target(
+                        target.target_type,
+                        &target.normalized_value,
+                    )?;
+                } else {
+                    crate::targets::domain(&target.normalized_value)?;
+                }
                 let provider = osint_provider.ok_or_else(|| {
                     CoreError::new(
                         "ProviderUnsupported",
@@ -591,22 +641,10 @@ impl Store {
                     )
                 })?;
                 (
-                    if required == TargetType::Username {
-                        "Username OSINT"
-                    } else {
-                        "Email OSINT"
-                    },
+                    title,
                     vec![
                         ("Subject Validation", None, None),
-                        (
-                            if required == TargetType::Username {
-                                "Username OSINT"
-                            } else {
-                                "Email OSINT"
-                            },
-                            Some(capability),
-                            Some(provider),
-                        ),
+                        (title, Some(capability), Some(provider)),
                         ("Persistence", None, None),
                         ("Completion", None, None),
                     ],
@@ -614,10 +652,11 @@ impl Store {
             }
         };
         // Authorization is mandatory for every preset, real or synthetic. Host-based
-        // presets require the target in workspace scope; OSINT presets operate on an
-        // identifier subject (see scope::authorize_osint_subject) and the provider's
-        // risk class is re-checked before execution.
-        if kind.osint().is_some() {
+        // presets (Domain OSINT included) require the target in workspace scope;
+        // identifier OSINT presets operate on an identifier subject (see
+        // scope::authorize_osint_subject). The provider's risk class is re-checked
+        // before execution.
+        if kind.osint().is_some_and(|(c, _)| c.is_identifier_osint()) {
             crate::scope::authorize_osint_subject(
                 target.target_type,
                 crate::providers::RiskClass::Passive,
@@ -1002,11 +1041,43 @@ struct ActiveRun {
 struct InstallCoordinator {
     running: Option<RunningInstall>,
     last: Option<crate::install::InstallOutcome>,
+    /// Bounded live event log for the current/last install, streamed to the Install
+    /// Console via `install_status`. Reset when a new install starts.
+    events: Vec<crate::install::InstallEvent>,
+    seq: u64,
 }
 struct RunningInstall {
     provider_id: String,
     method: crate::install::InstallMethod,
     cancelled: Arc<AtomicBool>,
+}
+
+/// Maximum install events retained for the console (older lines are dropped).
+const MAX_INSTALL_EVENTS: usize = 600;
+
+/// An [`InstallReporter`](crate::install::InstallReporter) that appends bounded events
+/// to the install coordinator so `install_status` can stream them to the UI.
+struct CoordinatorReporter {
+    install: Arc<Mutex<InstallCoordinator>>,
+}
+
+impl crate::install::InstallReporter for CoordinatorReporter {
+    fn event(&self, kind: crate::install::InstallEventKind, text: &str) {
+        if let Ok(mut coordinator) = self.install.lock() {
+            coordinator.seq += 1;
+            let event = crate::install::InstallEvent {
+                seq: coordinator.seq,
+                timestamp: crate::now(),
+                kind,
+                text: text.to_owned(),
+            };
+            coordinator.events.push(event);
+            let overflow = coordinator.events.len().saturating_sub(MAX_INSTALL_EVENTS);
+            if overflow > 0 {
+                coordinator.events.drain(0..overflow);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1266,11 +1337,13 @@ impl Engine {
         if target.target_type != required {
             return Err(CoreError::new(
                 "InvalidTarget",
-                if required == TargetType::Username {
-                    "Username OSINT requires a username target (e.g. @handle)."
-                } else {
-                    "Email OSINT requires an email target."
-                },
+                ChainKind::ALL_OSINT
+                    .iter()
+                    .find(|k| k.osint().map(|(_, t)| t) == Some(required))
+                    .map_or(
+                        "This OSINT workflow does not accept the selected target.",
+                        |k| k.osint_labels().1,
+                    ),
             ));
         }
         Ok(self
@@ -1334,6 +1407,10 @@ impl Engine {
             method,
             cancelled: cancelled.clone(),
         });
+        // Fresh console for this install.
+        install.events.clear();
+        install.seq = 0;
+        install.last = None;
         drop(install);
 
         let engine = self.clone();
@@ -1341,10 +1418,14 @@ impl Engine {
         thread::spawn(move || {
             // Installs can legitimately take minutes; cap generously.
             let deadline = Instant::now() + Duration::from_secs(600);
+            let reporter = CoordinatorReporter {
+                install: engine.install.clone(),
+            };
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 crate::install::install(
                     &engine.tools,
                     engine.downloader.as_ref(),
+                    &reporter,
                     &provider,
                     method,
                     &cancelled,
@@ -1402,6 +1483,7 @@ impl Engine {
         Ok(json!({
             "running": running,
             "last": install.last,
+            "events": install.events,
         }))
     }
 
@@ -1534,9 +1616,16 @@ impl Engine {
         // Launching a real Recon Chain is the analyst's explicit approval for its
         // active stages; per-asset scope is still enforced by the in-scope filter
         // below, so an out-of-scope resolved IP is never handed to an active tool.
-        // OSINT stages run on an identifier subject, never on a workspace host.
-        if capability.is_osint() {
+        // Identifier OSINT stages run on an identifier subject, never on a workspace
+        // host; Domain OSINT requires the in-scope domain and a passive provider.
+        if capability.is_identifier_osint() {
             crate::scope::authorize_osint_subject(target.target_type, metadata.risk_class, true)?;
+        } else if capability == Capability::DomainOsint {
+            crate::scope::authorize_domain_osint(
+                &scope,
+                &target.normalized_value,
+                metadata.risk_class,
+            )?;
         } else {
             crate::scope::authorize(&scope, &target.normalized_value, metadata.risk_class, true)?;
         }

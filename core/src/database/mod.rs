@@ -59,7 +59,7 @@ pub fn rows<T: DeserializeOwned>(
 pub fn migrate(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
-    const LATEST: i64 = 5;
+    const LATEST: i64 = 7;
     let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > LATEST {
         return Err(CoreError::new(
@@ -106,6 +106,21 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
                 CoreError::new("MigrationFailure", "Chain-error-detail migration failed.")
             })?;
         tx.pragma_update(None, "user_version", 5)?;
+        tx.commit()?;
+    }
+    if version < 6 {
+        rebuild_migration(
+            conn,
+            include_str!("../../migrations/006_domain_osint.sql"),
+            6,
+            "Domain-OSINT",
+        )?;
+    }
+    if version < 7 {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("../../migrations/007_correlations.sql"))
+            .map_err(|_| CoreError::new("MigrationFailure", "Correlation migration failed."))?;
+        tx.pragma_update(None, "user_version", 7)?;
         tx.commit()?;
     }
     Ok(())
@@ -686,6 +701,83 @@ mod tests {
     }
 
     #[test]
+    fn domain_osint_migration_preserves_provenance_and_allows_passive_relationships() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for sql in [
+            include_str!("../../migrations/001_initial.sql"),
+            include_str!("../../migrations/002_domain_recon.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        for sql in [
+            include_str!("../../migrations/003_reverse_dns.sql"),
+            include_str!("../../migrations/004_osint.sql"),
+            include_str!("../../migrations/005_chain_error_message.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch("PRAGMA user_version=5;
+            INSERT INTO workspaces VALUES('w','fixture','t','t');
+            INSERT INTO assets VALUES('a','w','Username','@octo','@octo','{}','t','t');
+            INSERT INTO assets VALUES('b','w','Account','github:octo','github:octo','{}','t','t');
+            INSERT INTO targets VALUES('t','w','@octo','@octo','Username','t','a');
+            INSERT INTO chain_runs VALUES('c','w','t','OSINT','COMPLETED','t','t',NULL,NULL);
+            INSERT INTO chain_stages VALUES('s','w','c',0,'OSINT','USERNAME_OSINT','COMPLETED','t','t','sherlock');
+            INSERT INTO provider_runs VALUES('p','w','c','s','sherlock','0.16','@octo','t','t','COMPLETED',NULL,0);
+            INSERT INTO evidence VALUES('e','w','p','sherlock','@octo','t','hash','application/json','e.json',0);
+            INSERT INTO asset_relationships VALUES('r','w','a','b','has_account','t');
+            INSERT INTO relationship_observations VALUES('o','w','r','p','e','t');").unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT relationship_type FROM asset_relationships WHERE id='r'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "has_account"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM relationship_observations WHERE relationship_id='r'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert!(!conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        for (id, kind) in [
+            ("m", "has_email"),
+            ("n", "has_nameserver"),
+            ("i", "observed_ip"),
+        ] {
+            conn.execute(
+                "INSERT INTO asset_relationships VALUES(?1,'w','b','a',?2,'t')",
+                rusqlite::params![id, kind],
+            )
+            .unwrap();
+        }
+        assert!(conn
+            .execute(
+                "INSERT INTO asset_relationships VALUES('nope','w','a','a','same_person','t')",
+                []
+            )
+            .is_err());
+    }
+
+    #[test]
     fn osint_migration_preserves_relationships_and_observations() {
         let mut conn = Connection::open_in_memory().unwrap();
         for sql in [
@@ -764,7 +856,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            5
+            7
         );
         // The provider_id column added by migration 002 is present.
         assert!(conn

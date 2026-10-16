@@ -13,6 +13,7 @@
 pub mod download;
 pub mod extract;
 pub mod manifest;
+pub mod python;
 
 use crate::{
     error::{CoreError, Result},
@@ -38,12 +39,121 @@ const INSTALL_STDERR_CAP: usize = 64 * 1024;
 pub enum InstallMethod {
     /// `brew install <reviewed formula>` via the Homebrew executable (no shell).
     Homebrew,
+    /// "Install with MACSPLOIT": the core resolves the best app-managed method for the
+    /// provider (a verified binary download, or the managed Python runtime). The UI
+    /// sends this; the outcome reports the concrete resolved method.
+    Managed,
     /// App-managed direct download of a verified upstream artifact (no Homebrew).
     ManagedDownload,
+    /// App-managed install of a reviewed, pinned Python package into an isolated
+    /// environment created by the pinned `uv` runtime (no system Python, no pip/pipx).
+    ManagedPython,
     /// Use a compatible executable already present (PATH / override) — no install.
     ExistingBinary,
     /// Open the provider's official installer/download page (no in-app execution).
     OfficialInstaller,
+}
+
+/// Coarse installation stage, surfaced live to the Install Console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum InstallStage {
+    Preparing,
+    Downloading,
+    Verifying,
+    Extracting,
+    Installing,
+    Checking,
+    Ready,
+    Failed,
+    Cancelled,
+}
+
+impl InstallStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preparing => "PREPARING",
+            Self::Downloading => "DOWNLOADING",
+            Self::Verifying => "VERIFYING",
+            Self::Extracting => "EXTRACTING",
+            Self::Installing => "INSTALLING",
+            Self::Checking => "CHECKING",
+            Self::Ready => "READY",
+            Self::Failed => "FAILED",
+            Self::Cancelled => "CANCELLED",
+        }
+    }
+}
+
+/// Kind of one Install Console line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum InstallEventKind {
+    /// A stage transition (its text is the [`InstallStage`] name).
+    Stage,
+    /// The reviewed executable + argv about to run (display-sanitized, never a shell).
+    Command,
+    /// A bounded line of captured child stdout.
+    Stdout,
+    /// A bounded line of captured child stderr.
+    Stderr,
+    /// An informational note from the installer itself.
+    Info,
+}
+
+/// One line in the Install Console event log.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstallEvent {
+    pub seq: u64,
+    pub timestamp: String,
+    pub kind: InstallEventKind,
+    pub text: String,
+}
+
+/// Live sink for install progress. The engine backs this with the install
+/// coordinator so `install_status` streams a bounded event log to the Install
+/// Console. Events never contain secrets; output is bounded line-by-line.
+pub trait InstallReporter: Send + Sync {
+    fn event(&self, kind: InstallEventKind, text: &str);
+
+    fn stage(&self, stage: InstallStage) {
+        self.event(InstallEventKind::Stage, stage.as_str());
+    }
+    fn info(&self, text: &str) {
+        self.event(InstallEventKind::Info, text);
+    }
+    /// Record a reviewed command as `basename arg arg` (display only; never executed
+    /// from this string). Callers pass already-safe, reviewed argv.
+    fn command(&self, executable: &Path, args: &[String]) {
+        let base = executable
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| executable.to_string_lossy().into_owned());
+        self.event(
+            InstallEventKind::Command,
+            &format!("$ {} {}", base, args.join(" ")),
+        );
+    }
+    /// Emit a bounded tail of captured output as individual lines.
+    fn output(&self, stdout: &[u8], stderr: &[u8]) {
+        for (bytes, kind) in [
+            (stdout, InstallEventKind::Stdout),
+            (stderr, InstallEventKind::Stderr),
+        ] {
+            let text = String::from_utf8_lossy(bytes);
+            let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+            let start = lines.len().saturating_sub(40);
+            for line in &lines[start..] {
+                self.event(kind, &line.chars().take(400).collect::<String>());
+            }
+        }
+    }
+}
+
+/// A reporter that discards events (unit tests that do not assert the stream).
+pub struct NullReporter;
+impl InstallReporter for NullReporter {
+    fn event(&self, _kind: InstallEventKind, _text: &str) {}
 }
 
 /// Reviewed installation metadata for one provider.
@@ -103,8 +213,63 @@ pub fn options(provider_id: &str) -> Option<ProviderInstallOptions> {
             false,
             Some("https://nmap.org/download.html"),
         ),
+        // PhoneInfoga: Go tool with a Homebrew formula and official releases.
+        "phoneinfoga" => o(
+            "phoneinfoga",
+            Some("phoneinfoga"),
+            false,
+            Some("https://github.com/sundowndev/phoneinfoga/releases"),
+        ),
+        // Python OSINT providers: installed by the app-managed `uv` runtime (see
+        // `python_package`). No Homebrew formula and no direct binary download.
+        "user_scanner" => o(
+            "user_scanner",
+            None,
+            false,
+            Some("https://pypi.org/project/user-scanner/"),
+        ),
+        "sherlock" => o(
+            "sherlock",
+            None,
+            false,
+            Some("https://github.com/sherlock-project/sherlock"),
+        ),
+        "maigret" => o(
+            "maigret",
+            None,
+            false,
+            Some("https://github.com/soxoj/maigret"),
+        ),
+        "socialscan" => o(
+            "socialscan",
+            None,
+            false,
+            Some("https://github.com/iojw/socialscan"),
+        ),
+        // theHarvester: Python, but installed via its own documented path for now.
+        "theharvester" => o(
+            "theharvester",
+            None,
+            false,
+            Some("https://github.com/laramies/theHarvester"),
+        ),
         _ => return None,
     })
+}
+
+/// The single best **app-managed** install method for a provider — what "Install with
+/// MACSPLOIT" performs — or `None` when MACSPLOIT has no safe automated path (the UI
+/// then offers Homebrew and/or the official installer). A verified binary download is
+/// preferred; otherwise the managed Python runtime when a reviewed package exists.
+pub fn managed_method(provider_id: &str) -> Option<InstallMethod> {
+    let opts = options(provider_id)?;
+    if opts.managed_download_supported {
+        Some(InstallMethod::ManagedDownload)
+    } else if manifest::python_package(provider_id).is_some() {
+        Some(InstallMethod::ManagedPython)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +312,7 @@ impl InstallOutcome {
 pub fn install(
     tools: &ToolConfig,
     downloader: &dyn DownloadTransport,
+    reporter: &dyn InstallReporter,
     provider_id: &str,
     method: InstallMethod,
     cancelled: &AtomicBool,
@@ -155,10 +321,35 @@ pub fn install(
     let opts = options(provider_id).ok_or_else(|| {
         CoreError::new("ProviderUnsupported", "This provider cannot be installed.")
     })?;
-    match method {
-        InstallMethod::Homebrew => homebrew_install(tools, &opts, cancelled, deadline),
+    reporter.stage(InstallStage::Preparing);
+    // "Install with MACSPLOIT" resolves to the concrete reviewed managed method.
+    let method = match method {
+        InstallMethod::Managed => match managed_method(provider_id) {
+            Some(resolved) => {
+                reporter.info(&format!("Using app-managed method: {resolved:?}"));
+                resolved
+            }
+            None => {
+                let mut outcome = InstallOutcome::new(
+                    provider_id,
+                    InstallMethod::Managed,
+                    InstallStatus::Unsupported,
+                    "MACSPLOIT has no app-managed installer for this provider. Use Homebrew or the official installer.",
+                );
+                outcome.detail = opts.official_installer_url.map(str::to_owned);
+                reporter.stage(InstallStage::Failed);
+                return Ok(outcome);
+            }
+        },
+        other => other,
+    };
+    let outcome = match method {
+        InstallMethod::Homebrew => homebrew_install(tools, reporter, &opts, cancelled, deadline),
         InstallMethod::ManagedDownload => {
-            managed_install(tools, downloader, &opts, provider_id, cancelled, deadline)
+            managed_install(tools, downloader, reporter, &opts, provider_id, cancelled, deadline)
+        }
+        InstallMethod::ManagedPython => {
+            python::python_install(tools, downloader, reporter, provider_id, cancelled, deadline)
         }
         InstallMethod::OfficialInstaller => {
             let mut outcome = InstallOutcome::new(
@@ -176,13 +367,26 @@ pub fn install(
             InstallStatus::Unsupported,
             "Make a compatible executable available on PATH, or set the provider override; MACSPLOIT discovers it automatically.",
         )),
+        InstallMethod::Managed => unreachable!("resolved above"),
+    };
+    // Reflect the terminal stage for the console.
+    if let Ok(outcome) = &outcome {
+        reporter.stage(match outcome.status {
+            InstallStatus::Succeeded => InstallStage::Ready,
+            InstallStatus::Cancelled => InstallStage::Cancelled,
+            InstallStatus::Failed | InstallStatus::Unsupported => InstallStage::Failed,
+        });
+    } else {
+        reporter.stage(InstallStage::Failed);
     }
+    outcome
 }
 
 /// Run `brew install <formula>` as an executable + argv (no shell). The formula comes
 /// only from the reviewed matrix, so a caller can never inject a formula or command.
 fn homebrew_install(
     tools: &ToolConfig,
+    reporter: &dyn InstallReporter,
     opts: &ProviderInstallOptions,
     cancelled: &AtomicBool,
     deadline: Instant,
@@ -201,6 +405,8 @@ fn homebrew_install(
     })?;
     // Fixed, reviewed argument array. Never a shell string; the formula is a constant.
     let args = vec!["install".to_string(), formula.to_string()];
+    reporter.stage(InstallStage::Installing);
+    reporter.command(&brew, &args);
     let outcome = process::run(
         &brew,
         &args,
@@ -209,6 +415,7 @@ fn homebrew_install(
         INSTALL_STDOUT_CAP,
         INSTALL_STDERR_CAP,
     )?;
+    reporter.output(&outcome.stdout, &outcome.stderr);
     let status = if outcome.cancelled {
         InstallStatus::Cancelled
     } else if outcome.timed_out || outcome.exit_status != Some(0) {
@@ -248,6 +455,7 @@ fn homebrew_install(
 fn managed_install(
     tools: &ToolConfig,
     downloader: &dyn DownloadTransport,
+    reporter: &dyn InstallReporter,
     opts: &ProviderInstallOptions,
     provider_id: &str,
     cancelled: &AtomicBool,
@@ -287,6 +495,17 @@ fn managed_install(
         ));
     };
 
+    reporter.info(&format!(
+        "Downloading {} {} ({}) from the reviewed release.",
+        artifact.provider_id,
+        artifact.version,
+        arch.as_str()
+    ));
+    reporter.stage(InstallStage::Downloading);
+    reporter.command(
+        Path::new("https-download"),
+        std::slice::from_ref(&artifact.url),
+    );
     match install_managed_artifact(downloader, &artifact, &managed_dir, cancelled, deadline) {
         Ok(path) => {
             let mut outcome = InstallOutcome::new(
@@ -426,6 +645,7 @@ mod tests {
         let err = install(
             &ToolConfig::default(),
             &no_dl(),
+            &NullReporter,
             "evil-tool",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -452,6 +672,7 @@ mod tests {
         let outcome = install(
             &tools,
             &no_dl(),
+            &NullReporter,
             "httpx",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -474,6 +695,7 @@ mod tests {
         let outcome = install(
             &tools,
             &no_dl(),
+            &NullReporter,
             "ffuf",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -489,6 +711,7 @@ mod tests {
         let err = install(
             &ToolConfig::default(),
             &no_dl(),
+            &NullReporter,
             "subfinder",
             InstallMethod::Homebrew,
             &AtomicBool::new(false),
@@ -509,6 +732,7 @@ mod tests {
         let dl = install(
             &t,
             &no_dl(),
+            &NullReporter,
             "subfinder",
             InstallMethod::ManagedDownload,
             &AtomicBool::new(false),
@@ -520,6 +744,7 @@ mod tests {
         let eb = install(
             &t,
             &no_dl(),
+            &NullReporter,
             "nmap",
             InstallMethod::ExistingBinary,
             &AtomicBool::new(false),
@@ -530,6 +755,7 @@ mod tests {
         let off = install(
             &t,
             &no_dl(),
+            &NullReporter,
             "nmap",
             InstallMethod::OfficialInstaller,
             &AtomicBool::new(false),
@@ -554,6 +780,7 @@ mod tests {
         let out = install(
             &t,
             &no_dl(),
+            &NullReporter,
             "nmap",
             InstallMethod::ManagedDownload,
             &AtomicBool::new(false),
@@ -581,6 +808,7 @@ mod tests {
         let out = install(
             &t,
             &no_dl(),
+            &NullReporter,
             "subfinder",
             InstallMethod::ManagedDownload,
             &AtomicBool::new(false),

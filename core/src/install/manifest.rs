@@ -87,6 +87,106 @@ pub const MAX_REDIRECTS: u32 = 5;
 const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024; // generous headroom over ~10-20 MiB assets
 const MAX_EXTRACTED_BYTES: u64 = 128 * 1024 * 1024;
 
+/// A reviewed, pinned Python package installed into an isolated environment by the
+/// app-managed `uv` runtime. The package name and version are hardcoded here — never
+/// supplied by the UI or provider output — so an install can only ever request this
+/// exact reviewed package==version from PyPI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PythonPackage {
+    /// The provider this package backs.
+    pub provider_id: &'static str,
+    /// The PyPI distribution name (e.g. `sherlock-project`).
+    pub package: &'static str,
+    /// The exact pinned version.
+    pub version: &'static str,
+    /// The console-script executable the package installs (e.g. `sherlock`).
+    pub executable: &'static str,
+}
+
+/// The reviewed Python package for a provider, or `None` when the provider is not
+/// installed via the managed Python runtime.
+pub fn python_package(provider_id: &str) -> Option<PythonPackage> {
+    let p = |provider_id, package, version, executable| PythonPackage {
+        provider_id,
+        package,
+        version,
+        executable,
+    };
+    Some(match provider_id {
+        "user_scanner" => p("user_scanner", "user-scanner", "1.5.2.1", "user-scanner"),
+        "sherlock" => p("sherlock", "sherlock-project", "0.15.0", "sherlock"),
+        "maigret" => p("maigret", "maigret", "0.5.0", "maigret"),
+        "socialscan" => p("socialscan", "socialscan", "1.4.2", "socialscan"),
+        _ => return None,
+    })
+}
+
+/// The pinned, checksum-verified `uv` runtime used to create isolated Python tool
+/// environments. uv ships a static, self-contained macOS binary (no system Python),
+/// MIT/Apache-2.0 licensed (Astral). The archive extracts to `uv-<triple>/uv`.
+#[derive(Debug, Clone)]
+pub struct UvRelease {
+    pub version: String,
+    pub arch: Arch,
+    pub url: String,
+    pub sha256: String,
+    pub archive: ArchiveFormat,
+    /// The nested member inside the tarball to extract (`uv-<triple>/uv`).
+    pub member: String,
+    pub installed_name: String,
+    pub max_download_bytes: u64,
+    pub max_extracted_bytes: u64,
+}
+
+impl UvRelease {
+    /// View this release as a [`ManagedArtifact`] so the shared download → verify →
+    /// safe-extract → atomic-install pipeline installs the `uv` binary too.
+    pub fn as_artifact(&self) -> ManagedArtifact {
+        ManagedArtifact {
+            provider_id: "uv".to_owned(),
+            version: self.version.clone(),
+            arch: self.arch,
+            url: self.url.clone(),
+            sha256: self.sha256.clone(),
+            archive: self.archive,
+            member: self.member.clone(),
+            installed_name: self.installed_name.clone(),
+            max_download_bytes: self.max_download_bytes,
+            max_extracted_bytes: self.max_extracted_bytes,
+        }
+    }
+}
+
+/// The reviewed `uv` version MACSPLOIT bootstraps.
+pub const UV_VERSION: &str = "0.13.0";
+
+/// The pinned `uv` release for the host architecture (fail closed on anything else).
+pub fn uv_release(arch: Arch) -> Option<UvRelease> {
+    let (triple, sha256) = match arch {
+        Arch::Arm64 => (
+            "aarch64-apple-darwin",
+            "a9c1b29002cf3c83f07fa9cd8a887a3be0107d90e23189721221e7257db8e3d6",
+        ),
+        Arch::X86_64 => (
+            "x86_64-apple-darwin",
+            "5f44dcbde809b632f47c36fadb241cb4d6f9af71d0c8f172b5d2026d3dde742c",
+        ),
+    };
+    Some(UvRelease {
+        version: UV_VERSION.to_owned(),
+        arch,
+        url: format!(
+            "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-{triple}.tar.gz"
+        ),
+        sha256: sha256.to_owned(),
+        archive: ArchiveFormat::TarGz,
+        member: format!("uv-{triple}/uv"),
+        installed_name: "uv".to_owned(),
+        max_download_bytes: MAX_DOWNLOAD_BYTES,
+        max_extracted_bytes: MAX_EXTRACTED_BYTES,
+    })
+}
+
 fn pd_zip(provider: &str, version: &str, arch: Arch, sha256: &str) -> ManagedArtifact {
     // ProjectDiscovery naming: <tool>_<ver>_macOS_<amd64|arm64>.zip, binary at root.
     let asset_arch = match arch {

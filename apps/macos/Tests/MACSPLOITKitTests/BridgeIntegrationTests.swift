@@ -244,6 +244,53 @@ import Testing
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_UV"] != nil))
+    func testManagedPythonInstallWithMacsploitThroughBridgeOffline() async throws {
+        // "Install with MACSPLOIT" for a Python provider over the pipe, using the offline
+        // fake uv (MACSPLOIT_UV). Verifies the typed install plan streams events to the
+        // Install Console, succeeds without pip/pipx/Homebrew/network, and rediscovers the
+        // provider so Run becomes available — the #72 acceptance flow.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-pyinstall-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        // sherlock offers the app-managed method (the harness also pins a fake
+        // executable override, so its discovered state is not asserted here — the
+        // offline core integration test covers missing→installed rediscovery).
+        let before = try await client.listProviders().first { $0.id == "sherlock" }
+        #expect(before?.macsploitManagedSupported == true)
+
+        // "Install with MACSPLOIT" → the core resolves the managed Python method.
+        try await client.startInstall(provider: "sherlock", method: "managed")
+        var last: InstallOutcome?
+        var sawCommand = false, sawReady = false
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            let state = try await client.installStatus()
+            for event in state.events ?? [] {
+                if event.kind == "COMMAND" && event.text.contains("tool install") { sawCommand = true }
+                if event.kind == "STAGE" && event.text == "READY" { sawReady = true }
+            }
+            if let outcome = state.last, outcome.providerId == "sherlock" { last = outcome; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(last?.status == "SUCCEEDED")
+        #expect(last?.method == "managed_python")
+        #expect(sawCommand && sawReady)
+        // The console script landed under MACSPLOIT's own managed Python bin directory,
+        // installed by the pinned uv runtime — no pip/pipx/Homebrew/network involved.
+        let script = directory.appendingPathComponent("Providers/python-bin/sherlock")
+        #expect(FileManager.default.fileExists(atPath: script.path))
+        // It is discoverable on MACSPLOIT's managed search path afterwards.
+        let after = try await client.listProviders().first { $0.id == "sherlock" }
+        #expect(after?.installation.isAvailable == true)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_NMAP"] != nil
         && ProcessInfo.processInfo.environment["MACSPLOIT_HTTPX"] != nil))
     func testIpReconRunsNmapAndHttpxThroughBridgeOffline() async throws {
@@ -447,5 +494,72 @@ import Testing
         let restored = try #require(OSINTRunResults.make(snapshot: persisted, chainId: run.id))
         #expect(restored.accounts == results.accounts)
         #expect(restored.summary == results.summary)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_THEHARVESTER"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_PHONEINFOGA"] != nil
+        && ProcessInfo.processInfo.environment["MACSPLOIT_WEB_FIXTURE"] != nil))
+    func testDomainAndPhoneOSINTThroughBridgeOffline() async throws {
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-osint-domain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+
+        let providers = try await client.listProviders()
+        #expect(OSINTMode.domain.compatibleProviders(providers).map(\.id).sorted() == ["native_ct", "native_rdap", "theharvester"])
+        #expect(OSINTMode.phone.compatibleProviders(providers).map(\.id) == ["phoneinfoga"])
+        let harvester = try #require(providers.first { $0.id == "theharvester" })
+        #expect(harvester.installation.isInstalled && harvester.installation.version == "4.11.1")
+        #expect(harvester.riskClass == "PASSIVE")
+
+        func finish(_ workspace: String, _ chain: String) async throws -> Snapshot {
+            let deadline = Date().addingTimeInterval(20)
+            while Date() < deadline {
+                let snapshot = try await client.snapshot(workspace: workspace)
+                if let run = snapshot.chains.first(where: { $0.id == chain }), !run.isRunning { return snapshot }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            throw CancellationError()
+        }
+
+        let workspace = try await client.createWorkspace(name: "Domain OSINT bridge test", scope: ["example.test", "*.example.test"])
+        let domain = try await client.addTarget(workspace: workspace.id, value: "example.test")
+        let harvested = try await client.startChain(workspace: workspace.id, target: domain.id, chain: "domain_osint",
+                                                    options: .object(["provider_id": .string("theharvester")]))
+        _ = try await finish(workspace.id, harvested.id)
+        let ct = try await client.startChain(workspace: workspace.id, target: domain.id, chain: "domain_osint",
+                                             options: .object(["provider_id": .string("native_ct")]))
+        let snapshot = try await finish(workspace.id, ct.id)
+        let ctResults = try #require(OSINTRunResults.make(snapshot: snapshot, chainId: ct.id))
+        #expect(ctResults.state == .completed)
+        #expect(ctResults.summary?.kind == .domain && ctResults.presentation == .domain)
+        #expect(ctResults.domainResults.map(\.value) == ["api.example.test", "old.example.test"])
+        // api.example.test is one canonical asset also observed by theHarvester.
+        #expect(ctResults.domainResults.first?.alsoObservedBy == ["theHarvester"])
+        #expect(snapshot.assets.filter { $0.canonicalIdentity == "api.example.test" }.count == 1)
+        #expect(snapshot.relationships.contains { $0.relationshipType == "has_email" })
+        #expect(!snapshot.relationships.contains { $0.relationshipType == "resolves_to" })
+
+        // Out-of-scope domains are refused by the core.
+        let outside = try await client.addTarget(workspace: workspace.id, value: "other.test")
+        await #expect(throws: (any Error).self) {
+            _ = try await client.startChain(workspace: workspace.id, target: outside.id, chain: "domain_osint", options: .object([:]))
+        }
+
+        let phone = try await client.addTarget(workspace: workspace.id, value: "+1 202 555 0143")
+        #expect(phone.targetType == "PhoneNumber" && phone.normalizedValue == "+12025550143")
+        let call = try await client.startChain(workspace: workspace.id, target: phone.id, chain: "phone_osint", options: .object([:]))
+        let phoneSnapshot = try await finish(workspace.id, call.id)
+        let phoneResults = try #require(OSINTRunResults.make(snapshot: phoneSnapshot, chainId: call.id))
+        #expect(phoneResults.state == .partial)
+        #expect(phoneResults.summary?.details.contains(OSINTProfileField(key: "local.country", value: "US")) == true)
+        // Exact Rust -> protocol -> Swift contract: the typed kind selects the facts surface.
+        #expect(phoneResults.summary?.subjectKind == "PHONE")
+        #expect(phoneResults.presentation == .phoneFacts)
+        #expect(phoneResults.summary?.sourceFacts.first?.facts.contains(OSINTProfileField(key: "country", value: "US")) == true)
     }
 }

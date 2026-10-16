@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod correlation;
 pub mod database;
 pub mod dns;
 pub mod error;

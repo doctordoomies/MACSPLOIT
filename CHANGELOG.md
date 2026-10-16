@@ -7,6 +7,54 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **M6 OSINT owner-acceptance fixes (#71, #72, #73 on #70) — owner acceptance pending:**
+  - *Domain Authorize & Run (#71):* an out-of-scope Domain OSINT target now uses the same
+    core-backed exact-entry **Authorize & Run** flow as Recon (via `target_scope_status`
+    / `authorize_target`) instead of a generic out-of-scope error. The run starts only
+    after the core adds and re-checks the one exact scope entry; Cancel or a failed
+    authorization launches nothing; Username/Email/Phone identifier subjects never consult
+    host scope.
+  - *Typed results, not zero counters (#73):* OSINT results now dispatch on one durable
+    typed workflow (parsed case-insensitively from `subject_kind`, which Domain now also
+    emits as SCREAMING_SNAKE_CASE `DOMAIN`) instead of fragile lowercase string compares.
+    A successful Phone run renders a **Phone intelligence** card (E.164 number plus the
+    country, country code, carrier, number range, city, and formats actually reported,
+    each with its source) rather than empty account tiles; Domain renders its passive
+    records. Completion/partial/cancelled copy is workflow-aware ("The phone intelligence
+    lookup completed.", etc.).
+  - *Actionable installation + Install Console (#72):* missing reviewed providers now have
+    an in-app **Install with MACSPLOIT** action (the core resolves a checksum-verified
+    binary download or, for the Python providers, a pinned/verified `uv` runtime that
+    installs the reviewed pinned package into an isolated environment — no system Python,
+    pip, pipx, sudo, or system-directory writes). A read-only **Install Console** streams
+    typed install events (stage, the reviewed executable + argv, bounded stdout/stderr,
+    exit, cancellation) and the detected path/version; provider readiness refreshes
+    automatically on completion. It is not a shell. Raw pip/pipx is demoted to a manual
+    alternative. Homebrew remains optional.
+- **M6 OSINT provider coverage and correlation (#58; #64, #65, #66, implementation
+  portion of #67) — owner acceptance pending:**
+  - *Email (#64):* socialscan now supports Email OSINT (registered / not registered /
+    failed lookup kept distinct) and accepts upstream 2.x, including its
+    `"True"`/`"False"` string booleans (previously every such record would have been
+    an error and 2.x reported unsupported). Holehe reviewed and not integrated.
+  - *Phone (#65):* `PhoneNumber` target/asset (strict E.164, `+` required, no country
+    guessing) and a PhoneInfoga 2.x provider limited to the offline `local` and OVH
+    public number-range scanners, parsed with a strict console grammar.
+  - *Domain (#66):* `domain_osint` chain on in-scope domains with PASSIVE providers
+    only: built-in certificate transparency (crt.sh) and RDAP (IANA bootstrap,
+    allow-listed redirects, minimized registration facts) over a new bounded
+    `fetch_bounded` transport, and theHarvester 4.10/4.11 with a fixed key-less
+    passive source allow-list. Hosts share Subfinder's `Subdomain` type; new
+    `has_email`, `has_nameserver`, and `observed_ip` relationships (migration 006).
+    OWASP Amass reviewed and not integrated.
+  - *Correlation (#67):* explicit, evidence-backed, reviewable correlations with an
+    append-only review log (migration 007; `propose_correlation`,
+    `review_correlation`, `snapshot.correlations`); never merges assets. SpiderFoot
+    reviewed and not integrated. Four-workflow acceptance, restart, and
+    failure-semantics tests.
+  - OSINT view gains Phone and Domain workflows, domain observation provenance, and
+    correlation review controls (functional changes only). All tests offline.
+
 - **Username OSINT provider wave: Sherlock, Maigret, socialscan (M6 / #58):** three
   username-only OSINT providers on the existing typed contract, each an evidence-first,
   bounded, shell-free, cancellable run selectable per OSINT run alongside user-scanner.

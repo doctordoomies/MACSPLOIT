@@ -117,10 +117,13 @@ pub fn authorize(
 /// rejected here. Discovered profile URLs are recorded with their real scope
 /// status and are never dispatched to another provider automatically.
 pub fn authorize_osint_subject(kind: TargetType, risk: RiskClass, approved: bool) -> Result<()> {
-    if !matches!(kind, TargetType::Username | TargetType::EmailAddress) {
+    if !matches!(
+        kind,
+        TargetType::Username | TargetType::EmailAddress | TargetType::PhoneNumber
+    ) {
         return Err(CoreError::new(
             "InvalidTarget",
-            "OSINT requires a username or email target.",
+            "Identifier OSINT requires a username, email, or phone target.",
         ));
     }
     if !matches!(risk, RiskClass::Passive | RiskClass::ActiveLowImpact) {
@@ -136,6 +139,19 @@ pub fn authorize_osint_subject(kind: TargetType, risk: RiskClass, approved: bool
         ));
     }
     Ok(())
+}
+
+/// Authorization for Domain OSINT: the domain must be in workspace scope and the
+/// provider strictly passive (it queries public third-party sources only; it never
+/// contacts the domain or discovered hosts).
+pub fn authorize_domain_osint(entries: &[String], domain: &str, risk: RiskClass) -> Result<()> {
+    if risk != RiskClass::Passive {
+        return Err(CoreError::new(
+            "ScopeViolation",
+            "Only passive providers may run Domain OSINT.",
+        ));
+    }
+    authorize(entries, domain, risk, false)
 }
 
 #[cfg(test)]
@@ -175,8 +191,22 @@ mod tests {
         assert!(authorize_osint_subject(Username, RiskClass::Active, true).is_err());
         assert!(authorize_osint_subject(Username, RiskClass::Validation, true).is_err());
         assert!(authorize_osint_subject(Username, RiskClass::Passive, false).is_err());
+        assert!(authorize_osint_subject(PhoneNumber, RiskClass::Passive, true).is_ok());
         // Host scope never authorizes an identifier as a network destination.
         assert!(!contains(&entries(), "@octo"));
+    }
+    #[test]
+    fn domain_osint_needs_scope_and_a_passive_provider() {
+        assert!(authorize_domain_osint(&entries(), "example.test", RiskClass::Passive).is_ok());
+        assert!(authorize_domain_osint(&entries(), "api.example.test", RiskClass::Passive).is_ok());
+        assert!(authorize_domain_osint(&entries(), "other.test", RiskClass::Passive).is_err());
+        for risk in [
+            RiskClass::ActiveLowImpact,
+            RiskClass::Active,
+            RiskClass::LabOnly,
+        ] {
+            assert!(authorize_domain_osint(&entries(), "example.test", risk).is_err());
+        }
     }
     #[test]
     fn active_out_of_scope_and_unapproved_work_is_denied() {

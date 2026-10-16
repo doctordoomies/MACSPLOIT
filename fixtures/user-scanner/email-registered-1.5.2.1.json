@@ -22,6 +22,16 @@
     "media": {}
   },
   {
+    "status": "Registered",
+    "reason": "",
+    "email": "researcher@example.test",
+    "site_name": "Pinterest",
+    "category": "Social",
+    "url": "",
+    "extra": {},
+    "media": {}
+  },
+  {
     "status": "Not Registered",
     "reason": "",
     "email": "researcher@example.test",
