@@ -562,4 +562,73 @@ import Testing
         #expect(phoneResults.presentation == .phoneFacts)
         #expect(phoneResults.summary?.sourceFacts.first?.facts.contains(OSINTProfileField(key: "country", value: "US")) == true)
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil))
+    func testCreateFindingFromResultAndRestartThroughBridgeOffline() async throws {
+        // The #76 owner-acceptance flow end to end over the real core: run a synthetic
+        // Recon chain, project its normalized results, create a Finding from one result
+        // item (asset + evidence + source referenced), link more evidence, change status,
+        // restart, and confirm every durable reference survives. No network.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-findings-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+        let workspace = try await client.createWorkspace(name: "Findings bridge", scope: ["example.test", "*.example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id)
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if (try await client.snapshot(workspace: workspace.id).chains.first { $0.id == run.id })?.status == "COMPLETED" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        // Normalized projection — the shared results contract, not console text.
+        let projection = try await client.resultProjection(workspace: workspace.id, chain: run.id)
+        #expect(projection.chainId == run.id)
+        let item = try #require(projection.items.first { $0.evidenceId != nil })
+
+        // Create a finding prefilled with the result's factual references.
+        var draft = NewFinding()
+        draft.title = "Exposed service needs review"
+        draft.severity = .high
+        draft.confidence = .medium
+        draft.status = .open
+        draft.description = "The analyst's conclusion about this asset."
+        draft.primaryAssetId = item.assetId
+        draft.evidenceIds = [item.evidenceId!]
+        draft.sourceProvider = item.providerId ?? item.discoveredBy
+        draft.sourceRunId = item.runId
+        let created = try await client.createFinding(workspace: workspace.id, finding: draft)
+        #expect(created.severity == .high && created.confidence == .medium && created.status == .open)
+        #expect(created.primaryAssetId == item.assetId)
+        #expect(created.evidenceIds == [item.evidenceId!])
+        #expect(created.sourceRunId == item.runId)
+
+        // Link a second evidence record, then advance the lifecycle.
+        let otherEvidence = try await client.snapshot(workspace: workspace.id).evidence
+            .map(\.id).first { $0 != item.evidenceId }
+        if let otherEvidence {
+            let linked = try await client.linkFindingEvidence(workspace: workspace.id, finding: created.id, evidence: otherEvidence)
+            #expect(linked.evidenceIds.count == 2)
+        }
+        let confirmed = try await client.setFindingStatus(workspace: workspace.id, finding: created.id, status: "CONFIRMED", note: "Verified against the evidence.")
+        #expect(confirmed.status == .confirmed)
+        #expect(confirmed.history.contains { $0.kind == "STATUS" && $0.toValue == "CONFIRMED" })
+
+        // Restart: the finding, its references, and history all survive.
+        transport.shutdown()
+        let reopened = CoreClient(transport: PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory))
+        let persisted = try await reopened.snapshot(workspace: workspace.id)
+        let finding = try #require(persisted.findings?.first { $0.id == created.id })
+        #expect(finding.status == .confirmed)
+        #expect(finding.severity == .high)
+        #expect(finding.primaryAssetId == item.assetId)
+        #expect(finding.evidenceIds.contains(item.evidenceId!))
+        #expect(finding.sourceProvider != nil)
+        #expect(finding.history.contains { $0.kind == "CREATED" })
+        #expect(finding.history.contains { $0.kind == "STATUS" })
+    }
 }
