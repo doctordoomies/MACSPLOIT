@@ -82,7 +82,7 @@ import Testing
         draft.primaryAssetId = "a-1"
         draft.evidenceIds = ["e-1"]
         draft.sourceRunId = "r-1"
-        let json = JSONValue.encoding(draft)
+        let json = try JSONValue.encoding(draft)
         #expect(json["title"].string == "T")
         #expect(json["severity"].string == "HIGH")
         #expect(json["primary_asset_id"].string == "a-1")
@@ -112,5 +112,91 @@ import Testing
 private struct FailingTransport: CoreTransport {
     func exchange(_ request: Data) async throws -> Data {
         throw CoreFailure(code: "Unsupported", message: "no transport in this unit test")
+    }
+}
+
+private actor ProjectionTransport: CoreTransport {
+    private var pending: [(String, String, CheckedContinuation<Data, Error>)] = []
+    var count: Int { pending.count }
+    func exchange(_ data: Data) async throws -> Data {
+        let request = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let id = request["request_id"] as! String
+        let params = request["params"] as! [String: String]
+        let chain = params["chain_id"] ?? ""
+        return try await withCheckedThrowingContinuation { pending.append((id, chain, $0)) }
+    }
+    func resolve(_ index: Int, workspace: String = "w", fail: Bool = false) throws {
+        let (id, chain, continuation) = pending[index]
+        if fail { continuation.resume(throwing: CoreFailure(code: "DatabaseError", message: "Offline fixture rejection")); return }
+        let result = ResultProjection(workspaceId: workspace, chainId: chain, chainName: "Fixture \(index)", items: [])
+        let payload = try JSONSerialization.jsonObject(with: CoreCoding.encoder().encode(result))
+        let response = try JSONSerialization.data(withJSONObject: ["protocol_version":1,"request_id":id,"result":payload])
+        continuation.resume(returning: response)
+    }
+}
+
+@MainActor @Suite struct FindingResultSelectionTests {
+    private func waitForRequests(_ transport: ProjectionTransport, _ count: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await transport.count < count {
+            guard ContinuousClock.now < deadline else { throw CoreFailure(code: "Timeout", message: "Fixture request did not arrive") }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+    @Test func lateAToBToAResponsesAndErrorsCannotReplaceSelectedProvenance() async throws {
+        let transport = ProjectionTransport(), loader = FindingResultLoader()
+        let client = CoreClient(transport: transport)
+        let first = Task { await loader.load(client: client, workspace: "w", chain: "a") }
+        try await waitForRequests(transport, 1)
+        let second = Task { await loader.load(client: client, workspace: "w", chain: "b") }
+        try await waitForRequests(transport, 2)
+        let latest = Task { await loader.load(client: client, workspace: "w", chain: "a") }
+        try await waitForRequests(transport, 3)
+        try await transport.resolve(2); await latest.value
+        #expect(loader.projection?.chainName == "Fixture 2")
+        try await transport.resolve(0); await first.value
+        try await transport.resolve(1, fail: true); await second.value
+        #expect(loader.projection?.chainId == "a")
+        #expect(loader.projection?.chainName == "Fixture 2")
+        #expect(loader.errorMessage == nil)
+        #expect(!loader.isLoading)
+    }
+    @Test func clearCancellationAndWrongWorkspaceRejectStaleResults() async throws {
+        let transport = ProjectionTransport(), loader = FindingResultLoader()
+        let client = CoreClient(transport: transport)
+        let pending = Task { await loader.load(client: client, workspace: "w", chain: "a") }
+        try await waitForRequests(transport,1)
+        pending.cancel(); loader.clear()
+        try await transport.resolve(0); await pending.value
+        #expect(loader.projection == nil && !loader.isLoading && loader.errorMessage == nil)
+        let mismatched = Task { await loader.load(client: client, workspace: "w", chain: "a") }
+        try await waitForRequests(transport,2)
+        try await transport.resolve(1,workspace:"other"); await mismatched.value
+        #expect(loader.projection == nil)
+        #expect(loader.errorMessage?.contains("InvalidResponse") == true)
+        #expect(!loader.isLoading)
+    }
+    @Test func projectionRequestAndSupplementalFactsRoundTrip() async throws {
+        let payload = #"{"result":{"workspace_id":"w","chain_id":"a","chain_name":"Offline","items":[{"kind":"ASSET_OBSERVATION","observation_id":"o","asset_id":"asset","asset_type":"Website","asset_identity":"https://example.test/","run_id":"run","provider_id":"native_http","discovered_by":"Native HTTP","evidence_id":"proof","observed_value":"https://example.test/","confidence":"CONFIRMED","timestamp":"t","metadata":{"status":200},"metadata_omitted":false}]}}"#
+        let reply = ReplyTransport(payload)
+        let result = try await CoreClient(transport: reply).resultProjection(workspace:"w",chain:"a")
+        #expect(result.items[0].metadata?["status"] == .number(200))
+        #expect(result.items[0].metadataOmitted == false)
+        let request = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(request["method"] as? String == "result_projection")
+        #expect(request["params"] as? [String:String] == ["workspace_id":"w","chain_id":"a"])
+        let draft = WorkspaceModel(client: CoreClient(transport: reply)).draftFinding(from: result.items[0])
+        #expect(draft.evidenceIds == ["proof"] && draft.sourceRunId == "run")
+        #expect(draft.title.isEmpty && draft.description.isEmpty && draft.remediation.isEmpty && draft.cveIds.isEmpty)
+    }
+    @Test func referencesAreSanitizedAndEncodingFailuresPropagate() throws {
+        var url = URLComponents(string:"https://example.test/path")
+        url?.user = "fixture-user"; url?.password = UUID().uuidString; url?.query = "private=fixture-value"; url?.fragment = "fixture-fragment"
+        #expect(findingReferenceLabel(try #require(url?.string)) == "https://example.test/path?[redacted]")
+        #expect(findingReferenceLabel("ab\u{0}c\u{202e}d") == "abcd")
+        struct Invalid: Encodable {
+            func encode(to encoder: Encoder) throws { throw CoreFailure(code:"Fixture",message:"Encoding rejected") }
+        }
+        #expect(throws: CoreFailure.self) { try JSONValue.encoding(Invalid()) }
     }
 }

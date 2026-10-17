@@ -588,6 +588,7 @@ import Testing
         // Normalized projection — the shared results contract, not console text.
         let projection = try await client.resultProjection(workspace: workspace.id, chain: run.id)
         #expect(projection.chainId == run.id)
+        #expect(projection.workspaceId == workspace.id)
         let item = try #require(projection.items.first { $0.evidenceId != nil })
 
         // Create a finding prefilled with the result's factual references.
@@ -598,13 +599,14 @@ import Testing
         draft.status = .open
         draft.description = "The analyst's conclusion about this asset."
         draft.primaryAssetId = item.assetId
-        draft.evidenceIds = [item.evidenceId!]
+        let evidenceId = try #require(item.evidenceId)
+        draft.evidenceIds = [evidenceId]
         draft.sourceProvider = item.providerId ?? item.discoveredBy
         draft.sourceRunId = item.runId
         let created = try await client.createFinding(workspace: workspace.id, finding: draft)
         #expect(created.severity == .high && created.confidence == .medium && created.status == .open)
         #expect(created.primaryAssetId == item.assetId)
-        #expect(created.evidenceIds == [item.evidenceId!])
+        #expect(created.evidenceIds == [evidenceId])
         #expect(created.sourceRunId == item.runId)
 
         // Link a second evidence record, then advance the lifecycle.
@@ -620,13 +622,15 @@ import Testing
 
         // Restart: the finding, its references, and history all survive.
         transport.shutdown()
-        let reopened = CoreClient(transport: PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory))
+        let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        defer { reopenedTransport.shutdown() }
+        let reopened = CoreClient(transport: reopenedTransport)
         let persisted = try await reopened.snapshot(workspace: workspace.id)
         let finding = try #require(persisted.findings?.first { $0.id == created.id })
         #expect(finding.status == .confirmed)
         #expect(finding.severity == .high)
         #expect(finding.primaryAssetId == item.assetId)
-        #expect(finding.evidenceIds.contains(item.evidenceId!))
+        #expect(finding.evidenceIds.contains(evidenceId))
         #expect(finding.sourceProvider != nil)
         #expect(finding.history.contains { $0.kind == "CREATED" })
         #expect(finding.history.contains { $0.kind == "STATUS" })

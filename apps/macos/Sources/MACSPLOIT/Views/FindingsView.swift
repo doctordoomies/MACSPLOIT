@@ -10,6 +10,7 @@ struct FindingsView: View {
     @ObservedObject var model: WorkspaceModel
     @State private var editor: EditorContext?
     @State private var fromResult: FromResultContext?
+    @State private var pickedResultDraft: NewFinding?
     @State private var statusNote = ""
     @State private var pendingStatus: FindingStatus?
 
@@ -52,8 +53,14 @@ struct FindingsView: View {
             }
         }
         .sheet(item: $editor) { ctx in FindingEditorView(model: model, context: ctx) }
-        .sheet(item: $fromResult) { ctx in FromResultPicker(model: model, context: ctx) { item in
-            editor = EditorContext(new: model.draftFinding(from: item))
+        .onChange(of: model.selectedWorkspaceId) { _ in
+            editor = nil; fromResult = nil; pickedResultDraft = nil; pendingStatus = nil
+        }
+        .sheet(item: $fromResult, onDismiss: {
+            if let draft = pickedResultDraft { pickedResultDraft = nil; editor = EditorContext(new: draft) }
+        }) { ctx in FromResultPicker(model: model, context: ctx) { item in
+            pickedResultDraft = model.draftFinding(from: item)
+            fromResult = nil
         } }
     }
 
@@ -257,11 +264,11 @@ struct FindingsView: View {
     }
     private func assetLabel(_ id: String) -> String {
         guard let asset = model.snapshot?.assets.first(where: { $0.id == id }) else { return id }
-        return "\(asset.canonicalIdentity) · \(asset.assetType)"
+        return "\(findingReferenceLabel(asset.canonicalIdentity)) · \(asset.assetType)"
     }
     private func evidenceLabel(_ id: String) -> String {
         guard let e = model.snapshot?.evidence.first(where: { $0.id == id }) else { return id }
-        return "\(e.provider) · \(e.target)"
+        return "\(findingReferenceLabel(e.provider)) · \(findingReferenceLabel(e.target))"
     }
 }
 
@@ -345,7 +352,7 @@ private struct FindingEditorView: View {
                             Picker("", selection: $primaryAssetId) {
                                 Text("None").tag(String?.none)
                                 ForEach(model.snapshot?.assets ?? []) { asset in
-                                    Text("\(asset.canonicalIdentity) · \(asset.assetType)").tag(Optional(asset.id))
+                                    Text("\(findingReferenceLabel(asset.canonicalIdentity)) · \(asset.assetType)").tag(Optional(asset.id))
                                 }
                             }.labelsHidden()
                         }
@@ -435,8 +442,8 @@ private struct FromResultPicker: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var chainId: String?
-    @State private var projection: ResultProjection?
-    @State private var loading = false
+    @StateObject private var loader = FindingResultLoader()
+    private var selection: [String?] { [model.selectedWorkspaceId, chainId] }
 
     private var chains: [ChainRun] { (model.snapshot?.chains ?? []).reversed() }
 
@@ -449,9 +456,13 @@ private struct FromResultPicker: View {
                 Text("Choose a run…").tag(String?.none)
                 ForEach(chains) { c in Text("\(c.name) · \(displayTime(c.createdAt))").tag(Optional(c.id)) }
             }
-            .onChange(of: chainId) { _ in Task { await loadProjection() } }
-            if loading { ProgressView().controlSize(.small) }
-            if let projection {
+            if loader.isLoading { ProgressView().controlSize(.small) }
+            if let error = loader.errorMessage {
+                Text(error).font(.callout).foregroundStyle(.secondary)
+                Button("Retry") { Task { await loadProjection() } }
+            }
+            if let projection = loader.projection,
+               projection.workspaceId == model.selectedWorkspaceId, projection.chainId == chainId {
                 if projection.items.isEmpty {
                     Text("This run produced no normalized results to base a finding on.").font(.callout).foregroundStyle(.secondary)
                 } else {
@@ -461,9 +472,9 @@ private struct FromResultPicker: View {
                                 Button { onPick(item); dismiss() } label: {
                                     HStack(spacing: 8) {
                                         Text(item.assetType).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
-                                        Text(item.assetIdentity).font(.callout.monospaced()).lineLimit(1)
+                                        Text(findingReferenceLabel(item.assetIdentity)).font(.callout.monospaced()).lineLimit(1)
                                         Spacer()
-                                        Text(item.discoveredBy).font(.caption2).foregroundStyle(.secondary)
+                                        Text(findingReferenceLabel(item.discoveredBy)).font(.caption2).foregroundStyle(.secondary)
                                         if item.evidenceId != nil { Image(systemName: "doc.text.magnifyingglass").foregroundStyle(.secondary) }
                                     }
                                     .padding(7).frame(maxWidth: .infinity, alignment: .leading)
@@ -477,16 +488,13 @@ private struct FromResultPicker: View {
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
         }
         .padding(24).frame(width: 620, height: 520)
-        .onAppear {
-            chainId = context.chainId
-            Task { await loadProjection() }
-        }
+        .onAppear { chainId = context.chainId }
+        .task(id: selection) { await loadProjection() }
+        .onDisappear { loader.clear() }
     }
 
     private func loadProjection() async {
-        guard let chainId else { projection = nil; return }
-        loading = true
-        projection = await model.resultProjection(chain: chainId)
-        loading = false
+        guard let workspace = model.selectedWorkspaceId, let chainId else { loader.clear(); return }
+        await loader.load(client: model.client, workspace: workspace, chain: chainId)
     }
 }

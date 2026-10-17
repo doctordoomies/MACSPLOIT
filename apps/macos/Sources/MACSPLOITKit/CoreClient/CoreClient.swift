@@ -169,11 +169,11 @@ public struct CoreClient: CoreAPI {
         try await call("install_status", [:])
     }
     public func createFinding(workspace: String, finding: NewFinding) async throws -> Finding {
-        try await call("create_finding", ["workspace_id": .string(workspace), "finding": JSONValue.encoding(finding)])
+        try await call("create_finding", ["workspace_id": .string(workspace), "finding": try JSONValue.encoding(finding)])
     }
     public func updateFinding(workspace: String, finding: String, edit: FindingEdit) async throws -> Finding {
         try await call("update_finding", [
-            "workspace_id": .string(workspace), "finding_id": .string(finding), "edit": JSONValue.encoding(edit),
+            "workspace_id": .string(workspace), "finding_id": .string(finding), "edit": try JSONValue.encoding(edit),
         ])
     }
     public func setFindingStatus(workspace: String, finding: String, status: String, note: String) async throws -> Finding {

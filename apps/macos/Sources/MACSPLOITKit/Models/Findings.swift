@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Impact dimension — independent of confidence and status.
 public enum FindingSeverity: String, Codable, Sendable, CaseIterable, Identifiable, Comparable {
@@ -146,11 +147,14 @@ public struct ResultItem: Codable, Sendable, Equatable, Identifiable {
     public let observedValue: String
     public let confidence: String
     public let timestamp: String
+    public var metadata: JSONValue? = nil
+    public var metadataOmitted: Bool? = nil
     public var id: String { observationId }
 }
 
 /// A chain's normalized results — a read model derived from durable records.
 public struct ResultProjection: Codable, Sendable, Equatable {
+    public let workspaceId: String
     public let chainId: String
     public let chainName: String
     public let items: [ResultItem]
@@ -165,10 +169,47 @@ public extension JSONValue {
     /// Encode an `Encodable` into a `JSONValue` using the core's snake_case convention,
     /// so typed request bodies (e.g. `NewFinding`, `FindingEdit`) serialize to the exact
     /// shape the Rust core expects.
-    static func encoding<T: Encodable>(_ value: T) -> JSONValue {
-        guard let data = try? CoreCoding.encoder().encode(value),
-              let json = try? CoreCoding.decoder().decode(JSONValue.self, from: data)
-        else { return .null }
-        return json
+    static func encoding<T: Encodable>(_ value: T) throws -> JSONValue {
+        let data = try CoreCoding.encoder().encode(value)
+        return try CoreCoding.decoder().decode(JSONValue.self, from: data)
     }
+}
+
+/// Loading state shared by the result picker and offline race tests. A request token
+/// distinguishes repeated A→B→A selections; cancellation and scope are checked as well.
+@MainActor public final class FindingResultLoader: ObservableObject {
+    @Published public private(set) var projection: ResultProjection?
+    @Published public private(set) var isLoading = false
+    @Published public private(set) var errorMessage: String?
+    private var request = UUID()
+    public init() {}
+    public func clear() {
+        request = UUID(); projection = nil; errorMessage = nil; isLoading = false
+    }
+    public func load(client: any CoreAPI, workspace: String, chain: String) async {
+        let token = UUID(); request = token
+        projection = nil; errorMessage = nil; isLoading = true
+        do {
+            let result = try await client.resultProjection(workspace: workspace, chain: chain)
+            guard token == request, !Task.isCancelled else { return }
+            guard result.workspaceId == workspace, result.chainId == chain else {
+                throw CoreFailure(code: "InvalidResponse", message: "Results do not match the selected workspace and run.")
+            }
+            projection = result; isLoading = false
+        } catch {
+            guard token == request, !Task.isCancelled else { return }
+            errorMessage = error.localizedDescription; isLoading = false
+        }
+    }
+}
+
+/// Reference labels are display-only; canonical IDs/URLs remain unchanged for links.
+public func findingReferenceLabel(_ value: String) -> String {
+    let clean = String(value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && !CharacterSet(charactersIn: "\u{202a}\u{202b}\u{202c}\u{202d}\u{202e}\u{2066}\u{2067}\u{2068}\u{2069}").contains($0) })
+    if var url = URLComponents(string: clean), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+        let query = url.percentEncodedQuery != nil
+        url.user = nil; url.password = nil; url.query = nil; url.fragment = nil
+        return String(((url.string ?? "[URL]") + (query ? "?[redacted]" : "")).prefix(1024))
+    }
+    return String(clean.prefix(1024))
 }

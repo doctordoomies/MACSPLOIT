@@ -68,6 +68,7 @@ public final class WorkspaceModel: ObservableObject {
         chainResultsError = nil; isLoadingChainResults = false
         selectedTargetId = nil; selectedAssetId = nil; selectedChainId = nil; selectedEvidenceId = nil
         selectedOSINTChainId = nil; osintTargetId = nil
+        selectedFindingId = nil; pendingFindingDraft = nil; pendingFindingChainId = nil
         lastTargetType = nil; evidenceText = "Select evidence to inspect its verified raw JSON."
         do { try await refresh() } catch { errorMessage = error.localizedDescription }
     }
@@ -533,66 +534,81 @@ public final class WorkspaceModel: ObservableObject {
     /// Create a durable finding. Returns the new finding's id on success.
     @discardableResult
     public func createFinding(_ new: NewFinding) async -> String? {
-        guard let id = selectedWorkspaceId else { return nil }
+        guard let id = selectedWorkspaceId, !isBusy else { return nil }
+        isBusy = true; defer { isBusy = false }
         do {
             let finding = try await client.createFinding(workspace: id, finding: new)
+            guard selectedWorkspaceId == id else { return nil }
             try await refresh()
+            guard selectedWorkspaceId == id else { return nil }
             selectedFindingId = finding.id
             return finding.id
         } catch {
-            errorMessage = error.localizedDescription
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return nil
         }
     }
 
     @discardableResult
     public func updateFinding(_ finding: String, edit: FindingEdit) async -> Bool {
-        guard let id = selectedWorkspaceId else { return false }
+        guard let id = selectedWorkspaceId, !isBusy else { return false }
+        isBusy = true; defer { isBusy = false }
         do {
             _ = try await client.updateFinding(workspace: id, finding: finding, edit: edit)
+            guard selectedWorkspaceId == id else { return false }
             try await refresh()
+            guard selectedWorkspaceId == id else { return false }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return false
         }
     }
 
     @discardableResult
     public func setFindingStatus(_ finding: String, to status: FindingStatus, note: String) async -> Bool {
-        guard let id = selectedWorkspaceId else { return false }
+        guard let id = selectedWorkspaceId, !isBusy else { return false }
+        isBusy = true; defer { isBusy = false }
         do {
             _ = try await client.setFindingStatus(workspace: id, finding: finding, status: status.rawValue, note: note)
+            guard selectedWorkspaceId == id else { return false }
             try await refresh()
+            guard selectedWorkspaceId == id else { return false }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return false
         }
     }
 
     @discardableResult
     public func linkFindingEvidence(_ finding: String, evidence: String) async -> Bool {
-        guard let id = selectedWorkspaceId else { return false }
+        guard let id = selectedWorkspaceId, !isBusy else { return false }
+        isBusy = true; defer { isBusy = false }
         do {
             _ = try await client.linkFindingEvidence(workspace: id, finding: finding, evidence: evidence)
+            guard selectedWorkspaceId == id else { return false }
             try await refresh()
+            guard selectedWorkspaceId == id else { return false }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return false
         }
     }
 
     @discardableResult
     public func unlinkFindingEvidence(_ finding: String, evidence: String) async -> Bool {
-        guard let id = selectedWorkspaceId else { return false }
+        guard let id = selectedWorkspaceId, !isBusy else { return false }
+        isBusy = true; defer { isBusy = false }
         do {
             _ = try await client.unlinkFindingEvidence(workspace: id, finding: finding, evidence: evidence)
+            guard selectedWorkspaceId == id else { return false }
             try await refresh()
+            guard selectedWorkspaceId == id else { return false }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return false
         }
     }
@@ -601,8 +617,15 @@ public final class WorkspaceModel: ObservableObject {
     /// "Create Finding from a result" to prefill factual references (never console text).
     public func resultProjection(chain: String) async -> ResultProjection? {
         guard let id = selectedWorkspaceId else { return nil }
-        do { return try await client.resultProjection(workspace: id, chain: chain) } catch {
-            errorMessage = error.localizedDescription
+        do {
+            let result = try await client.resultProjection(workspace: id, chain: chain)
+            guard selectedWorkspaceId == id, !Task.isCancelled else { return nil }
+            guard result.workspaceId == id, result.chainId == chain else {
+                throw CoreFailure(code: "InvalidResponse", message: "Results do not match the selected run.")
+            }
+            return result
+        } catch {
+            if selectedWorkspaceId == id { errorMessage = error.localizedDescription }
             return nil
         }
     }
