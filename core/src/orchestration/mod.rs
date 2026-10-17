@@ -192,6 +192,10 @@ pub struct Snapshot {
     /// canonical deduplication; never merges assets.
     #[serde(default)]
     pub correlations: Vec<crate::correlation::Correlation>,
+    /// Durable analyst Findings with their links and history (Issue #76). A read model
+    /// over durable records; Findings reference assets/evidence, never copy stdout.
+    #[serde(default)]
+    pub findings: Vec<crate::findings::Finding>,
     pub events: Vec<Event>,
     pub last_sequence: i64,
 }
@@ -248,6 +252,7 @@ impl Store {
             provider_runs:rows(&tx,"SELECT json_object('id',id,'workspace_id',workspace_id,'chain_id',chain_id,'stage_id',stage_id,'provider_id',provider_id,'provider_version',provider_version,'target',target,'start_time',start_time,'end_time',end_time,'status',status,'raw_output_reference',raw_output_reference,'exit_status',exit_status) FROM provider_runs WHERE workspace_id=?1 ORDER BY start_time,id",[&key])?,
             evidence:rows(&tx,&format!("{EVIDENCE_SELECT} WHERE workspace_id=?1 ORDER BY timestamp,id"),[&key])?,
             correlations:crate::correlation::correlations_in(&tx,id)?,
+            findings:crate::findings::findings_in(&tx,id)?,
             last_sequence:events.last().map_or(0,|e|e.sequence),events,
         };
         tx.commit()?;

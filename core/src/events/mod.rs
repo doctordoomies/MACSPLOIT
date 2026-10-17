@@ -30,6 +30,12 @@ pub enum EventType {
     CorrelationProposed,
     /// An analyst reviewed a correlation (confirm / reject / retract / reopen).
     CorrelationReviewed,
+    /// An analyst created a durable Finding.
+    FindingCreated,
+    /// An analyst edited a Finding's fields or evidence links.
+    FindingUpdated,
+    /// An analyst changed a Finding's lifecycle status.
+    FindingStatusChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
