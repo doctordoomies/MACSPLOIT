@@ -23,7 +23,7 @@ use crate::{
     events::EventType,
 };
 use rusqlite::{params, TransactionBehavior};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 
 /// Impact dimension — how bad it is if real. Independent of confidence and status.
@@ -284,8 +284,7 @@ fn clean_identifiers(ids: &[String], kind: Identifier) -> Result<Vec<String>> {
             return Err(CoreError::new(
                 "InvalidRequest",
                 &format!(
-                    "'{}' is not a valid {} identifier.",
-                    clean(raw),
+                    "An identifier does not match the bounded {} format.",
                     kind.label()
                 ),
             ));
@@ -333,11 +332,13 @@ impl Identifier {
     }
 }
 
-fn strings_json(text: &str) -> Vec<String> {
-    serde_json::from_str(text).unwrap_or_default()
+fn stored_json<T: DeserializeOwned>(text: String) -> rusqlite::Result<T> {
+    serde_json::from_str(&text).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })
 }
-fn enum_of(s: String) -> serde_json::Value {
-    serde_json::Value::String(s)
+fn stored_enum<T: DeserializeOwned>(text: String) -> rusqlite::Result<T> {
+    stored_json(serde_json::Value::String(text).to_string())
 }
 fn parse_id(s: String) -> rusqlite::Result<Id> {
     Id::parse_str(&s).map_err(|e| {
@@ -358,22 +359,17 @@ fn load(conn: &rusqlite::Connection, workspace: Id, filter: Option<Id>) -> Resul
                 id: parse_id(row.get(0)?)?,
                 workspace_id: workspace,
                 title: row.get(1)?,
-                severity: serde_json::from_value(enum_of(row.get(2)?))
-                    .unwrap_or(Severity::Informational),
-                confidence: serde_json::from_value(enum_of(row.get(3)?))
-                    .unwrap_or(FindingConfidence::Low),
-                status: serde_json::from_value(enum_of(row.get(4)?))
-                    .unwrap_or(FindingStatus::Draft),
+                severity: stored_enum(row.get(2)?)?,
+                confidence: stored_enum(row.get(3)?)?,
+                status: stored_enum(row.get(4)?)?,
                 description: row.get(5)?,
                 reproduction: row.get(6)?,
                 remediation: row.get(7)?,
                 source_provider: row.get(8)?,
-                source_run_id: row
-                    .get::<_, Option<String>>(9)?
-                    .and_then(|s| Id::parse_str(&s).ok()),
-                tags: strings_json(&row.get::<_, String>(10)?),
-                cwe_ids: strings_json(&row.get::<_, String>(11)?),
-                cve_ids: strings_json(&row.get::<_, String>(12)?),
+                source_run_id: row.get::<_, Option<String>>(9)?.map(parse_id).transpose()?,
+                tags: stored_json(row.get(10)?)?,
+                cwe_ids: stored_json(row.get(11)?)?,
+                cve_ids: stored_json(row.get(12)?)?,
                 affected_assets: Vec::new(),
                 evidence_ids: Vec::new(),
                 created_by: row.get(13)?,
@@ -495,6 +491,14 @@ impl Store {
             None => None,
         };
 
+        if new.additional_asset_ids.len() > MAX_AFFECTED_ASSETS
+            || new.evidence_ids.len() > MAX_EVIDENCE_LINKS
+        {
+            return Err(CoreError::new(
+                "InvalidRequest",
+                "The supplied asset/evidence reference list exceeds its limit.",
+            ));
+        }
         // Collect affected assets: primary first, then additional, de-duplicated.
         let mut affected: Vec<(Id, bool)> = Vec::new();
         if let Some(primary) = new.primary_asset_id {
@@ -551,13 +555,27 @@ impl Store {
         }
         // Source run, when given, must exist in this workspace.
         if let Some(run) = new.source_run_id {
-            let run_ok: bool = tx
-                .prepare("SELECT 1 FROM provider_runs WHERE workspace_id=?1 AND id=?2")?
-                .exists(params![workspace.to_string(), run.to_string()])?;
-            if !run_ok {
+            use rusqlite::OptionalExtension;
+            let provider: Option<String> = tx
+                .query_row(
+                    "SELECT provider_id FROM provider_runs WHERE workspace_id=?1 AND id=?2",
+                    params![workspace.to_string(), run.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if provider.is_none() {
                 return Err(CoreError::new(
                     "InvalidRequest",
                     "The source run does not exist in this workspace.",
+                ));
+            }
+            if source_provider
+                .as_ref()
+                .is_some_and(|source| Some(source) != provider.as_ref())
+            {
+                return Err(CoreError::new(
+                    "InvalidRequest",
+                    "The source provider does not match the referenced run.",
                 ));
             }
         }
