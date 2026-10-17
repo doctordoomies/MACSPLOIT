@@ -103,6 +103,43 @@ pub enum Command {
         decision: crate::correlation::ReviewDecision,
         note: String,
     },
+    /// Create a durable analyst Finding (Issue #76). Only the analyst's conclusion; any
+    /// asset/evidence/source references must already exist in this workspace.
+    CreateFinding {
+        workspace_id: Id,
+        finding: crate::findings::NewFinding,
+    },
+    /// Edit a Finding's analyst-controlled fields (not status, not source attribution).
+    UpdateFinding {
+        workspace_id: Id,
+        finding_id: Id,
+        edit: crate::findings::FindingEdit,
+    },
+    /// Apply a validated lifecycle transition with a note.
+    SetFindingStatus {
+        workspace_id: Id,
+        finding_id: Id,
+        status: crate::findings::FindingStatus,
+        note: String,
+    },
+    /// Attach an existing evidence record to a Finding (idempotent, same-workspace).
+    LinkFindingEvidence {
+        workspace_id: Id,
+        finding_id: Id,
+        evidence_id: Id,
+    },
+    /// Detach an evidence record from a Finding (the Evidence itself is untouched).
+    UnlinkFindingEvidence {
+        workspace_id: Id,
+        finding_id: Id,
+        evidence_id: Id,
+    },
+    /// Read-only normalized result projection for a chain's durable records (typed
+    /// result items with provenance). The shared results contract; never raw stdout.
+    ResultProjection {
+        workspace_id: Id,
+        chain_id: Id,
+    },
 }
 
 impl Command {
@@ -127,6 +164,12 @@ impl Command {
             Self::InstallStatus { .. } => "install_status",
             Self::ProposeCorrelation { .. } => "propose_correlation",
             Self::ReviewCorrelation { .. } => "review_correlation",
+            Self::CreateFinding { .. } => "create_finding",
+            Self::UpdateFinding { .. } => "update_finding",
+            Self::SetFindingStatus { .. } => "set_finding_status",
+            Self::LinkFindingEvidence { .. } => "link_finding_evidence",
+            Self::UnlinkFindingEvidence { .. } => "unlink_finding_evidence",
+            Self::ResultProjection { .. } => "result_projection",
         }
     }
 }
@@ -247,6 +290,52 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 decision,
                 &note,
             )?)?,
+            Command::CreateFinding {
+                workspace_id,
+                finding,
+            } => serde_json::to_value(engine.store.create_finding(workspace_id, finding)?)?,
+            Command::UpdateFinding {
+                workspace_id,
+                finding_id,
+                edit,
+            } => serde_json::to_value(engine.store.update_finding(
+                workspace_id,
+                finding_id,
+                edit,
+            )?)?,
+            Command::SetFindingStatus {
+                workspace_id,
+                finding_id,
+                status,
+                note,
+            } => serde_json::to_value(engine.store.set_finding_status(
+                workspace_id,
+                finding_id,
+                status,
+                &note,
+            )?)?,
+            Command::LinkFindingEvidence {
+                workspace_id,
+                finding_id,
+                evidence_id,
+            } => serde_json::to_value(engine.store.link_finding_evidence(
+                workspace_id,
+                finding_id,
+                evidence_id,
+            )?)?,
+            Command::UnlinkFindingEvidence {
+                workspace_id,
+                finding_id,
+                evidence_id,
+            } => serde_json::to_value(engine.store.unlink_finding_evidence(
+                workspace_id,
+                finding_id,
+                evidence_id,
+            )?)?,
+            Command::ResultProjection {
+                workspace_id,
+                chain_id,
+            } => serde_json::to_value(engine.store.result_projection(workspace_id, chain_id)?)?,
         })
     })();
     match result {

@@ -24,6 +24,12 @@ public protocol CoreAPI: Sendable {
     func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
                             rationale: String, observations: [String]) async throws -> Correlation
     func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation
+    func createFinding(workspace: String, finding: NewFinding) async throws -> Finding
+    func updateFinding(workspace: String, finding: String, edit: FindingEdit) async throws -> Finding
+    func setFindingStatus(workspace: String, finding: String, status: String, note: String) async throws -> Finding
+    func linkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding
+    func unlinkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding
+    func resultProjection(workspace: String, chain: String) async throws -> ResultProjection
 }
 
 public extension CoreAPI {
@@ -40,6 +46,24 @@ public extension CoreAPI {
     func proposeCorrelation(workspace: String, left: String, right: String, basis: String, confidence: String,
                             rationale: String, observations: [String]) async throws -> Correlation {
         throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")
+    }
+    func createFinding(workspace: String, finding: NewFinding) async throws -> Finding {
+        throw CoreFailure(code: "Unsupported", message: "Findings are not available in this client.")
+    }
+    func updateFinding(workspace: String, finding: String, edit: FindingEdit) async throws -> Finding {
+        throw CoreFailure(code: "Unsupported", message: "Findings are not available in this client.")
+    }
+    func setFindingStatus(workspace: String, finding: String, status: String, note: String) async throws -> Finding {
+        throw CoreFailure(code: "Unsupported", message: "Findings are not available in this client.")
+    }
+    func linkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding {
+        throw CoreFailure(code: "Unsupported", message: "Findings are not available in this client.")
+    }
+    func unlinkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding {
+        throw CoreFailure(code: "Unsupported", message: "Findings are not available in this client.")
+    }
+    func resultProjection(workspace: String, chain: String) async throws -> ResultProjection {
+        throw CoreFailure(code: "Unsupported", message: "Result projection is not available in this client.")
     }
     func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
         throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")
@@ -143,5 +167,32 @@ public struct CoreClient: CoreAPI {
     }
     public func installStatus() async throws -> InstallState {
         try await call("install_status", [:])
+    }
+    public func createFinding(workspace: String, finding: NewFinding) async throws -> Finding {
+        try await call("create_finding", ["workspace_id": .string(workspace), "finding": try JSONValue.encoding(finding)])
+    }
+    public func updateFinding(workspace: String, finding: String, edit: FindingEdit) async throws -> Finding {
+        try await call("update_finding", [
+            "workspace_id": .string(workspace), "finding_id": .string(finding), "edit": try JSONValue.encoding(edit),
+        ])
+    }
+    public func setFindingStatus(workspace: String, finding: String, status: String, note: String) async throws -> Finding {
+        try await call("set_finding_status", [
+            "workspace_id": .string(workspace), "finding_id": .string(finding),
+            "status": .string(status), "note": .string(note),
+        ])
+    }
+    public func linkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding {
+        try await call("link_finding_evidence", [
+            "workspace_id": .string(workspace), "finding_id": .string(finding), "evidence_id": .string(evidence),
+        ])
+    }
+    public func unlinkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding {
+        try await call("unlink_finding_evidence", [
+            "workspace_id": .string(workspace), "finding_id": .string(finding), "evidence_id": .string(evidence),
+        ])
+    }
+    public func resultProjection(workspace: String, chain: String) async throws -> ResultProjection {
+        try await call("result_projection", ["workspace_id": .string(workspace), "chain_id": .string(chain)])
     }
 }

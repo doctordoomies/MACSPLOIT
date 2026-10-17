@@ -223,6 +223,9 @@ struct OSINTView: View {
                 }
                 HStack {
                     Spacer()
+                    Button("Create Finding") { model.beginFinding(fromChain: results.chain.id) }
+                        .controlSize(.small)
+                        .help("Draw a reviewable security conclusion from this run's results; the affected asset and evidence are referenced for you.")
                     Button("View assets") { model.section = .assets }.controlSize(.small)
                     Button("View evidence") {
                         if let evidence = results.evidence.first { model.showEvidence(evidence.id) } else { model.section = .evidence }

@@ -7,6 +7,24 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Durable Findings and normalized result foundation (#76, parent #68) — owner
+  acceptance pending:** a first-class, durable **Finding** entity (migration 008) — a
+  reviewable analyst security conclusion that *references* durable records (affected
+  canonical assets, multiple evidence, source provider/run) rather than copying provider
+  stdout. Severity / confidence / lifecycle status are three independent typed dimensions;
+  the lifecycle is a small core-validated state machine with append-only history; text and repeated
+  fields are bounded and CVE/CWE identifiers are shape-validated; cross-workspace references are rejected.
+  A shared typed **ResultProjection** read model derives normalized, provenance-carrying
+  result items from the durable graph for a chain (never raw stdout or an opaque blob) —
+  the internal results contract for Recon/OSINT/Findings/future reports/AI. New
+  `WorkspaceView` **Findings** workbench (master/detail, New Finding, validated status
+  changes with notes, evidence link/unlink, history) and a **Create Finding from a
+  result** action on Recon/OSINT runs that prefills only factual references (asset,
+  evidence, source) — the analyst writes the conclusion. No automated Finding creation
+  yet (reviewed scanner-proposed Findings come later). Protocol (v1, additive):
+  `create_finding`, `update_finding`, `set_finding_status`, `link_finding_evidence`,
+  `unlink_finding_evidence`, `result_projection`; findings added to the snapshot. See
+  [docs/findings.md](docs/findings.md).
 - **M6 OSINT owner-acceptance fixes (#71, #72, #73 on #70) — owner acceptance pending:**
   - *Domain Authorize & Run (#71):* an out-of-scope Domain OSINT target now uses the same
     core-backed exact-entry **Authorize & Run** flow as Recon (via `target_scope_status`

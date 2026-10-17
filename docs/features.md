@@ -59,12 +59,17 @@ today, not aspirations. Statuses:
 
 ## Assessment
 
+The [Finding foundation](findings.md) and typed `ResultProjection` are implemented on
+`feat/findings-foundation` (Issue #76, parent #68), pending owner acceptance. The
+projection derives from durable records; existing Recon/OSINT renderers remain intact.
+
+
 | Capability | Status | Notes |
 | --- | --- | --- |
 | TLS analysis | PLANNED | Native or provider-backed |
 | Vulnerability assessment (Nuclei) | PLANNED | Detection-only, conservative defaults |
 | SQL injection assessment (sqlmap) | FUTURE | Detection-only if added; deeper behavior gated behind authorized-validation |
-| Findings engine | PLANNED | Severity/confidence separate; dedup/correlation |
+| Manual Findings foundation | BETA | Issue #76: durable analyst conclusions; independent severity/confidence/lifecycle, multi-Asset/Evidence references, review history and Create Finding from normalized Recon/OSINT results; owner acceptance pending. Automated scanners/dedup remain deferred |
 | Reporting (JSON/Markdown/HTML) | PLANNED | PDF later |
 
 ## OSINT
