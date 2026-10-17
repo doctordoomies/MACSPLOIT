@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 public enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", osint = "OSINT", evidence = "Evidence", activity = "Activity"
+    case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", osint = "OSINT", findings = "Findings", evidence = "Evidence", activity = "Activity"
     case toolManager = "Tool Manager"
     public var id: String { rawValue }
     public var symbol: String {
@@ -12,6 +12,7 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .assets: return "square.stack.3d.up"
         case .recon: return "point.3.connected.trianglepath.dotted"
         case .osint: return "person.crop.rectangle.stack"
+        case .findings: return "exclamationmark.shield"
         case .evidence: return "doc.text.magnifyingglass"
         case .activity: return "waveform.path"
         case .toolManager: return "wrench.and.screwdriver"
@@ -512,6 +513,130 @@ public final class WorkspaceModel: ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    // MARK: Findings
+
+    /// The currently selected finding in the Findings workbench.
+    @Published public var selectedFindingId: String?
+
+    /// Durable findings, newest first. Never created automatically.
+    public var findings: [Finding] { snapshot?.findingsNewestFirst ?? [] }
+
+    /// The selected finding (or the newest) from durable state.
+    public var selectedFinding: Finding? {
+        let all = findings
+        if let id = selectedFindingId, let found = all.first(where: { $0.id == id }) { return found }
+        return all.first
+    }
+
+    /// Create a durable finding. Returns the new finding's id on success.
+    @discardableResult
+    public func createFinding(_ new: NewFinding) async -> String? {
+        guard let id = selectedWorkspaceId else { return nil }
+        do {
+            let finding = try await client.createFinding(workspace: id, finding: new)
+            try await refresh()
+            selectedFindingId = finding.id
+            return finding.id
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func updateFinding(_ finding: String, edit: FindingEdit) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.updateFinding(workspace: id, finding: finding, edit: edit)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    public func setFindingStatus(_ finding: String, to status: FindingStatus, note: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.setFindingStatus(workspace: id, finding: finding, status: status.rawValue, note: note)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    public func linkFindingEvidence(_ finding: String, evidence: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.linkFindingEvidence(workspace: id, finding: finding, evidence: evidence)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    public func unlinkFindingEvidence(_ finding: String, evidence: String) async -> Bool {
+        guard let id = selectedWorkspaceId else { return false }
+        do {
+            _ = try await client.unlinkFindingEvidence(workspace: id, finding: finding, evidence: evidence)
+            try await refresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Fetch the normalized, provenance-carrying result projection for a chain. Used by
+    /// "Create Finding from a result" to prefill factual references (never console text).
+    public func resultProjection(chain: String) async -> ResultProjection? {
+        guard let id = selectedWorkspaceId else { return nil }
+        do { return try await client.resultProjection(workspace: id, chain: chain) } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// A `NewFinding` prefilled with ONLY the factual references from a selected result
+    /// item: affected asset, supporting evidence, and source provider/run. The analyst
+    /// supplies the title, severity, confidence, and conclusion text.
+    public func draftFinding(from item: ResultItem) -> NewFinding {
+        var draft = NewFinding()
+        draft.primaryAssetId = item.assetId
+        if let evidence = item.evidenceId { draft.evidenceIds = [evidence] }
+        draft.sourceProvider = item.providerId ?? item.discoveredBy
+        draft.sourceRunId = item.runId
+        draft.status = .open
+        return draft
+    }
+
+    /// Pending prefilled draft handed from a result context to the Findings editor.
+    @Published public var pendingFindingDraft: NewFinding?
+    /// A chain whose normalized results the Findings workbench should open a
+    /// "Create Finding from a result" picker for (set from Recon/OSINT).
+    @Published public var pendingFindingChainId: String?
+
+    /// Begin "Create Finding" from a result item: prefill references and open Findings.
+    public func beginFinding(from item: ResultItem) {
+        pendingFindingDraft = draftFinding(from: item)
+        section = .findings
+    }
+
+    /// Begin "Create Finding" from a completed chain: open Findings and let the analyst
+    /// pick which normalized result item to base the finding on.
+    public func beginFinding(fromChain chain: String) {
+        pendingFindingChainId = chain
+        section = .findings
     }
 
     /// Console lines for the selected OSINT run.

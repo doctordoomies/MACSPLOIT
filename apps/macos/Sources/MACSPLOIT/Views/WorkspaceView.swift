@@ -18,7 +18,6 @@ struct WorkspaceView: View {
                     Label("Provider Center", systemImage: "wrench.and.screwdriver").tag(WorkspaceSection.toolManager)
                 }
                 Section("Future") {
-                    Label("Findings", systemImage: "exclamationmark.shield")
                     Label("Graph", systemImage: "point.3.filled.connected.trianglepath.dotted")
                     Label("Reports", systemImage: "doc.richtext")
                 }.foregroundStyle(.tertiary).disabled(true)
@@ -53,6 +52,7 @@ struct WorkspaceView: View {
                         case .assets: AssetsView(model: model)
                         case .recon: ReconView(model: model)
                         case .osint: OSINTView(model: model)
+                        case .findings: FindingsView(model: model)
                         case .evidence: EvidenceView(model: model)
                         case .activity: ActivityView(model: model)
                         case .toolManager: ToolManagerView(model: model)

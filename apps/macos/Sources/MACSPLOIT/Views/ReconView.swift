@@ -504,6 +504,9 @@ struct ReconView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.tertiary)
                         Spacer()
+                        Button("Create Finding") { model.beginFinding(fromChain: chain.id) }
+                            .controlSize(.small)
+                            .help("Draw a reviewable security conclusion from this run's results; the affected asset and evidence are referenced for you.")
                         StatusBadge(status: chain.status)
                     }
 

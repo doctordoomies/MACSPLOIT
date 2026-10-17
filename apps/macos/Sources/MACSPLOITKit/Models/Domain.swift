@@ -192,6 +192,9 @@ public struct Snapshot: Codable, Sendable, Equatable {
     public let lastSequence: Int64
     /// Analyst correlations (absent from older cores). Never merges assets.
     public var correlations: [Correlation]? = nil
+    /// Durable analyst Findings (absent from older cores). A read model over durable
+    /// records; each references assets/evidence rather than copying provider output.
+    public var findings: [Finding]? = nil
 }
 public struct EvidenceContent: Codable, Sendable {
     public let evidenceId: String, rawJson: String
