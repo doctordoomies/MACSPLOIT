@@ -95,7 +95,10 @@ fn extract_zip(archive_path: &Path, member: &str, dest: &Path, max: u64) -> Resu
         // components when deriving an enclosed name; MACSPLOIT intentionally
         // rejects aliases such as `sub/../subfinder` instead of accepting a
         // normalized equivalent.
-        if !is_safe_relative(Path::new(entry.name())) {
+        let raw_name = entry
+            .name()
+            .map_err(|e| unsafe_archive(&format!("Malformed ZIP entry name: {e}")))?;
+        if !is_safe_relative(Path::new(raw_name.as_ref())) {
             return Err(unsafe_archive("ZIP entry has an unsafe path."));
         }
         // `enclosed_name` provides a second path-safety check for absolute,
@@ -194,14 +197,13 @@ mod tests {
         path
     }
 
-    fn opts() -> zip::write::FileOptions<'static, ()> {
-        zip::write::FileOptions::default().unix_permissions(0o755)
+    fn opts() -> zip::write::SimpleFileOptions {
+        zip::write::SimpleFileOptions::default().unix_permissions(0o755)
     }
 
-    // zip v8 normalizes names passed to ZipWriter, which makes it unsuitable for
-    // constructing hostile path fixtures directly. Patch a same-length filename
-    // in both the local and central directory records so the reader sees the raw
-    // archive spelling an attacker could supply.
+    // Patch a same-length filename in both the local and central directory records
+    // so the reader sees the exact hostile archive spelling an attacker could
+    // supply, independent of writer-path normalization behavior across zip versions.
     fn patch_zip_entry_name(path: &Path, from: &[u8], to: &[u8]) {
         assert_eq!(from.len(), to.len());
         let mut bytes = std::fs::read(path).unwrap();
