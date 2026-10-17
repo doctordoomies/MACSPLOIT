@@ -24,6 +24,11 @@
       "sha": "a55a293cc43e21f0f2be4ee84366a8ee68bc17c0",
       "source": "Dependabot PR #75",
       "reason": "Reviewed serde_json 1.0.154 and uuid 1.28.0 dependency update retained in main history after merge."
+    },
+    {
+      "sha": "a88f56445d15ee2a97c6479ac190b116ded1ac55",
+      "source": "Dependabot PR #74",
+      "reason": "Reviewed zip 8.6.0 -> 9.0.1 dependency update retained in main history after merge (manifest entry was omitted when #74 merged, leaving the identity audit red on main)."
     }
   ]
 }
