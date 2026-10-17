@@ -201,3 +201,27 @@ Normal reconnaissance must not automatically attempt authentication, execute
 payloads, obtain credentials, persist remotely, or escalate findings into
 compromise. Validation/lab functionality stays separate and opt-in. Wireless
 attacks and hardware execution remain outside the initial platform.
+
+## Analyst Findings boundary (#76)
+
+Observations are provider facts; Evidence is retained source material; Findings are
+analyst-written conclusions referencing affected canonical Assets and Evidence.
+Neither a console string nor raw stdout can seed a conclusion. Create Finding from
+Recon/OSINT uses durable ResultProjection references only; title/severity/CVE and
+remediation are never inferred automatically.
+
+Rust validates field/list bounds, independent enums, allowed lifecycle transitions,
+required review notes and same-workspace asset/evidence/run references. Mutations,
+history and events commit atomically; invalid updates roll back. Source attribution
+is immutable and a supplied provider must match its source provider run. Significant
+status/severity/confidence changes and Evidence link changes remain reviewable after
+restart. Events carry IDs/small status summaries, not Finding text or Evidence bodies.
+
+Finding text is plain SwiftUI text, never executable HTML. Reference labels redact URL
+userinfo/query/fragments and control/bidi characters. Protocol encoding errors propagate;
+stale/cancelled/wrong-workspace result responses cannot replace the picker selection.
+Projection queries open SQLite read-only, preserve SQL errors, bound item/byte counts,
+and never execute providers, mutate scope or migrate. Oversized metadata is explicitly
+flagged as omitted; normalized metadata is still untrusted and must be sanitized for
+presentation. [Field limits and lifecycle](findings.md) are core-enforced, not UI policy.
+TLS scanners, Nuclei, CVE enrichment, reports, AI/MCP and exploitation remain deferred.

@@ -45,6 +45,12 @@ empty request ID; an oversized frame closes the helper session.
 | install_status | none | `{running: {provider_id, method}?, last: InstallOutcome?, events: [InstallEvent]}` where InstallOutcome is `{provider_id, method, status (SUCCEEDED/FAILED/CANCELLED/UNSUPPORTED), message, detail?}` and InstallEvent is `{seq, timestamp, kind (STAGE/COMMAND/STDOUT/STDERR/INFO), text}`; the bounded event log drives the read-only Install Console (reset per install). Read-only |
 | propose_correlation | workspace_id, left_asset_id, right_asset_id, basis (`analyst_review`, `shared_public_record`, `shared_identifier`), confidence (`LOW`, `MEDIUM`, `HIGH`), rationale (1–1,024 bytes), observation_ids (1–20) | A `PROPOSED` Correlation. Refused (`InvalidRequest`) unless both assets are cited by evidence-backed observations; `shared_identifier` is capped at `LOW`; a second proposal for the same pair is `CorrelationExists`. Never modifies assets |
 | review_correlation | workspace_id, correlation_id, decision (`confirm`, `reject`, `retract`, `reopen`), note (1–1,024 bytes) | The updated Correlation; only `PROPOSED→CONFIRMED/REJECTED`, `CONFIRMED→RETRACTED`, `REJECTED/RETRACTED→PROPOSED`; otherwise `InvalidTransition` |
+| create_finding | workspace_id, finding (`NewFinding`) | Durable Finding with Asset/Evidence links and history; validates bounds, enum values and same-workspace references |
+| update_finding | workspace_id, finding_id, edit (`FindingEdit`) | Atomically updates analyst fields; status and source provenance remain separate |
+| set_finding_status | workspace_id, finding_id, status, note | Validated lifecycle transition with durable review note; invalid/self transition → `InvalidTransition` |
+| link_finding_evidence | workspace_id, finding_id, evidence_id | Idempotent same-workspace Evidence link; returns updated Finding |
+| unlink_finding_evidence | workspace_id, finding_id, evidence_id | Removes only the link; retained Evidence is untouched; returns updated Finding |
+| result_projection | workspace_id, chain_id | Bounded read-only normalized projection from durable observations and same-run relationship provenance; no provider execution or raw output |
 
 `target_scope_status`, `authorize_target`, `start_install`, `cancel_install`, and
 `install_status` are additive to protocol v1 (no version bump). Installation state is
@@ -123,3 +129,45 @@ from_status?, to_status, note, actor, timestamp}]}]` (absent from older cores; c
 treat a missing key as empty). Durable events gain `CorrelationProposed` and
 `CorrelationReviewed`. Correlations are created only by `propose_correlation`; no chain
 or provider creates one. See `docs/osint-correlation.md`.
+
+### Findings and shared projection additions (v1 compatible, Issue #76)
+
+`snapshot` gains `findings`, with each Finding carrying `id`, `workspace_id`, `title`,
+`severity`, `confidence`, `status`, `description`, `reproduction`, `remediation`,
+`source_provider?`, `source_run_id?`, `tags`, `cwe_ids`, `cve_ids`, `affected_assets`
+(`[{asset_id, is_primary}]`), `evidence_ids`, `created_by`, `created_at`, `updated_at`,
+and oldest-first `history` (`[{id, kind, from_value?, to_value?, note, actor, timestamp}]`).
+Swift treats absent `findings` in older snapshots as empty. Older clients ignore the
+new key. No protocol version bump or existing result-renderer replacement is required.
+
+`NewFinding` requires `title`, `severity`, `confidence`; optional `status` defaults
+OPEN, optional text/lists default empty. It accepts `primary_asset_id?`,
+`additional_asset_ids`, `evidence_ids`, `source_provider?`, `source_run_id?`.
+`FindingEdit` accepts only optional `title`, `severity`, `confidence`, `description`,
+`reproduction`, `remediation`, `tags`, `cwe_ids`, `cve_ids`; absent/null leaves a field
+unchanged, empty strings/arrays explicitly clear optional content. Status uses its own
+command and note; attribution is immutable. Finding commands return the complete
+updated Finding. Unknown/wrong-workspace finding IDs yield `FindingNotFound`;
+invalid links/fields yield `InvalidRequest` (`AssetNotFound` for affected assets),
+collection capacity yields `BudgetExceeded`, and invalid lifecycle moves yield
+`InvalidTransition`. Malformed enums fail request decoding. No mutation is auto-retried.
+
+`result_projection` returns `{workspace_id, chain_id, chain_name, items}`. A ResultItem
+has `kind` (`ASSET_OBSERVATION`/`RELATIONSHIP_OBSERVATION`), `observation_id`, `asset_id`,
+`asset_type`, `asset_identity`, optional `source_asset_id`, `run_id`, `provider_id`,
+`discovered_by`, optional `evidence_id`, `observed_value`, `confidence`, `timestamp`,
+`metadata`, `metadata_omitted`. Provider confidence is not analyst Finding confidence.
+Only observations attributable through provider runs for the requested chain enter
+this read model. Relationship kind additionally requires existing relationship-observation
+provenance for the same provider run/Evidence and endpoint pair. Canonical reuse never
+removes run provenance. Missing chains (including wrong workspace) yield `InvalidRequest`;
+SQL errors propagate as `DatabaseError`; unsupported old/new schema yields
+`MigrationFailure` with no migration/write performed by the query.
+
+Projection limits: 10,000 items, 6 MiB total JSON; overflow → `ResultsTooLarge`.
+Metadata over 32 KiB becomes null with `metadata_omitted: true`; historical absence
+stays null with false. Metadata remains untrusted normalized data. Raw output stays in
+Evidence. Durable events gain `FindingCreated`, `FindingUpdated`, `FindingStatusChanged`,
+with IDs/small status summaries only. Migration 008 is independent of protocol v1.
+See [Findings](../docs/findings.md) for enum values, transitions, field bounds and
+owner acceptance; TLS/Nuclei/CVE enrichment/reporting/AI remain deferred.

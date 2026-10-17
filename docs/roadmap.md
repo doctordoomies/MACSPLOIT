@@ -169,7 +169,8 @@ MACSPLOIT is already a functional reconnaissance workbench, not only a UI protot
 
 - Milestone 1 owner testing exposed provider-setup, authorization-flow, and responsive Recon UI usability gaps tracked by Issue #36;
 - bug bounty program context is not modeled;
-- there is no Findings system yet;
+- Issue #76 implements the minimum manual Findings and normalized-result foundation;
+  owner acceptance is pending and automated Finding scanners remain deferred;
 - OSINT is now first-class: the typed OSINT foundation plus the first user-scanner
   Username/Email slice merged via PR #60; Sherlock, Maigret, socialscan, Holehe,
   PhoneInfoga, theHarvester, passive Amass, RDAP, certificate-transparency intelligence,
@@ -391,9 +392,9 @@ DNS dependency.
 
 # Milestone 2 — Bug bounty workbench + Findings foundation
 
-**Status: NEXT SUPPORTING WORK AFTER M6 — only the minimum Findings substrate required
-by vulnerability scanners may advance before the vulnerability-completion gate. Broader
-bug-bounty workspace/profile UI remains deferred.**
+**Status: minimum Findings substrate ACTIVE via Issue #76 (parent #68), implemented on
+`feat/findings-foundation`, owner acceptance pending. Broader bug-bounty workspace/profile
+UI remains deferred. This does not mark M2/M4 or the vulnerability-completion gate done.**
 
 Recon becomes substantially more useful when the workspace understands the engagement
 and can store conclusions, not only discoveries.
@@ -427,7 +428,11 @@ The analyst remains responsible for authorization.
 
 ## 2.3 Findings foundation
 
-Create a durable Findings model before adding vulnerability scanners.
+The minimum manual model is implemented in this branch: migration 008, core-validated
+severity/confidence/lifecycle, multiple Asset/Evidence references, durable history,
+shared ResultProjection and Create Finding from Recon/OSINT. See [Findings](findings.md).
+Issue #76 remains open until owner acceptance. TLS/Nuclei/CVE enrichment and automated
+rules remain follow-ups under #68.
 
 A finding should support, at minimum:
 
@@ -1200,7 +1205,7 @@ After the agent finishes:
 | Issue #67 — correlation + aggregator review + OSINT owner acceptance | Milestone 6 exit gate — implementation portion in M6 completion PR; owner walkthrough pending |
 | Issue #68 — vulnerability scanning completion umbrella | Post-M6 vulnerability block — BLOCKED until #58 closes |
 | Bug bounty workspace/profile | Milestone 2 — broader product UI deferred behind vulnerability gate |
-| Findings foundation | Milestone 2 — only minimum scanner-required substrate advances under #68 |
+| Issue #76 — Findings + normalized result foundation | ACTIVE under #68; implementation present, owner acceptance pending |
 | Historical URLs | Milestone 3 — deferred until vulnerability gate passes |
 | JavaScript analysis | Milestone 3 — deferred until vulnerability gate passes |
 | Local source analysis | Milestone 7 — part of #68 |

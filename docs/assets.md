@@ -81,7 +81,13 @@ invalid relationship or provenance reference.
 
 **PLANNED:** DNSRecord/CIDR graph nodes as real adapters require them, provider
 catalog persistence, typed attribute evolution, and normalization versioning.
-**FUTURE:** findings, notes, reports, exports, identity/repository/hardware models.
-The planned finding dimensions remain severity (INFO through CRITICAL), confidence
-(LOW through CONFIRMED), and review status (NEW, REVIEWING, CONFIRMED,
-FALSE_POSITIVE, RESOLVED, ACCEPTED_RISK); none is implemented as findings yet.
+**BETA (#76):** migration 008 persists `findings`, `finding_assets`, `finding_evidence`
+and `finding_history`. Existing migration files are unchanged. Canonical Assets and
+Evidence remain independently stored and are referenced by workspace-scoped joins,
+including multiple affected assets and multiple Evidence items. Severity
+(INFORMATIONAL/LOW/MEDIUM/HIGH/CRITICAL), analyst confidence (LOW/MEDIUM/HIGH/CONFIRMED)
+and lifecycle are independent. Lifecycle/history, atomic validation and the normalized
+read-only `ResultProjection` are described in [Findings](findings.md). No duplicated
+results database is introduced. Existing Recon/OSINT data survives migration/restart.
+
+**FUTURE:** notes, reports, exports and further identity/repository/hardware models.

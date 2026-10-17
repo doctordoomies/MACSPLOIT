@@ -116,5 +116,25 @@ timeout remain **PLANNED**.
 
 **FUTURE:** a per-user service that survives full UI quit, with peer authorization
 and lifecycle/version negotiation. The internal protocol and durable entities can
-be reused; Phase 0 does not claim daemon behavior or a public plugin ABI. Findings,
-reporting, distribution, sandboxing/notarization, and hardware are also deferred.
+be reused; Phase 0 does not claim daemon behavior or a public plugin ABI. Automated
+Finding scanners, reporting, distribution, sandboxing/notarization, and hardware remain deferred.
+
+## Durable Findings and shared result boundary (#76)
+
+Provider → parser/normalizer → durable Asset/Observation/Relationship/Evidence →
+`ResultProjection` → analyst Finding. Provider output is not the product model.
+`core/src/findings` owns bounded Finding mutations, validated lifecycle transitions,
+workspace-safe links and append-only review history. Migration 008 adds four Finding
+and join/history tables, with no generic results database. Snapshots include Findings
+with links/history for restart reconstruction.
+
+`core/src/result` derives typed, bounded items for one chain from persisted provider-run
+provenance in a read-only SQLite transaction. It neither reparses scanner output nor
+launches scans. `FindingResultLoader` rejects stale requests; the basic Findings
+workbench and Recon/OSINT Create Finding action consume these references. The analyst
+supplies every conclusion. Recon's existing renderer and typed Username/Email/Phone/
+Domain OSINT presentation remain in use. Consolidating those renderers, adding typed
+fact variants and future Finding-linked projection variants are follow-ups, not a
+reason to replace working result surfaces in this foundation slice.
+
+See [Findings](findings.md) for limits, links, history, migration and acceptance details.
