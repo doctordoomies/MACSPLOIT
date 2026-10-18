@@ -392,9 +392,10 @@ DNS dependency.
 
 # Milestone 2 — Bug bounty workbench + Findings foundation
 
-**Status: minimum Findings substrate ACTIVE via Issue #76 (parent #68), implemented on
-`feat/findings-foundation`, owner acceptance pending. Broader bug-bounty workspace/profile
-UI remains deferred. This does not mark M2/M4 or the vulnerability-completion gate done.**
+**Status: minimum Findings substrate DONE via Issue #76 / PR #77. Owner testing has
+moved structural hardening into #78 (discussion/comments) and #79 (run/multi-asset
+context). Broader bug-bounty workspace/profile UI remains deferred. This does not mark
+M2/M4 or the vulnerability-completion gate done.**
 
 Recon becomes substantially more useful when the workspace understands the engagement
 and can store conclusions, not only discoveries.
@@ -428,11 +429,19 @@ The analyst remains responsible for authorization.
 
 ## 2.3 Findings foundation
 
-The minimum manual model is implemented in this branch: migration 008, core-validated
-severity/confidence/lifecycle, multiple Asset/Evidence references, durable history,
-shared ResultProjection and Create Finding from Recon/OSINT. See [Findings](findings.md).
-Issue #76 remains open until owner acceptance. TLS/Nuclei/CVE enrichment and automated
-rules remain follow-ups under #68.
+The minimum manual model is merged on `main` via PR #77: migration 008,
+core-validated severity/confidence/lifecycle, multiple Asset/Evidence references,
+durable history, shared ResultProjection and Create Finding from Recon/OSINT. See
+[Findings](findings.md). Issue #76 is closed complete.
+
+Owner testing identified two structural follow-ups before scanner-heavy work expands the
+surface:
+
+- **#78** — GitHub-style Finding discussion timeline + analyst comments;
+- **#79** — create Findings from runs/selected results/multiple Assets.
+
+These are Findings hardening, not broad visual polish. TLS/Nuclei/CVE enrichment and
+automated rules remain under #68.
 
 A finding should support, at minimum:
 
@@ -542,21 +551,27 @@ in one model.
 
 # Milestone 4 — Vulnerability assessment
 
-**Status: NEXT AFTER M6 OSINT — tracked by vulnerability-completion umbrella #68.**
+**Status: NEXT AFTER M6 OSINT — tracked by vulnerability-completion umbrella #68.
+The durable Findings prerequisite (#76 / PR #77) is complete.**
 
 Assessment begins only after the Findings model exists.
 
 ## 4.1 Findings engine hardening
 
-Add:
+Immediate owner-tested hardening:
+
+- **#78** — unified GitHub-style discussion/comments + system-event timeline;
+- **#79** — run/selected-result/multi-asset Finding context.
+
+The merged foundation already supports multiple Asset/Evidence references, separate
+severity/confidence/status, and false-positive/retest lifecycle. Continue hardening with:
 
 - deterministic deduplication/correlation;
-- multiple evidence references;
 - confidence updates across repeated observations;
 - provider attribution;
-- false-positive/retest workflow.
+- reviewable comments/history.
 
-## 4.2 TLS analysis
+## 4.2 TLS analysis — Issue #83
 
 Implement native or provider-backed TLS/certificate assessment with evidence-first
 normalization.
@@ -568,7 +583,7 @@ Examples of the category include:
 - protocol/cipher observations where safely bounded;
 - certificate relationships.
 
-## 4.3 Conservative Nuclei integration
+## 4.3 Conservative Nuclei integration — Issue #84
 
 Add a detection-oriented Nuclei provider.
 
@@ -582,12 +597,12 @@ Requirements:
 - evidence is retained;
 - no automatic exploitation chain.
 
-## 4.4 Native analyzer → finding rules
+## 4.4 Native analyzer → finding rules — Issue #85
 
 Where appropriate, allow existing Native HTTP/TLS observations to create reviewable
 findings without pretending every absent header is automatically a vulnerability.
 
-## 4.5 Service/CVE enrichment
+## 4.5 Service/CVE enrichment — Issue #86
 
 If service fingerprints are enriched with CVE/product intelligence:
 
@@ -639,6 +654,10 @@ Versioned exports for:
 
 ## 5.2 Bug bounty report output
 
+**Finding/report authoring assistance is tracked by #81.** MACSPLOIT should work
+out-of-the-box with deterministic structured drafts/templates; optional local or
+user-configured cloud AI may improve wording but must not be required.
+
 Generate a report draft from selected findings containing:
 
 - title;
@@ -682,7 +701,11 @@ reconstructing the engagement manually from terminal files.
 
 # Milestone 6 — OSINT
 
-**Status: ACTIVE — Issue #58**
+**Status: IMPLEMENTATION MERGED / OWNER ACCEPTANCE ACTIVE — Issue #58.**
+
+PR #70 contains the Email, Phone, Domain/public-infrastructure, correlation, provider
+installation, and typed result-dispatch implementation. The remaining M6 blocker is
+provider-native OSINT result fidelity (#80) plus the final owner walkthrough (#67).
 
 The immediate product goal is a coherent, evidence-first OSINT workbench covering
 Username, Email, Phone, Domain/Organization, and public infrastructure/account
@@ -711,15 +734,14 @@ identity ownership.
 
 Do not add more Username providers merely to increase provider count.
 
-## 6.2 Email OSINT — Issue #64
+## 6.2 Email OSINT — Issue #64 — DONE
 
-Baseline:
+- user-scanner Email OSINT — PR #60;
+- socialscan Email support — PR #70;
+- Issue #64 closed complete.
 
-- user-scanner Email OSINT — merged via PR #60.
-
-**Implementation in the M6 completion PR (owner acceptance pending):** socialscan Email
-support (with the upstream string-boolean fix). Holehe reviewed and **not integrated**
-(drives signup/reset flows — account interaction).
+Holehe was reviewed and **not integrated** because signup/reset-style account interaction
+does not fit the current passive/public-source boundary.
 
 Original focused provider wave:
 
@@ -733,11 +755,10 @@ creating a duplicate theHarvester orchestration path in #64.
 Initial Email OSINT remains public registration/profile intelligence. No credential,
 password, breach-secret, private-account, login, or evasion behavior.
 
-## 6.3 Phone OSINT — Issue #65
+## 6.3 Phone OSINT — Issue #65 — DONE
 
-**Implementation in the M6 completion PR (owner acceptance pending):** PhoneInfoga 2.x
-with an explicit E.164 `PhoneNumber` target (no country guessing), `local` + OVH public
-number-range scanners only.
+PR #70 merged PhoneInfoga 2.x with an explicit E.164 `PhoneNumber` target (no country
+guessing), `local` + OVH public number-range scanners only. Issue #65 is closed complete.
 
 Integrate PhoneInfoga, or a better-maintained reviewed equivalent if upstream review
 shows PhoneInfoga is unsuitable.
@@ -746,12 +767,12 @@ Requirements include explicit Phone targets, normalized identifiers, bounded/can
 execution, structured parsing where available, evidence/provenance, restart persistence,
 and no automatic pivots or interaction with the phone/account.
 
-## 6.4 Domain / Organization / public infrastructure OSINT — Issue #66
+## 6.4 Domain / Organization / public infrastructure OSINT — Issue #66 — DONE
 
-**Implementation in the M6 completion PR (owner acceptance pending):** native
-certificate transparency, native RDAP, and theHarvester (passive source allow-list) on
-an in-scope domain; Subfinder data reused via the shared `Subdomain` asset type. OWASP
-Amass reviewed and **not integrated** (v5 has no enforceable passive-only mode).
+PR #70 merged native certificate transparency, native RDAP, and theHarvester (passive
+source allow-list) on an in-scope domain; Subfinder data is reused via the shared
+`Subdomain` asset type. OWASP Amass was reviewed and **not integrated** because v5 has
+no enforceable passive-only mode. Issue #66 is closed complete.
 
 Add complementary passive/public-source providers:
 
@@ -767,10 +788,20 @@ currently live. Any API configuration remains explicit and optional.
 
 ## 6.5 Correlation, aggregator review, and final acceptance — Issue #67
 
-**Implementation portion in the M6 completion PR:** explicit evidence-backed correlation
-with review log, aggregator decision (SpiderFoot not integrated), acceptance and
-failure-semantics tests. **The owner OSINT walkthrough remains open**; #58 stays open
-until it is done.
+The implementation portion is merged via PR #70: explicit evidence-backed correlation
+with review log, aggregator decision (SpiderFoot not integrated), and
+acceptance/failure-semantics tests.
+
+Completed acceptance blockers #71, #72, and #73 are closed.
+
+**Remaining:**
+
+- **#80 OSINT subset** — provider-native CLI-fidelity result renderers so the primary UI
+  exposes at least as much useful information as each provider's normal CLI while still
+  consuming typed durable state;
+- final owner Username/Email/Phone/Domain + correlation walkthrough.
+
+#58/#67 remain open until those pass.
 
 After #64–#66:
 
@@ -827,8 +858,8 @@ perfection stays blocked until #68 exits.
 
 # Milestone 7 — Local source and repository analysis
 
-**Status: NEXT — part of vulnerability-completion umbrella #68 after M6/M4 and before
-UI/specification perfection.**
+**Status: TRACKED BY #87 — required by vulnerability-completion umbrella #68 after
+M6/M4 and before UI/specification perfection.**
 
 Expand the local-app workflow into source-assisted assessment without requiring public
 deployment.
@@ -1045,9 +1076,14 @@ implementation. They remain separate from normal recon.
 
 # Milestone 13 — Distribution and long-term release engineering
 
-**Status: QUEUED / ongoing as release maturity requires**
+**Status: QUEUED / ongoing as release maturity requires. Zero-terminal macOS install is
+tracked by #82.**
 
 Distribution work can advance when necessary without changing product milestone order.
+
+Owner direction: beta/source installation is acceptable while foundations are built, but
+a normal macOS user should eventually install MACSPLOIT without cloning/building the
+repository or using Terminal. Issue #82 tracks the signed/notarized DMG/application flow.
 
 Areas include:
 
@@ -1199,13 +1235,23 @@ After the agent finishes:
 | Issue #22 / PR #60 — user-scanner Username + Email | Milestone 6 foundation/first slice — DONE; issue closed |
 | PR #63 — Sherlock + Maigret + socialscan Username | Milestone 6.1 — implementation DONE |
 | Issue #58 — OSINT framework and provider coverage completion | Milestone 6 — ACTIVE umbrella |
-| Issue #64 — Email OSINT completion | Milestone 6.2 — implementation in M6 completion PR; owner acceptance pending |
-| Issue #65 — Phone OSINT | Milestone 6.3 — implementation in M6 completion PR; owner acceptance pending |
-| Issue #66 — Domain/Public-Infrastructure OSINT | Milestone 6.4 — implementation in M6 completion PR; owner acceptance pending |
-| Issue #67 — correlation + aggregator review + OSINT owner acceptance | Milestone 6 exit gate — implementation portion in M6 completion PR; owner walkthrough pending |
-| Issue #68 — vulnerability scanning completion umbrella | Post-M6 vulnerability block — BLOCKED until #58 closes |
+| Issue #64 — Email OSINT completion | Milestone 6.2 — DONE via PR #70; closed |
+| Issue #65 — Phone OSINT | Milestone 6.3 — DONE via PR #70; closed |
+| Issue #66 — Domain/Public-Infrastructure OSINT | Milestone 6.4 — DONE via PR #70; closed |
+| Issue #67 — correlation + OSINT owner acceptance | Milestone 6 exit gate — implementation DONE; #80 OSINT subset + walkthrough remain |
+| Issue #68 — vulnerability scanning completion umbrella | Post-M6 vulnerability block — NEXT after #58 |
 | Bug bounty workspace/profile | Milestone 2 — broader product UI deferred behind vulnerability gate |
-| Issue #76 — Findings + normalized result foundation | ACTIVE under #68; implementation present, owner acceptance pending |
+| Issue #76 / PR #77 — Findings + normalized result foundation | DONE; issue closed |
+| Issue #78 — Finding discussion/comments timeline | M4.1 Findings hardening |
+| Issue #79 — run/selected-result/multi-asset Finding context | M4.1 Findings hardening |
+| Issue #80 — provider-native Results UI | M6 OSINT acceptance + ongoing Recon Results UX |
+| Issue #81 — structured/AI-assisted Finding authoring | M5 authoring ergonomics; AI optional |
+| Issue #82 — zero-terminal signed/notarized install | M13 distribution/release hardening |
+| Issue #83 — TLS/certificate assessment | M4.2 under #68 |
+| Issue #84 — conservative Nuclei | M4.3 under #68 |
+| Issue #85 — native observation → Finding rules | M4.4 under #68 |
+| Issue #86 — service/CVE enrichment | M4.5 under #68 |
+| Issue #87 — local source/dependency scanning | M7 under #68 |
 | Historical URLs | Milestone 3 — deferred until vulnerability gate passes |
 | JavaScript analysis | Milestone 3 — deferred until vulnerability gate passes |
 | Local source analysis | Milestone 7 — part of #68 |
@@ -1222,26 +1268,35 @@ The milestone numbers remain stable, but the owner has intentionally locked the
 near-term execution sequence:
 
 ```text
-M6 OSINT — ACTIVE (#58)
-    PR #60 foundation + user-scanner DONE
-    PR #63 Username provider wave DONE
-    M6 completion PR: #64 Email, #65 Phone, #66 Domain, #67 implementation (in review)
-    → #67 owner acceptance walkthrough
-            ↓
-    CLOSE #58 / OWNER OSINT EXIT GATE
+M6 OSINT — IMPLEMENTATION MERGED / ACCEPTANCE ACTIVE (#58/#67)
+    PR #70 core provider/correlation/install work DONE
+    → #80 OSINT provider-native Results fidelity
+    → final owner OSINT walkthrough
+    → CLOSE #67 / #58
             ↓
 #68 VULNERABILITY SCANNING COMPLETION — NEXT
-    minimum Findings substrate required by scanners
-    → M4 TLS / Nuclei / native finding rules / service-CVE enrichment
-    → M7 local-source/dependency vulnerability scanning
+    #76 Findings foundation DONE via PR #77
+    → #78 Finding discussion/comments hardening
+    → #79 run/multi-asset Finding context
+    → #83 TLS/certificate assessment
+    → #84 conservative Nuclei
+    → #85 native HTTP/TLS Finding rules
+    → #86 service/CVE enrichment
+    → #87 local source/dependency assessment
     → owner vulnerability-scanning acceptance
             ↓
     CLOSE #68 / OWNER VULNERABILITY EXIT GATE
             ↓
-UI / SPECIFICATION PERFECTION
-    broad visual polish, dashboard/presentation refinement, nonessential UX
-    restructuring, detailed specification cleanup, and deferred presentation work
+REPORTING / AUTHORING / BROAD UI PERFECTION
+    #81 structured drafts + optional local/cloud writing assistant
+    broad visual/dashboard/specification refinement
 ```
+
+The **Recon** portion of #80 may continue as low-conflict Results UX after the OSINT
+subset clears M6; it does not by itself delay #83 once #58 is closed.
+
+Issue #82 remains deferred/controlled release engineering and does not change product
+milestone order.
 
 M3, M5, and other queued/future categories do not jump ahead of #68 unless the owner
 deliberately reprioritizes this roadmap again. Functional UI necessary to operate and
@@ -1253,15 +1308,16 @@ Distribution/release engineering remains an ongoing controlled track.
 
 ## Immediate next action
 
-OSINT remains the active product milestone.
+1. Finish the **OSINT subset of #80** using provider-native, CLI-inspired renderers backed
+   by durable normalized state.
+2. Complete the final owner walkthrough in **#67** and close **#58**.
+3. Begin **#68** with **#78** and **#79** as Findings structural hardening.
+4. Implement **#83 TLS**, then **#84 Nuclei**, **#85 native Finding rules**, **#86
+   service/CVE enrichment**, and **#87 local-source/dependency assessment**.
+5. Complete the #68 owner vulnerability-scanning walkthrough.
+6. After the vulnerability gate, advance reporting/authoring work including **#81** and
+   broader UI/specification perfection.
+7. Keep **#82** as deferred release hardening until core functionality is ready for a
+   normal-user distribution pass.
 
-1. Land this tracker/roadmap update.
-2. Implement **#64 — Email OSINT completion (Holehe + socialscan Email)**.
-3. Implement **#65 — Phone OSINT**.
-4. Implement **#66 — Domain/Organization/Public-Infrastructure OSINT**.
-5. Complete **#67 — correlation, aggregator review, and owner OSINT acceptance**.
-6. Close #58 only when the full OSINT exit condition passes.
-7. Then begin **#68 — vulnerability scanning completion**.
-8. Only after #68 exits may broad UI perfection/specification work begin.
-
-PR #63 is merged. Issue #22 is closed complete.
+PR #70 and PR #77 are merged. Issues #64, #65, #66, #71, #72, #73, and #76 are closed.
