@@ -140,6 +140,13 @@ pub enum Command {
         workspace_id: Id,
         chain_id: Id,
     },
+    /// Read-only: build a deterministic, non-persisted Finding draft from a validated
+    /// selection of durable context (results/assets/evidence/run). No Finding is created;
+    /// the analyst persists it with `create_finding`. No network activity.
+    DraftFinding {
+        workspace_id: Id,
+        context: crate::draft::DraftContext,
+    },
 }
 
 impl Command {
@@ -170,6 +177,7 @@ impl Command {
             Self::LinkFindingEvidence { .. } => "link_finding_evidence",
             Self::UnlinkFindingEvidence { .. } => "unlink_finding_evidence",
             Self::ResultProjection { .. } => "result_projection",
+            Self::DraftFinding { .. } => "draft_finding",
         }
     }
 }
@@ -336,6 +344,10 @@ pub fn handle(engine: &Engine, request: Request) -> Response {
                 workspace_id,
                 chain_id,
             } => serde_json::to_value(engine.store.result_projection(workspace_id, chain_id)?)?,
+            Command::DraftFinding {
+                workspace_id,
+                context,
+            } => serde_json::to_value(engine.store.draft_finding(workspace_id, context)?)?,
         })
     })();
     match result {
