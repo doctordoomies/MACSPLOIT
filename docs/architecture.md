@@ -130,11 +130,22 @@ with links/history for restart reconstruction.
 
 `core/src/result` derives typed, bounded items for one chain from persisted provider-run
 provenance in a read-only SQLite transaction. It neither reparses scanner output nor
-launches scans. `FindingResultLoader` rejects stale requests; the basic Findings
-workbench and Recon/OSINT Create Finding action consume these references. The analyst
-supplies every conclusion. Recon's existing renderer and typed Username/Email/Phone/
-Domain OSINT presentation remain in use. Consolidating those renderers, adding typed
-fact variants and future Finding-linked projection variants are follow-ups, not a
-reason to replace working result surfaces in this foundation slice.
+launches scans. `FindingResultLoader` rejects stale requests; the Findings workbench and
+Recon/OSINT/Asset Create Finding actions consume these references. The analyst supplies
+every conclusion. Recon's existing renderer and typed Username/Email/Phone/Domain OSINT
+presentation remain in use. Consolidating those renderers, adding typed fact variants and
+future Finding-linked projection variants are follow-ups, not a reason to replace working
+result surfaces in this foundation slice.
+
+`core/src/draft` turns a validated selection of that durable context (results/assets/
+evidence/run) into a non-persisted, read-only `FindingDraft` so the structured editor opens
+already populated (#79, Level 1 of #81). A pure builder derives the draft deterministically:
+generic reconnaissance/OSINT observations become factual, informational drafts (no invented
+severity, remediation, or CVE/CWE), while a `ReviewedFindingHint` — an internal type with no
+wire path, reserved for trusted future rule metadata (#83–#85) — may propose richer
+semantics without a second pipeline. Drafting creates nothing and performs no network
+activity; Create still runs through `core/src/findings`. Optional local/cloud AI writing
+assistance (Level 2/3 of #81) is deliberately deferred, and would enhance the deterministic
+draft rather than replace this pipeline.
 
 See [Findings](findings.md) for limits, links, history, migration and acceptance details.

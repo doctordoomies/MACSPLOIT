@@ -1,8 +1,11 @@
 # Findings and the normalized result contract
 
-Status: **BETA — Milestone 2/4 foundation (Issue #76, parent #68). Owner acceptance
-pending.** This is the foundation only: manual/analyst Findings and a shared typed result
-projection. Reviewed scanner-proposed Findings (TLS, Nuclei, analyzers) come later.
+Status: **BETA — Milestone 2/4 foundation (Issue #76) plus Findings hardening (Issue #79
+and the deterministic Level‑1 of #81), parent #68. Owner acceptance pending.** This is the
+foundation plus deterministic draft authoring: manual/analyst Findings, a shared typed
+result projection, and a non‑persisted draft the core builds from durable context so the
+editor opens already populated. Reviewed scanner‑proposed Findings (TLS, Nuclei, analyzers)
+and optional AI writing assistance (Level 2/3 of #81) come later.
 
 ## Observation vs Evidence vs Finding
 
@@ -68,21 +71,66 @@ scanner output can never push megabytes into a Finding field — large raw outpu
 in Evidence. Every asset/evidence/run reference is validated to exist **in the same
 workspace**; cross-workspace references are rejected in the core. No HTML is rendered.
 
-## Creating a Finding from a result
+## Creating a Finding: deterministic drafts (`core/src/draft`)
 
-From a completed Recon or OSINT run, **Create Finding** opens a picker over that run's
-normalized `ResultProjection`. Choosing a result item prefills **only factual
-references** — the affected asset, the supporting evidence, and the source provider/run.
-It never invents a title, severity, CVE, exploitability, or remediation: the analyst
-writes the conclusion. This preserves the Observation → Finding boundary and uses one
-shared mechanism rather than a per-tab implementation.
+The analyst never has to create a blank Finding and retype facts MACSPLOIT already holds.
+**Create Finding** — from one result, several selected results, a whole run, or a single
+asset — hands a typed selection of durable context to the core, which builds a
+deterministic, **non‑persisted** `FindingDraft` and returns it. The structured editor then
+opens **already populated**; the analyst reviews or changes anything and presses **Create**
+immediately — there is no required intermediate Edit step. A manual "Blank finding" is still
+available.
+
+```
+result / selected results / run / asset
+  → draft_finding   (core validates the selection, read-only)
+  → FindingDraft    (typed, non-persisted — NOT a Finding)
+  → editor opens populated
+  → analyst reviews / edits
+  → Create          (ordinary transactional create_finding)
+```
+
+A draft is **not** a Finding: `draft_finding` opens the workspace store read‑only, inserts
+nothing, and performs no network activity. Every referenced observation/asset/evidence id is
+validated against the workspace — and, when run‑scoped, against the run — by the core; a
+wrong‑run result, a cross‑workspace reference, an empty selection, or an oversized selection
+is rejected. If drafting fails the editor shows an explicit error and offers a blank
+finding; it never silently opens empty.
+
+**MACSPLOIT never invents a vulnerability.** Deterministic drafting has two classes:
+
+- **Generic observation draft** (all current Recon/OSINT results). The draft is a *factual,
+  informational* note: a concise factual title ("`…` (Website) observed via native_http"),
+  a description summarizing the normalized facts and which provider reported them, mechanical
+  re‑run verification guidance (never exploit steps), **severity INFORMATIONAL**, the safest
+  **confidence (LOW)** — a Finding's confidence is the analyst's judgment, never a provider's
+  self‑report — **empty remediation**, and **no CVE/CWE/tags**. It never claims a
+  vulnerability, exposure, compromise, or "close this port."
+- **Reviewed‑rule draft** (future). A reviewed TLS/Nuclei/native rule (#83–#85) may attach a
+  `ReviewedFindingHint` carrying a proposed title, severity, confidence, status, description,
+  reproduction, remediation and validated CVE/CWE/tags. The draft builder already consumes it
+  so richer drafts need no second pipeline. A hint has **no wire path** and can only come from
+  trusted in‑core rule metadata — never from arbitrary provider text — so no scanner can turn
+  stdout into a severity or an identifier. No rule emits hints yet.
+
+Affected assets come from the selected observations plus any explicitly chosen assets
+(de‑duplicated); the analyst picks the primary (or the core chooses deterministically) and
+may add/remove assets without dropping the rest. Evidence comes from the selected
+observations plus any explicitly chosen evidence. Source provider/run are attributed only
+when every selected result shares one provider run, so attribution always matches the
+findings store's provider/run rule. Draft title/description/reproduction are bounded, and a
+run's results are enumerated up to a cap with a summarizing remainder — a huge run is bounded
+or rejected, never turned into an unbounded wall of text. The draft is derived purely from
+durable normalized state, so it is identical whether or not any console output exists and
+survives restart.
 
 ## Protocol (internal v1, additive)
 
 `create_finding`, `update_finding` (analyst fields only — not status, not source
 attribution), `set_finding_status` (validated transition + note), `link_finding_evidence`
-/ `unlink_finding_evidence`, and `result_projection` (the typed read model for a chain).
-Findings are included in the workspace snapshot (list/get/history for free). See
+/ `unlink_finding_evidence`, `result_projection` (the typed read model for a chain), and
+`draft_finding` (a read‑only, deterministic `FindingDraft` from a typed selection; creates
+nothing). Findings are included in the workspace snapshot (list/get/history for free). See
 [internal-protocol-v1](../schemas/internal-protocol-v1.md).
 
 ## Not yet (deliberately deferred)
@@ -165,20 +213,28 @@ text is analyst-authored plain text. No raw Evidence is pasted into the editor.
 
 ## Owner acceptance (still pending; Issue #76 stays open)
 
-1. Open an existing authorized workspace, select Recon and a completed run; inspect
-   its normalized results and choose **Create Finding**.
-2. Pick an observation. Confirm the editor opens with affected Asset, supporting
-   Evidence and provider/run references, with an empty title and conclusion fields.
-3. Enter title, severity, confidence, initial status, description, reproduction and
-   remediation; save and select it in **Findings**.
+1. Open an existing authorized workspace, select Recon and a completed run, choose
+   **Create Finding**, select one result, and confirm the editor opens **already
+   populated**: a factual title, INFORMATIONAL severity (for generic recon), the affected
+   Asset, supporting Evidence, source provider/run, and a factual description — no invented
+   vulnerability, remediation, or CVE. Press **Create** without changing anything and
+   confirm it appears in **Findings**.
+2. Repeat, this time editing the title/description/severity before **Create**; confirm your
+   changes persist and are not overwritten by draft defaults.
+3. Choose **Create Finding** on a run, select several results, include multiple Assets, and
+   change the primary Asset; confirm the created Finding retains all selected context.
 4. Open its affected Asset and linked Evidence. Link a second Evidence item, then unlink
    one and confirm the independent Evidence record is still available.
 5. Edit severity/confidence independently. Change status with a review note; exercise
    Open → Confirmed → Resolved → Retest passed, and reopen a false positive separately.
-6. Quit/reopen MACSPLOIT and select the workspace. Verify the Finding, text, links,
-   source provenance, status and history remain.
-7. Check Username/Email account results, actual Phone source facts, and Domain
-   discoveries; use **Create Finding** on a completed OSINT run as a compatibility check.
+6. Quit/reopen MACSPLOIT and select the workspace. Verify the Finding, analyst‑edited text,
+   all affected Assets, primary Asset, Evidence, source provenance, status and history
+   remain.
+7. From an Asset inspector, use **Create Finding** and confirm a factual informational draft
+   opens populated. Use **+ New Finding → Blank finding** and confirm a manual, empty editor
+   is still available.
+8. Check Username/Email account results, actual Phone source facts, and Domain discoveries;
+   use **Create Finding** on a completed OSINT run as a compatibility check.
 
 Automated coverage uses synthetic/fake-provider fixtures and the real Swift→Rust→SQLite
 bridge, including restart. It does not claim the on-screen owner walkthrough is complete.
