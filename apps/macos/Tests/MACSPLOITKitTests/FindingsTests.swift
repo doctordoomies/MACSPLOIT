@@ -115,6 +115,114 @@ private struct FailingTransport: CoreTransport {
     }
 }
 
+/// Deterministic Finding drafts (#79 + Level 1 of #81): decoding the typed draft, the
+/// request shape, the canonical draft→NewFinding mapping, and the error path.
+@MainActor @Suite struct FindingDraftModelTests {
+    /// One FindingDraft object exactly as the core serializes it (snake_case).
+    static let draftObject = #"""
+    {
+      "kind":"GENERIC_OBSERVATION",
+      "title":"https://example.test/ (Website) observed via native_http",
+      "severity":"INFORMATIONAL","confidence":"LOW","suggested_status":"DRAFT",
+      "description":"native_http reported Website https://example.test/.",
+      "reproduction":"Re-run Domain Recon against the authorized target and confirm it is still observed.",
+      "remediation":"",
+      "tags":[],"cwe_ids":[],"cve_ids":[],
+      "primary_asset_id":"a-web",
+      "affected_assets":[
+        {"asset_id":"a-web","asset_type":"Website","asset_identity":"https://example.test/","is_primary":true},
+        {"asset_id":"a-ip","asset_type":"IpAddress","asset_identity":"192.0.2.10","is_primary":false}
+      ],
+      "evidence":[{"evidence_id":"e1","label":"native_http · https://example.test/"}],
+      "source_provider":"native_http","source_run_id":"r1",
+      "provenance":["Factual informational draft from normalized observations — severity, remediation, and identifiers were not inferred."]
+    }
+    """#
+
+    @Test func draftDecodesThroughProtocolAndRequestIsTyped() async throws {
+        let reply = ReplyTransport(#"{"result":\#(Self.draftObject)}"#)
+        let draft = try await CoreClient(transport: reply)
+            .draftFinding(workspace: "w", context: FindingDraftContext(runId: "r1", observationIds: ["o1"], primaryAssetId: "a-web"))
+        // A generic reconnaissance draft is factual and informational — nothing invented.
+        #expect(draft.kind == "GENERIC_OBSERVATION")
+        #expect(draft.severity == .informational)
+        #expect(draft.confidence == .low)
+        #expect(draft.suggestedStatus == .draft)
+        #expect(draft.remediation.isEmpty)
+        #expect(draft.cveIds.isEmpty && draft.cweIds.isEmpty)
+        // Multi-asset display with a single primary; evidence and source carried.
+        #expect(draft.affectedAssets.count == 2)
+        #expect(draft.affectedAssets.filter(\.isPrimary).map(\.assetId) == ["a-web"])
+        #expect(draft.evidence.map(\.evidenceId) == ["e1"])
+        #expect(draft.sourceProvider == "native_http" && draft.sourceRunId == "r1")
+        #expect(!draft.provenance.isEmpty)
+        // The request is a typed selection, never a blob.
+        let request = try JSONSerialization.jsonObject(with: await reply.requests[0]) as! [String: Any]
+        #expect(request["method"] as? String == "draft_finding")
+        let params = request["params"] as! [String: Any]
+        #expect(params["workspace_id"] as? String == "w")
+        let ctx = params["context"] as! [String: Any]
+        #expect(ctx["run_id"] as? String == "r1")
+        #expect(ctx["observation_ids"] as? [String] == ["o1"])
+        #expect(ctx["primary_asset_id"] as? String == "a-web")
+    }
+
+    @Test func contextEncodesToTheCoreSnakeCaseShape() throws {
+        let json = try JSONValue.encoding(FindingDraftContext(runId: "r", observationIds: ["o1", "o2"], assetIds: ["a"], evidenceIds: ["e"], primaryAssetId: "p"))
+        #expect(json["run_id"].string == "r")
+        #expect(json["observation_ids"].array.count == 2)
+        #expect(json["asset_ids"].array.first?.string == "a")
+        #expect(json["evidence_ids"].array.first?.string == "e")
+        #expect(json["primary_asset_id"].string == "p")
+    }
+
+    @Test func untouchedDraftMapsToTheCanonicalNewFinding() throws {
+        let draft = try CoreCoding.decoder().decode(FindingDraft.self, from: Data(Self.draftObject.utf8))
+        let new = draft.newFinding()
+        // The editor seeds its fields from the same draft, so an unchanged draft creates this.
+        #expect(new.title == draft.title)
+        #expect(new.severity == .informational)
+        #expect(new.status == .draft)
+        #expect(new.primaryAssetId == "a-web")
+        #expect(new.additionalAssetIds == ["a-ip"]) // primary excluded from the additional list
+        #expect(new.evidenceIds == ["e1"])
+        #expect(new.sourceProvider == "native_http" && new.sourceRunId == "r1")
+        #expect(new.remediation.isEmpty && new.cveIds.isEmpty)
+    }
+
+    @Test func userEditsOverrideDraftDefaultsInTheMapping() throws {
+        // Simulate the analyst changing fields in the editor before Create: the submitted
+        // NewFinding carries the edited values, not the draft defaults.
+        var new = try CoreCoding.decoder().decode(FindingDraft.self, from: Data(Self.draftObject.utf8)).newFinding()
+        new.title = "Confirmed exposed admin panel"
+        new.severity = .high
+        new.status = .open
+        #expect(new.title == "Confirmed exposed admin panel")
+        #expect(new.severity == .high)
+        #expect(new.status == .open)
+        // Facts the analyst did not touch are preserved.
+        #expect(new.primaryAssetId == "a-web")
+        #expect(new.evidenceIds == ["e1"])
+    }
+
+    @Test func draftingErrorPropagatesInsteadOfYieldingABlankDraft() async throws {
+        // A core rejection surfaces as a thrown error the UI turns into an explicit
+        // message — it never silently becomes an empty draft.
+        let reply = ReplyTransport(#"{"error":{"code":"InvalidRequest","message":"wrong run"}}"#)
+        await #expect(throws: CoreFailure.self) {
+            _ = try await CoreClient(transport: reply)
+                .draftFinding(workspace: "w", context: FindingDraftContext(runId: "r", observationIds: ["o"]))
+        }
+    }
+
+    @Test func beginFindingFromAssetQueuesATypedDraftContext() {
+        let model = WorkspaceModel(client: CoreClient(transport: FailingTransport()))
+        model.beginFinding(fromAsset: "a-web")
+        #expect(model.section == .findings)
+        #expect(model.pendingDraftContext == FindingDraftContext(assetIds: ["a-web"]))
+    }
+}
+
 private actor ProjectionTransport: CoreTransport {
     private var pending: [(String, String, CheckedContinuation<Data, Error>)] = []
     var count: Int { pending.count }
