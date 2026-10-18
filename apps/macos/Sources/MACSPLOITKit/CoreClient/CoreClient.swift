@@ -30,6 +30,7 @@ public protocol CoreAPI: Sendable {
     func linkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding
     func unlinkFindingEvidence(workspace: String, finding: String, evidence: String) async throws -> Finding
     func resultProjection(workspace: String, chain: String) async throws -> ResultProjection
+    func draftFinding(workspace: String, context: FindingDraftContext) async throws -> FindingDraft
 }
 
 public extension CoreAPI {
@@ -64,6 +65,9 @@ public extension CoreAPI {
     }
     func resultProjection(workspace: String, chain: String) async throws -> ResultProjection {
         throw CoreFailure(code: "Unsupported", message: "Result projection is not available in this client.")
+    }
+    func draftFinding(workspace: String, context: FindingDraftContext) async throws -> FindingDraft {
+        throw CoreFailure(code: "Unsupported", message: "Finding drafts are not available in this client.")
     }
     func reviewCorrelation(workspace: String, correlation: String, decision: String, note: String) async throws -> Correlation {
         throw CoreFailure(code: "Unsupported", message: "Correlation is not available in this client.")
@@ -194,5 +198,8 @@ public struct CoreClient: CoreAPI {
     }
     public func resultProjection(workspace: String, chain: String) async throws -> ResultProjection {
         try await call("result_projection", ["workspace_id": .string(workspace), "chain_id": .string(chain)])
+    }
+    public func draftFinding(workspace: String, context: FindingDraftContext) async throws -> FindingDraft {
+        try await call("draft_finding", ["workspace_id": .string(workspace), "context": try JSONValue.encoding(context)])
     }
 }

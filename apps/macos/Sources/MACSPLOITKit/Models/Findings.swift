@@ -160,6 +160,95 @@ public struct ResultProjection: Codable, Sendable, Equatable {
     public let items: [ResultItem]
 }
 
+// MARK: Deterministic Finding drafts (#79 + Level 1 of #81)
+
+/// One affected asset in a draft, carrying its identity for display without a round trip.
+public struct DraftAsset: Codable, Sendable, Equatable, Identifiable {
+    public let assetId: String
+    public let assetType: String
+    public let assetIdentity: String
+    public var isPrimary: Bool
+    public var id: String { assetId }
+    public init(assetId: String, assetType: String, assetIdentity: String, isPrimary: Bool) {
+        self.assetId = assetId; self.assetType = assetType
+        self.assetIdentity = assetIdentity; self.isPrimary = isPrimary
+    }
+}
+
+/// One evidence reference in a draft, with a bounded display label (never the body).
+public struct DraftEvidence: Codable, Sendable, Equatable, Identifiable {
+    public let evidenceId: String
+    public let label: String
+    public var id: String { evidenceId }
+    public init(evidenceId: String, label: String) {
+        self.evidenceId = evidenceId; self.label = label
+    }
+}
+
+/// A typed, non-persisted Finding draft the core builds deterministically from durable
+/// context. The structured editor opens already populated from it; nothing is created
+/// until the analyst presses Create.
+public struct FindingDraft: Codable, Sendable, Equatable {
+    public let kind: String
+    public let title: String
+    public let severity: FindingSeverity
+    public let confidence: FindingConfidence
+    public let suggestedStatus: FindingStatus
+    public let description: String
+    public let reproduction: String
+    public let remediation: String
+    public let tags: [String]
+    public let cweIds: [String]
+    public let cveIds: [String]
+    public let primaryAssetId: String?
+    public let affectedAssets: [DraftAsset]
+    public let evidence: [DraftEvidence]
+    public let sourceProvider: String?
+    public let sourceRunId: String?
+    public let provenance: [String]
+}
+
+public extension FindingDraft {
+    /// The `NewFinding` an *unedited* draft creates — the canonical "Create from this
+    /// draft" mapping, mirroring the core's `FindingDraft::to_new_finding`. The editor
+    /// seeds its fields from the same draft, so an untouched draft produces exactly this.
+    func newFinding() -> NewFinding {
+        var new = NewFinding()
+        new.title = title
+        new.severity = severity
+        new.confidence = confidence
+        new.status = suggestedStatus
+        new.description = description
+        new.reproduction = reproduction
+        new.remediation = remediation
+        new.tags = tags
+        new.cweIds = cweIds
+        new.cveIds = cveIds
+        let primary = affectedAssets.first(where: \.isPrimary)?.assetId ?? affectedAssets.first?.assetId
+        new.primaryAssetId = primary
+        new.additionalAssetIds = affectedAssets.filter { $0.assetId != primary }.map(\.assetId)
+        new.evidenceIds = evidence.map(\.evidenceId)
+        new.sourceProvider = sourceProvider
+        new.sourceRunId = sourceRunId
+        return new
+    }
+}
+
+/// A typed selection of durable context to draft a finding from. The core validates every
+/// id against the workspace (and the run); Swift never enforces isolation itself.
+public struct FindingDraftContext: Codable, Sendable, Equatable {
+    public var runId: String?
+    public var observationIds: [String]
+    public var assetIds: [String]
+    public var evidenceIds: [String]
+    public var primaryAssetId: String?
+    public init(runId: String? = nil, observationIds: [String] = [], assetIds: [String] = [],
+                evidenceIds: [String] = [], primaryAssetId: String? = nil) {
+        self.runId = runId; self.observationIds = observationIds; self.assetIds = assetIds
+        self.evidenceIds = evidenceIds; self.primaryAssetId = primaryAssetId
+    }
+}
+
 public extension Snapshot {
     /// Findings newest first.
     var findingsNewestFirst: [Finding] { (findings ?? []).sorted { $0.createdAt > $1.createdAt } }

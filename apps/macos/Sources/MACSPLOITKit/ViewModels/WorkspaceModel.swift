@@ -68,7 +68,7 @@ public final class WorkspaceModel: ObservableObject {
         chainResultsError = nil; isLoadingChainResults = false
         selectedTargetId = nil; selectedAssetId = nil; selectedChainId = nil; selectedEvidenceId = nil
         selectedOSINTChainId = nil; osintTargetId = nil
-        selectedFindingId = nil; pendingFindingDraft = nil; pendingFindingChainId = nil
+        selectedFindingId = nil; pendingFindingDraft = nil; pendingFindingChainId = nil; pendingDraftContext = nil
         lastTargetType = nil; evidenceText = "Select evidence to inspect its verified raw JSON."
         do { try await refresh() } catch { errorMessage = error.localizedDescription }
     }
@@ -648,6 +648,23 @@ public final class WorkspaceModel: ObservableObject {
     /// A chain whose normalized results the Findings workbench should open a
     /// "Create Finding from a result" picker for (set from Recon/OSINT).
     @Published public var pendingFindingChainId: String?
+    /// A typed selection the Findings workbench should deterministically draft from and
+    /// open the editor already populated (set from the result picker or an asset action).
+    @Published public var pendingDraftContext: FindingDraftContext?
+
+    /// Request a deterministic, non-persisted draft from the core for a typed selection of
+    /// durable context. Throws on failure so the caller shows an explicit error rather
+    /// than silently opening a blank editor. No Finding is created here.
+    public func requestDraft(_ context: FindingDraftContext) async throws -> FindingDraft {
+        guard let id = selectedWorkspaceId else {
+            throw CoreFailure(code: "NoWorkspace", message: "Select a workspace before drafting a finding.")
+        }
+        let draft = try await client.draftFinding(workspace: id, context: context)
+        guard selectedWorkspaceId == id else {
+            throw CoreFailure(code: "Stale", message: "The workspace changed before the draft was ready.")
+        }
+        return draft
+    }
 
     /// Begin "Create Finding" from a result item: prefill references and open Findings.
     public func beginFinding(from item: ResultItem) {
@@ -659,6 +676,13 @@ public final class WorkspaceModel: ObservableObject {
     /// pick which normalized result item to base the finding on.
     public func beginFinding(fromChain chain: String) {
         pendingFindingChainId = chain
+        section = .findings
+    }
+
+    /// Begin "Create Finding" from a single asset: the core drafts a factual informational
+    /// finding for it and the editor opens already populated.
+    public func beginFinding(fromAsset assetId: String) {
+        pendingDraftContext = FindingDraftContext(assetIds: [assetId])
         section = .findings
     }
 
