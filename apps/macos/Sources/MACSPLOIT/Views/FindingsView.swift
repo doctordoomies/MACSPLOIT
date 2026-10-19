@@ -15,8 +15,8 @@ struct FindingsView: View {
     @State private var requestedContext: FindingDraftContext?
     @State private var statusNote = ""
     @State private var pendingStatus: FindingStatus?
-    @State private var isDrafting = false
     @State private var draftError: String?
+    @StateObject private var draftLoader = FindingDraftLoader()
 
     var body: some View {
         WorkbenchPage(maxWidth: 1200) {
@@ -24,13 +24,13 @@ struct FindingsView: View {
                 HStack(alignment: .firstTextBaseline) {
                     PageHeading(title: "Findings", subtitle: "Reviewable security conclusions drawn from evidence. A finding references the assets and evidence it concerns — it is never a copy of a tool's output, and nothing creates one automatically.")
                     Spacer()
-                    if isDrafting { ProgressView().controlSize(.small).padding(.trailing, 6) }
+                    if draftLoader.isLoading { ProgressView().controlSize(.small).padding(.trailing, 6) }
                     Menu {
                         Button("Blank finding") { editor = EditorContext(new: NewFinding()) }
-                        Button("From a result…") { fromResult = FromResultContext() }
+                        Button("From results…") { fromResult = FromResultContext() }
                     } label: { Label("New Finding", systemImage: "plus") }
                         .menuStyle(.borderlessButton).fixedSize()
-                        .disabled(!model.isConnected || isDrafting)
+                        .disabled(!model.isConnected || draftLoader.isLoading)
                 }
                 if model.findings.isEmpty {
                     EmptyMessage(title: "No findings yet",
@@ -60,15 +60,23 @@ struct FindingsView: View {
         .task(id: model.pendingDraftContext) {
             if let context = model.pendingDraftContext {
                 model.pendingDraftContext = nil
-                await draft(context)
+                await draftLoader.load(client: model.client, workspace: model.selectedWorkspaceId, context: context)
             }
+        }
+        .onChange(of: draftLoader.draft) { newDraft in
+            if let newDraft { editor = EditorContext(draft: newDraft); draftLoader.clear() }
+        }
+        .onChange(of: draftLoader.errorMessage) { message in
+            if let message { draftError = message; draftLoader.clear() }
         }
         .sheet(item: $editor) { ctx in FindingEditorView(model: model, context: ctx) }
         .onChange(of: model.selectedWorkspaceId) { _ in
             editor = nil; fromResult = nil; requestedContext = nil; pendingStatus = nil; draftError = nil
+            draftLoader.clear()
         }
         .sheet(item: $fromResult, onDismiss: {
-            if let context = requestedContext { requestedContext = nil; Task { await draft(context) } }
+            // Route the picker's selection through the same shared draft path.
+            if let context = requestedContext { requestedContext = nil; model.pendingDraftContext = context }
         }) { ctx in
             FromResultPicker(model: model, context: ctx) { context in
                 requestedContext = context
@@ -81,15 +89,6 @@ struct FindingsView: View {
         } message: {
             Text(draftError ?? "The selected context could not be drafted. Nothing was created.")
         }
-    }
-
-    /// Ask the core for a deterministic draft and open the editor populated. On failure,
-    /// surface a clear error — never a silent blank form.
-    @MainActor private func draft(_ context: FindingDraftContext) async {
-        isDrafting = true; draftError = nil
-        do { editor = EditorContext(draft: try await model.requestDraft(context)) }
-        catch { draftError = error.localizedDescription }
-        isDrafting = false
     }
 
     // MARK: Master

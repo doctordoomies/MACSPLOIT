@@ -90,6 +90,14 @@ result / selected results / run / asset
   → Create          (ordinary transactional create_finding)
 ```
 
+Each Recon/OSINT result row and the asset inspector expose a direct **Create Finding** that
+drafts from exactly that result and opens the editor immediately — no selection step, and no
+primary chooser unless the draft legitimately has several affected assets. The multi‑select
+picker and the run‑scoped flow remain for building a Finding from several results or part of
+a whole run. (Phone‑number facts are a per‑source summary with no single durable
+per‑observation row, so they keep only the run‑level action — a per‑fact surface is a #80
+follow‑up.) All entry points converge on one shared, token‑guarded draft path.
+
 A draft is **not** a Finding: `draft_finding` opens the workspace store read‑only, inserts
 nothing, and performs no network activity. Every referenced observation/asset/evidence id is
 validated against the workspace — and, when run‑scoped, against the run — by the core; a

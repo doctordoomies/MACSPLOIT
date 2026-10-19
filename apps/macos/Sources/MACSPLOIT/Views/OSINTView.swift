@@ -298,6 +298,9 @@ struct OSINTView: View {
         }
     }
 
+    // Phone facts are a per-source summary, not durable per-observation rows, so there is
+    // no clean per-result observation id for a direct "Create Finding" here. The run-level
+    // Create Finding (above) still covers it; a per-fact durable surface is a #80 follow-up.
     @ViewBuilder private func phoneFactsView(_ results: OSINTRunResults) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let summary = results.summary {
@@ -377,6 +380,9 @@ struct OSINTView: View {
                         if let evidence = item.evidenceId {
                             Button("Evidence") { model.showEvidence(evidence) }.buttonStyle(.link)
                         }
+                        Button("Create Finding") { model.beginFinding(result: item.id, inRun: results.chain.id) }
+                            .buttonStyle(.link)
+                            .help("Draft a finding from this observation; the editor opens prefilled with this asset, its evidence, and the source run.")
                     }
                     if !item.alsoObservedBy.isEmpty {
                         Text("Also observed by: \(item.alsoObservedBy.joined(separator: ", "))")
@@ -443,6 +449,9 @@ struct OSINTView: View {
                         if let evidence = account.evidenceId {
                             Button("Evidence") { model.showEvidence(evidence) }.buttonStyle(.link)
                         }
+                        Button("Create Finding") { model.beginFinding(result: account.id, inRun: results.chain.id) }
+                            .buttonStyle(.link)
+                            .help("Draft a finding from this reported account; the editor opens prefilled with this asset, its evidence, and the source run.")
                     }
                     if let url = account.profileURL {
                         HStack(spacing: 6) {

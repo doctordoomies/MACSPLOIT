@@ -652,20 +652,6 @@ public final class WorkspaceModel: ObservableObject {
     /// open the editor already populated (set from the result picker or an asset action).
     @Published public var pendingDraftContext: FindingDraftContext?
 
-    /// Request a deterministic, non-persisted draft from the core for a typed selection of
-    /// durable context. Throws on failure so the caller shows an explicit error rather
-    /// than silently opening a blank editor. No Finding is created here.
-    public func requestDraft(_ context: FindingDraftContext) async throws -> FindingDraft {
-        guard let id = selectedWorkspaceId else {
-            throw CoreFailure(code: "NoWorkspace", message: "Select a workspace before drafting a finding.")
-        }
-        let draft = try await client.draftFinding(workspace: id, context: context)
-        guard selectedWorkspaceId == id else {
-            throw CoreFailure(code: "Stale", message: "The workspace changed before the draft was ready.")
-        }
-        return draft
-    }
-
     /// Begin "Create Finding" from a result item: prefill references and open Findings.
     public func beginFinding(from item: ResultItem) {
         pendingFindingDraft = draftFinding(from: item)
@@ -673,9 +659,18 @@ public final class WorkspaceModel: ObservableObject {
     }
 
     /// Begin "Create Finding" from a completed chain: open Findings and let the analyst
-    /// pick which normalized result item to base the finding on.
+    /// pick which normalized result items to base the finding on.
     public func beginFinding(fromChain chain: String) {
         pendingFindingChainId = chain
+        section = .findings
+    }
+
+    /// Begin "Create Finding" directly from one durable result, bypassing the selection
+    /// picker: the core drafts from exactly that observation (within its run, for run
+    /// context) and the editor opens already populated. One shared path — result views
+    /// only build the typed context, never their own draft logic.
+    public func beginFinding(result observationId: String, inRun chainId: String?) {
+        pendingDraftContext = FindingDraftContext(runId: chainId, observationIds: [observationId])
         section = .findings
     }
 

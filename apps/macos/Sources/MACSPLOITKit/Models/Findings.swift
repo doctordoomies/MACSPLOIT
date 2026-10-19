@@ -292,6 +292,36 @@ public extension JSONValue {
     }
 }
 
+/// Loads a deterministic `FindingDraft` for a typed context and rejects stale responses.
+/// A fresh request token (and a workspace/cancellation check) guarantees a slower draft
+/// for a superseded selection can never populate the editor for the user's newer action,
+/// and a failure surfaces as an error rather than a blank draft.
+@MainActor public final class FindingDraftLoader: ObservableObject {
+    @Published public private(set) var draft: FindingDraft?
+    @Published public private(set) var isLoading = false
+    @Published public private(set) var errorMessage: String?
+    private var request = UUID()
+    public init() {}
+    public func clear() {
+        request = UUID(); draft = nil; errorMessage = nil; isLoading = false
+    }
+    public func load(client: any CoreAPI, workspace: String?, context: FindingDraftContext) async {
+        let token = UUID(); request = token
+        draft = nil; errorMessage = nil; isLoading = true
+        guard let workspace else {
+            errorMessage = "Select a workspace before drafting a finding."; isLoading = false; return
+        }
+        do {
+            let result = try await client.draftFinding(workspace: workspace, context: context)
+            guard token == request, !Task.isCancelled else { return }
+            draft = result; isLoading = false
+        } catch {
+            guard token == request, !Task.isCancelled else { return }
+            errorMessage = error.localizedDescription; isLoading = false
+        }
+    }
+}
+
 /// Reference labels are display-only; canonical IDs/URLs remain unchanged for links.
 public func findingReferenceLabel(_ value: String) -> String {
     let clean = String(value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && !CharacterSet(charactersIn: "\u{202a}\u{202b}\u{202c}\u{202d}\u{202e}\u{2066}\u{2067}\u{2068}\u{2069}").contains($0) })

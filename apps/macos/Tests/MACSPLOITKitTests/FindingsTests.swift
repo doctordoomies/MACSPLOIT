@@ -221,6 +221,124 @@ private struct FailingTransport: CoreTransport {
         #expect(model.section == .findings)
         #expect(model.pendingDraftContext == FindingDraftContext(assetIds: ["a-web"]))
     }
+
+    /// One affected asset exactly, so the primary chooser never needs to appear.
+    static let singleAssetDraftObject = #"""
+    {
+      "kind":"GENERIC_OBSERVATION",
+      "title":"https://example.test/ (Website) observed via native_http",
+      "severity":"INFORMATIONAL","confidence":"LOW","suggested_status":"DRAFT",
+      "description":"native_http reported Website https://example.test/.","reproduction":"Re-run.","remediation":"",
+      "tags":[],"cwe_ids":[],"cve_ids":[],
+      "primary_asset_id":"a-web",
+      "affected_assets":[{"asset_id":"a-web","asset_type":"Website","asset_identity":"https://example.test/","is_primary":true}],
+      "evidence":[{"evidence_id":"e1","label":"native_http · https://example.test/"}],
+      "source_provider":"native_http","source_run_id":"r1",
+      "provenance":["Factual informational draft from normalized observations."]
+    }
+    """#
+
+    @Test func directSingleResultActionBuildsOneObservationContextAndBypassesThePicker() {
+        let model = WorkspaceModel(client: CoreClient(transport: FailingTransport()))
+        model.beginFinding(result: "obs-1", inRun: "chain-1")
+        #expect(model.section == .findings)
+        // Exactly one observation; the run carried for context; no picker trigger set.
+        #expect(model.pendingDraftContext == FindingDraftContext(runId: "chain-1", observationIds: ["obs-1"]))
+        #expect(model.pendingFindingChainId == nil)
+        #expect(model.pendingFindingDraft == nil)
+    }
+
+    @Test func wholeRunActionStillOpensTheSelectionPicker() {
+        let model = WorkspaceModel(client: CoreClient(transport: FailingTransport()))
+        model.beginFinding(fromChain: "chain-9")
+        #expect(model.section == .findings)
+        #expect(model.pendingFindingChainId == "chain-9")
+        #expect(model.pendingDraftContext == nil)
+    }
+
+    @Test func singleAffectedAssetIsAutomaticallyPrimaryWithNoAdditionalAssets() throws {
+        let draft = try CoreCoding.decoder().decode(FindingDraft.self, from: Data(Self.singleAssetDraftObject.utf8))
+        #expect(draft.affectedAssets.count == 1)
+        #expect(draft.primaryAssetId == draft.affectedAssets.first?.assetId)
+        let new = draft.newFinding()
+        #expect(new.primaryAssetId == "a-web")
+        #expect(new.additionalAssetIds.isEmpty)
+    }
+}
+
+/// The token-guarded draft loader that drives the populated editor: success delivers the
+/// draft, failure surfaces an error (never a blank draft), and a slower draft for a
+/// superseded selection can never replace the editor for the newer one.
+@MainActor @Suite struct FindingDraftLoaderTests {
+    private func waitForRequests(_ transport: DraftTransport, _ count: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await transport.count < count {
+            guard ContinuousClock.now < deadline else { throw CoreFailure(code: "Timeout", message: "Fixture request did not arrive") }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    @Test func successDeliversTheDraftAndFailureSurfacesAnErrorNotABlankDraft() async throws {
+        let ok = ReplyTransport(#"{"result":\#(FindingDraftModelTests.draftObject)}"#)
+        let loader = FindingDraftLoader()
+        await loader.load(client: CoreClient(transport: ok), workspace: "w", context: FindingDraftContext(observationIds: ["o1"]))
+        #expect(loader.draft?.primaryAssetId == "a-web")
+        #expect(loader.errorMessage == nil && !loader.isLoading)
+
+        let bad = ReplyTransport(#"{"error":{"code":"InvalidRequest","message":"wrong run"}}"#)
+        let failing = FindingDraftLoader()
+        await failing.load(client: CoreClient(transport: bad), workspace: "w", context: FindingDraftContext(observationIds: ["o1"]))
+        #expect(failing.draft == nil) // never a blank draft → the editor never opens
+        #expect(failing.errorMessage?.contains("wrong run") == true && !failing.isLoading)
+    }
+
+    @Test func missingWorkspaceIsAnExplicitErrorNotABlankDraft() async throws {
+        let loader = FindingDraftLoader()
+        await loader.load(client: CoreClient(transport: ReplyTransport("{}")), workspace: nil, context: FindingDraftContext())
+        #expect(loader.draft == nil)
+        #expect(loader.errorMessage != nil && !loader.isLoading)
+    }
+
+    @Test func staleDraftForASupersededSelectionCannotReplaceTheNewerOne() async throws {
+        let transport = DraftTransport(), loader = FindingDraftLoader()
+        let client = CoreClient(transport: transport)
+        let a = Task { await loader.load(client: client, workspace: "w", context: FindingDraftContext(observationIds: ["a"])) }
+        try await waitForRequests(transport, 1)
+        let b = Task { await loader.load(client: client, workspace: "w", context: FindingDraftContext(observationIds: ["b"])) }
+        try await waitForRequests(transport, 2)
+        let a2 = Task { await loader.load(client: client, workspace: "w", context: FindingDraftContext(observationIds: ["a"])) }
+        try await waitForRequests(transport, 3)
+        // The newest request resolves first and wins.
+        try await transport.resolve(2, title: "Draft A2"); await a2.value
+        #expect(loader.draft?.title == "Draft A2")
+        // Late responses for superseded selections (including an error) are ignored.
+        try await transport.resolve(0, title: "Draft A"); await a.value
+        try await transport.resolve(1, title: "Draft B", fail: true); await b.value
+        #expect(loader.draft?.title == "Draft A2")
+        #expect(loader.errorMessage == nil && !loader.isLoading)
+    }
+}
+
+/// A controllable transport that returns a decodable `FindingDraft` per request on demand.
+private actor DraftTransport: CoreTransport {
+    private var pending: [(String, CheckedContinuation<Data, Error>)] = []
+    var count: Int { pending.count }
+    func exchange(_ data: Data) async throws -> Data {
+        let request = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let id = request["request_id"] as! String
+        return try await withCheckedThrowingContinuation { pending.append((id, $0)) }
+    }
+    func resolve(_ index: Int, title: String, fail: Bool = false) throws {
+        let (id, continuation) = pending[index]
+        if fail { continuation.resume(throwing: CoreFailure(code: "InvalidRequest", message: "Offline fixture rejection")); return }
+        let draft = FindingDraft(kind: "GENERIC_OBSERVATION", title: title, severity: .informational,
+                                 confidence: .low, suggestedStatus: .draft, description: "d", reproduction: "r",
+                                 remediation: "", tags: [], cweIds: [], cveIds: [], primaryAssetId: nil,
+                                 affectedAssets: [], evidence: [], sourceProvider: nil, sourceRunId: nil, provenance: [])
+        let payload = try JSONSerialization.jsonObject(with: CoreCoding.encoder().encode(draft))
+        let response = try JSONSerialization.data(withJSONObject: ["protocol_version": 1, "request_id": id, "result": payload])
+        continuation.resume(returning: response)
+    }
 }
 
 private actor ProjectionTransport: CoreTransport {
