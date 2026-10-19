@@ -317,6 +317,116 @@ private struct FailingTransport: CoreTransport {
         #expect(loader.draft?.title == "Draft A2")
         #expect(loader.errorMessage == nil && !loader.isLoading)
     }
+
+    @Test func staleResponseCannotClearTheNewerRequestsLoadingState() async throws {
+        let transport = DraftTransport(), loader = FindingDraftLoader()
+        let client = CoreClient(transport: transport)
+        let a = Task { await loader.load(client: client, workspace: "w", context: FindingDraftContext(observationIds: ["a"])) }
+        try await waitForRequests(transport, 1)
+        let b = Task { await loader.load(client: client, workspace: "w", context: FindingDraftContext(observationIds: ["b"])) }
+        try await waitForRequests(transport, 2)
+        #expect(loader.isLoading) // B owns the loading state
+        // A resolves late: it must neither populate the draft nor clear B's loading state.
+        try await transport.resolve(0, title: "Draft A"); await a.value
+        #expect(loader.isLoading)
+        #expect(loader.draft == nil)
+        // B finally resolves and reaches the single terminal state.
+        try await transport.resolve(1, title: "Draft B"); await b.value
+        #expect(!loader.isLoading)
+        #expect(loader.draft?.title == "Draft B")
+    }
+
+    @Test func timedOutDraftReachesARetryableTerminalStateNotASpinner() async throws {
+        let loader = FindingDraftLoader()
+        await loader.load(client: CoreClient(transport: HangingTransport()), workspace: "w",
+                          context: FindingDraftContext(observationIds: ["o"]), timeout: 0.1)
+        #expect(loader.draft == nil)
+        #expect(!loader.isLoading)
+        #expect(loader.errorMessage?.contains("too long") == true)
+    }
+
+    @Test func retryAfterFailureThenTimeoutEventuallySucceeds() async throws {
+        // First call fails, retry succeeds.
+        let failThenOk = FindingDraftLoader()
+        let failClient = CoreClient(transport: RetryTransport(first: .fail, success: FindingDraftModelTests.draftObject))
+        await failThenOk.load(client: failClient, workspace: "w", context: FindingDraftContext(observationIds: ["o"]))
+        #expect(failThenOk.draft == nil && failThenOk.errorMessage != nil)
+        await failThenOk.load(client: failClient, workspace: "w", context: FindingDraftContext(observationIds: ["o"]))
+        #expect(failThenOk.draft?.primaryAssetId == "a-web")
+        #expect(failThenOk.errorMessage == nil && !failThenOk.isLoading)
+
+        // First call times out (hangs), retry succeeds.
+        let hangThenOk = FindingDraftLoader()
+        let hangClient = CoreClient(transport: RetryTransport(first: .hang, success: FindingDraftModelTests.draftObject))
+        await hangThenOk.load(client: hangClient, workspace: "w", context: FindingDraftContext(observationIds: ["o"]), timeout: 0.1)
+        #expect(hangThenOk.draft == nil && hangThenOk.errorMessage?.contains("too long") == true)
+        await hangThenOk.load(client: hangClient, workspace: "w", context: FindingDraftContext(observationIds: ["o"]))
+        #expect(hangThenOk.draft?.primaryAssetId == "a-web")
+        #expect(hangThenOk.errorMessage == nil && !hangThenOk.isLoading)
+    }
+}
+
+/// Result-projection loader: timeout and retry reach a terminal state, never a spinner.
+@MainActor @Suite struct FindingResultLoaderResilienceTests {
+    static let projectionObject = #"{"workspace_id":"w","chain_id":"c","chain_name":"Fixture","items":[]}"#
+
+    @Test func timedOutProjectionReachesARetryableTerminalState() async throws {
+        let loader = FindingResultLoader()
+        await loader.load(client: CoreClient(transport: HangingTransport()), workspace: "w", chain: "c", timeout: 0.1)
+        #expect(loader.projection == nil)
+        #expect(!loader.isLoading)
+        #expect(loader.errorMessage?.contains("too long") == true)
+    }
+
+    @Test func retryAfterFailureSucceeds() async throws {
+        let loader = FindingResultLoader()
+        let client = CoreClient(transport: RetryTransport(first: .fail, success: Self.projectionObject))
+        await loader.load(client: client, workspace: "w", chain: "c")
+        #expect(loader.projection == nil && loader.errorMessage != nil && !loader.isLoading)
+        await loader.load(client: client, workspace: "w", chain: "c")
+        #expect(loader.projection?.chainId == "c")
+        #expect(loader.errorMessage == nil && !loader.isLoading)
+    }
+
+    @Test func retryAfterTimeoutSucceeds() async throws {
+        let loader = FindingResultLoader()
+        let client = CoreClient(transport: RetryTransport(first: .hang, success: Self.projectionObject))
+        await loader.load(client: client, workspace: "w", chain: "c", timeout: 0.1)
+        #expect(loader.projection == nil && loader.errorMessage?.contains("too long") == true)
+        await loader.load(client: client, workspace: "w", chain: "c")
+        #expect(loader.projection?.chainId == "c")
+        #expect(loader.errorMessage == nil && !loader.isLoading)
+    }
+}
+
+/// A transport that never answers within a short timeout (honours cancellation).
+private struct HangingTransport: CoreTransport {
+    func exchange(_ request: Data) async throws -> Data {
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+        throw CoreFailure(code: "Unreached", message: "never")
+    }
+}
+
+/// First request hangs or fails; every later request returns the given `result` object.
+private actor RetryTransport: CoreTransport {
+    enum First { case hang, fail }
+    private let first: First
+    private let success: String
+    private var calls = 0
+    init(first: First, success: String) { self.first = first; self.success = success }
+    func exchange(_ data: Data) async throws -> Data {
+        let request = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let id = request["request_id"] as! String
+        calls += 1
+        if calls == 1 {
+            switch first {
+            case .hang: try await Task.sleep(nanoseconds: 60_000_000_000); throw CoreFailure(code: "Unreached", message: "never")
+            case .fail: throw CoreFailure(code: "InvalidRequest", message: "first attempt fails")
+            }
+        }
+        let payload = try JSONSerialization.jsonObject(with: Data(success.utf8))
+        return try JSONSerialization.data(withJSONObject: ["protocol_version": 1, "request_id": id, "result": payload])
+    }
 }
 
 /// A controllable transport that returns a decodable `FindingDraft` per request on demand.

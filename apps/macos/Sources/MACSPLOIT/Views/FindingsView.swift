@@ -633,7 +633,9 @@ private struct FromResultPicker: View {
                 Text("Choose a run…").tag(String?.none)
                 ForEach(chains) { c in Text("\(c.name) · \(displayTime(c.createdAt))").tag(Optional(c.id)) }
             }
-            if loader.isLoading { ProgressView().controlSize(.small) }
+            if loader.isLoading {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Loading results…").font(.caption).foregroundStyle(.secondary) }
+            }
             if let error = loader.errorMessage {
                 Text(error).font(.callout).foregroundStyle(.secondary)
                 Button("Retry") { Task { await loadProjection() } }
@@ -658,7 +660,9 @@ private struct FromResultPicker: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
-        .padding(24).frame(width: 640, height: 560)
+        // Size to content: compact when no run is chosen, growing (bounded by the result
+        // list's own maxHeight) once results appear — never a tall, mostly-empty sheet.
+        .padding(24).frame(width: 640)
         .onAppear { chainId = context.chainId }
         .task(id: selection) { await loadProjection() }
         .onChange(of: selection) { _ in selected = []; primaryAssetId = nil }
