@@ -68,7 +68,7 @@ public final class WorkspaceModel: ObservableObject {
         chainResultsError = nil; isLoadingChainResults = false
         selectedTargetId = nil; selectedAssetId = nil; selectedChainId = nil; selectedEvidenceId = nil
         selectedOSINTChainId = nil; osintTargetId = nil
-        selectedFindingId = nil; pendingFindingDraft = nil; pendingFindingChainId = nil
+        selectedFindingId = nil; pendingFindingDraft = nil; pendingFindingChainId = nil; pendingDraftContext = nil
         lastTargetType = nil; evidenceText = "Select evidence to inspect its verified raw JSON."
         do { try await refresh() } catch { errorMessage = error.localizedDescription }
     }
@@ -648,6 +648,9 @@ public final class WorkspaceModel: ObservableObject {
     /// A chain whose normalized results the Findings workbench should open a
     /// "Create Finding from a result" picker for (set from Recon/OSINT).
     @Published public var pendingFindingChainId: String?
+    /// A typed selection the Findings workbench should deterministically draft from and
+    /// open the editor already populated (set from the result picker or an asset action).
+    @Published public var pendingDraftContext: FindingDraftContext?
 
     /// Begin "Create Finding" from a result item: prefill references and open Findings.
     public func beginFinding(from item: ResultItem) {
@@ -656,9 +659,25 @@ public final class WorkspaceModel: ObservableObject {
     }
 
     /// Begin "Create Finding" from a completed chain: open Findings and let the analyst
-    /// pick which normalized result item to base the finding on.
+    /// pick which normalized result items to base the finding on.
     public func beginFinding(fromChain chain: String) {
         pendingFindingChainId = chain
+        section = .findings
+    }
+
+    /// Begin "Create Finding" directly from one durable result, bypassing the selection
+    /// picker: the core drafts from exactly that observation (within its run, for run
+    /// context) and the editor opens already populated. One shared path — result views
+    /// only build the typed context, never their own draft logic.
+    public func beginFinding(result observationId: String, inRun chainId: String?) {
+        pendingDraftContext = FindingDraftContext(runId: chainId, observationIds: [observationId])
+        section = .findings
+    }
+
+    /// Begin "Create Finding" from a single asset: the core drafts a factual informational
+    /// finding for it and the editor opens already populated.
+    public func beginFinding(fromAsset assetId: String) {
+        pendingDraftContext = FindingDraftContext(assetIds: [assetId])
         section = .findings
     }
 

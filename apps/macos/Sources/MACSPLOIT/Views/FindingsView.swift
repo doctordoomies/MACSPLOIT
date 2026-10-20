@@ -4,15 +4,19 @@ import MACSPLOITKit
 
 /// The Findings workbench: a master/detail view of durable analyst Findings. Everything
 /// shown comes from durable core state. Findings reference assets/evidence; they are
-/// never created automatically — the analyst writes the security conclusion. Creating a
-/// finding from a result prefills only factual references (asset/evidence/source).
+/// never created automatically — the analyst writes the security conclusion. When created
+/// from existing context (a result, a selection, a run, or an asset), the core builds a
+/// deterministic draft and the editor opens already populated; the analyst reviews or
+/// changes anything and presses Create. No separate Edit step is required.
 struct FindingsView: View {
     @ObservedObject var model: WorkspaceModel
     @State private var editor: EditorContext?
     @State private var fromResult: FromResultContext?
-    @State private var pickedResultDraft: NewFinding?
+    @State private var requestedContext: FindingDraftContext?
     @State private var statusNote = ""
     @State private var pendingStatus: FindingStatus?
+    @State private var draftError: String?
+    @StateObject private var draftLoader = FindingDraftLoader()
 
     var body: some View {
         WorkbenchPage(maxWidth: 1200) {
@@ -20,16 +24,17 @@ struct FindingsView: View {
                 HStack(alignment: .firstTextBaseline) {
                     PageHeading(title: "Findings", subtitle: "Reviewable security conclusions drawn from evidence. A finding references the assets and evidence it concerns — it is never a copy of a tool's output, and nothing creates one automatically.")
                     Spacer()
+                    if draftLoader.isLoading { ProgressView().controlSize(.small).padding(.trailing, 6) }
                     Menu {
                         Button("Blank finding") { editor = EditorContext(new: NewFinding()) }
-                        Button("From a result…") { fromResult = FromResultContext() }
+                        Button("From results…") { fromResult = FromResultContext() }
                     } label: { Label("New Finding", systemImage: "plus") }
                         .menuStyle(.borderlessButton).fixedSize()
-                        .disabled(!model.isConnected)
+                        .disabled(!model.isConnected || draftLoader.isLoading)
                 }
                 if model.findings.isEmpty {
                     EmptyMessage(title: "No findings yet",
-                                 detail: "Create a finding manually, or open Recon/OSINT, select a result, and choose Create Finding — the affected asset and evidence are referenced for you.",
+                                 detail: "Create a finding manually, or open Recon/OSINT, select one or more results, and choose Create Finding — MACSPLOIT prefills the affected assets, evidence, and source, and the editor opens already filled in.",
                                  symbol: "exclamationmark.shield")
                 } else {
                     HStack(alignment: .top, spacing: 16) {
@@ -52,16 +57,38 @@ struct FindingsView: View {
                 model.pendingFindingChainId = nil
             }
         }
+        .task(id: model.pendingDraftContext) {
+            if let context = model.pendingDraftContext {
+                model.pendingDraftContext = nil
+                await draftLoader.load(client: model.client, workspace: model.selectedWorkspaceId, context: context)
+            }
+        }
+        .onChange(of: draftLoader.draft) { newDraft in
+            if let newDraft { editor = EditorContext(draft: newDraft); draftLoader.clear() }
+        }
+        .onChange(of: draftLoader.errorMessage) { message in
+            if let message { draftError = message; draftLoader.clear() }
+        }
         .sheet(item: $editor) { ctx in FindingEditorView(model: model, context: ctx) }
         .onChange(of: model.selectedWorkspaceId) { _ in
-            editor = nil; fromResult = nil; pickedResultDraft = nil; pendingStatus = nil
+            editor = nil; fromResult = nil; requestedContext = nil; pendingStatus = nil; draftError = nil
+            draftLoader.clear()
         }
         .sheet(item: $fromResult, onDismiss: {
-            if let draft = pickedResultDraft { pickedResultDraft = nil; editor = EditorContext(new: draft) }
-        }) { ctx in FromResultPicker(model: model, context: ctx) { item in
-            pickedResultDraft = model.draftFinding(from: item)
-            fromResult = nil
-        } }
+            // Route the picker's selection through the same shared draft path.
+            if let context = requestedContext { requestedContext = nil; model.pendingDraftContext = context }
+        }) { ctx in
+            FromResultPicker(model: model, context: ctx) { context in
+                requestedContext = context
+                fromResult = nil
+            }
+        }
+        .alert("Couldn't build a draft", isPresented: Binding(get: { draftError != nil }, set: { if !$0 { draftError = nil } })) {
+            Button("New blank finding") { editor = EditorContext(new: NewFinding()) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(draftError ?? "The selected context could not be drafted. Nothing was created.")
+        }
     }
 
     // MARK: Master
@@ -303,13 +330,15 @@ private struct StatusTag: View {
 
 // MARK: Editor
 
-/// Create (new) or edit (existing) context for the finding editor sheet.
+/// Create (blank), create-from-draft, or edit context for the finding editor sheet.
 struct EditorContext: Identifiable {
     let id = UUID()
     var new: NewFinding?
     var editing: Finding?
+    var draft: FindingDraft?
     init(new: NewFinding) { self.new = new }
     init(editing: Finding) { self.editing = editing }
+    init(draft: FindingDraft) { self.draft = draft }
 }
 
 private struct FindingEditorView: View {
@@ -320,14 +349,19 @@ private struct FindingEditorView: View {
     @State private var title = ""
     @State private var severity: FindingSeverity = .informational
     @State private var confidence: FindingConfidence = .low
-    @State private var status: FindingStatus = .open
+    @State private var status: FindingStatus = .draft
     @State private var description = ""
     @State private var reproduction = ""
     @State private var remediation = ""
     @State private var tagsText = ""
     @State private var cveText = ""
     @State private var cweText = ""
-    @State private var primaryAssetId: String?
+    // Create-mode editable context (prefilled from the draft).
+    @State private var affected: [DraftAsset] = []
+    @State private var evidence: [DraftEvidence] = []
+    @State private var sourceProvider: String?
+    @State private var sourceRunId: String?
+    @State private var provenance: [String] = []
 
     private var isEditing: Bool { context.editing != nil }
 
@@ -335,7 +369,7 @@ private struct FindingEditorView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(isEditing ? "Edit Finding" : "New Finding").font(.title2.weight(.semibold)).padding(.bottom, 4)
             Text(isEditing ? "Edit your analyst-controlled fields. Status and source attribution are changed elsewhere."
-                           : "Record a security conclusion. Any prefilled asset/evidence/source references are facts from the result; you supply the conclusion.")
+                           : "Review the draft and change anything before creating. Prefilled assets, evidence, and source are facts from the selected context; you own the conclusion.")
                 .font(.callout).foregroundStyle(.secondary).padding(.bottom, 10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -348,14 +382,9 @@ private struct FindingEditorView: View {
                         }
                     }
                     if !isEditing {
-                        field("Affected asset") {
-                            Picker("", selection: $primaryAssetId) {
-                                Text("None").tag(String?.none)
-                                ForEach(model.snapshot?.assets ?? []) { asset in
-                                    Text("\(findingReferenceLabel(asset.canonicalIdentity)) · \(asset.assetType)").tag(Optional(asset.id))
-                                }
-                            }.labelsHidden()
-                        }
+                        affectedEditor
+                        evidenceEditor
+                        sourceAndProvenance
                     }
                     field("Description") { editorBox($description) }
                     field("Reproduction / verification") { editorBox($reproduction) }
@@ -375,9 +404,109 @@ private struct FindingEditorView: View {
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy)
             }.padding(.top, 10)
         }
-        .padding(24).frame(width: 640, height: 640)
+        .padding(24).frame(width: 660, height: 680)
         .onAppear(perform: load)
     }
+
+    // MARK: Affected assets (create mode)
+
+    private var affectedEditor: some View {
+        field("Affected assets") {
+            VStack(alignment: .leading, spacing: 4) {
+                if affected.isEmpty {
+                    Text("No affected asset selected. Add one so the finding references what it concerns.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(affected) { asset in
+                    HStack(spacing: 8) {
+                        Button {
+                            setPrimary(asset.assetId)
+                        } label: {
+                            Image(systemName: asset.isPrimary ? "star.fill" : "star")
+                                .foregroundStyle(asset.isPrimary ? Color.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(asset.isPrimary ? "Primary affected asset" : "Make primary")
+                        Text("\(findingReferenceLabel(asset.assetIdentity)) · \(asset.assetType)")
+                            .font(.callout.monospaced()).lineLimit(1)
+                        Spacer()
+                        Button(role: .destructive) { removeAsset(asset.assetId) } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                }
+                let addable = (model.snapshot?.assets ?? []).filter { a in !affected.contains { $0.assetId == a.id } }
+                if !addable.isEmpty {
+                    Menu("Add asset") {
+                        ForEach(addable) { a in
+                            Button("\(findingReferenceLabel(a.canonicalIdentity)) · \(a.assetType)") { addAsset(a.id) }
+                        }
+                    }.menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var evidenceEditor: some View {
+        field("Evidence") {
+            VStack(alignment: .leading, spacing: 4) {
+                if evidence.isEmpty {
+                    Text("No evidence selected. Evidence is the proof the finding references.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(evidence) { item in
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.magnifyingglass").foregroundStyle(.secondary)
+                        Text(findingReferenceLabel(item.label)).font(.caption.monospaced()).lineLimit(1)
+                        Spacer()
+                        Button(role: .destructive) { evidence.removeAll { $0.evidenceId == item.evidenceId } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                }
+                let addable = (model.snapshot?.evidence ?? []).filter { e in !evidence.contains { $0.evidenceId == e.id } }
+                if !addable.isEmpty {
+                    Menu("Add evidence") {
+                        ForEach(addable) { e in
+                            Button("\(findingReferenceLabel(e.provider)) · \(findingReferenceLabel(e.target))") {
+                                evidence.append(DraftEvidence(evidenceId: e.id, label: "\(e.provider) · \(e.target)"))
+                            }
+                        }
+                    }.menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var sourceAndProvenance: some View {
+        if sourceProvider != nil || sourceRunId != nil || !provenance.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                if sourceProvider != nil || sourceRunId != nil {
+                    HStack(spacing: 8) {
+                        Image(systemName: "shippingbox").foregroundStyle(.secondary)
+                        Text("Source: \(sourceProvider ?? "—")\(sourceRunId != nil ? " · from a provider run" : "")")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(provenance, id: \.self) { note in
+                    Text(findingReferenceLabel(note)).font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private func setPrimary(_ id: String) {
+        affected = affected.map { var a = $0; a.isPrimary = (a.assetId == id); return a }
+    }
+    private func addAsset(_ id: String) {
+        guard let a = model.snapshot?.assets.first(where: { $0.id == id }), !affected.contains(where: { $0.assetId == id }) else { return }
+        affected.append(DraftAsset(assetId: id, assetType: a.assetType, assetIdentity: a.canonicalIdentity, isPrimary: affected.isEmpty))
+    }
+    private func removeAsset(_ id: String) {
+        let wasPrimary = affected.first(where: { $0.assetId == id })?.isPrimary ?? false
+        affected.removeAll { $0.assetId == id }
+        if wasPrimary, let first = affected.first { setPrimary(first.assetId) }
+    }
+
+    // MARK: Fields
 
     private func field<V: View>(_ title: String, @ViewBuilder _ content: () -> V) -> some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -395,12 +524,34 @@ private struct FindingEditorView: View {
             title = f.title; severity = f.severity; confidence = f.confidence
             description = f.description; reproduction = f.reproduction; remediation = f.remediation
             tagsText = f.tags.joined(separator: ", "); cveText = f.cveIds.joined(separator: ", "); cweText = f.cweIds.joined(separator: ", ")
+        } else if let d = context.draft {
+            title = d.title; severity = d.severity; confidence = d.confidence; status = d.suggestedStatus
+            description = d.description; reproduction = d.reproduction; remediation = d.remediation
+            affected = d.affectedAssets; evidence = d.evidence
+            sourceProvider = d.sourceProvider; sourceRunId = d.sourceRunId; provenance = d.provenance
+            tagsText = d.tags.joined(separator: ", "); cveText = d.cveIds.joined(separator: ", "); cweText = d.cweIds.joined(separator: ", ")
         } else if let n = context.new {
-            title = n.title; severity = n.severity; confidence = n.confidence; status = n.status ?? .open
+            title = n.title; severity = n.severity; confidence = n.confidence; status = n.status ?? .draft
             description = n.description; reproduction = n.reproduction; remediation = n.remediation
-            primaryAssetId = n.primaryAssetId
+            affected = draftAssets(primary: n.primaryAssetId, additional: n.additionalAssetIds)
+            evidence = n.evidenceIds.compactMap(draftEvidence(_:))
+            sourceProvider = n.sourceProvider; sourceRunId = n.sourceRunId
             tagsText = n.tags.joined(separator: ", "); cveText = n.cveIds.joined(separator: ", "); cweText = n.cweIds.joined(separator: ", ")
         }
+    }
+
+    private func draftAssets(primary: String?, additional: [String]) -> [DraftAsset] {
+        var ids: [String] = []
+        if let primary { ids.append(primary) }
+        for id in additional where !ids.contains(id) { ids.append(id) }
+        return ids.compactMap { id in
+            guard let a = model.snapshot?.assets.first(where: { $0.id == id }) else { return nil }
+            return DraftAsset(assetId: id, assetType: a.assetType, assetIdentity: a.canonicalIdentity, isPrimary: id == primary)
+        }
+    }
+    private func draftEvidence(_ id: String) -> DraftEvidence? {
+        guard let e = model.snapshot?.evidence.first(where: { $0.id == id }) else { return nil }
+        return DraftEvidence(evidenceId: id, label: "\(e.provider) · \(e.target)")
     }
 
     private func list(_ text: String) -> [String] {
@@ -415,82 +566,142 @@ private struct FindingEditorView: View {
             edit.tags = list(tagsText); edit.cveIds = list(cveText); edit.cweIds = list(cweText)
             if await model.updateFinding(editing.id, edit: edit) { dismiss() }
         } else {
-            var new = context.new ?? NewFinding()
+            var new = NewFinding()
             new.title = title; new.severity = severity; new.confidence = confidence; new.status = status
             new.description = description; new.reproduction = reproduction; new.remediation = remediation
+            let primary = affected.first(where: \.isPrimary)?.assetId ?? affected.first?.assetId
+            new.primaryAssetId = primary
+            new.additionalAssetIds = affected.filter { $0.assetId != primary }.map(\.assetId)
+            new.evidenceIds = evidence.map(\.evidenceId)
+            new.sourceProvider = sourceProvider; new.sourceRunId = sourceRunId
             new.tags = list(tagsText); new.cveIds = list(cveText); new.cweIds = list(cweText)
-            new.primaryAssetId = primaryAssetId
             if await model.createFinding(new) != nil { dismiss() }
         }
     }
 }
 
-// MARK: Create from a result (normalized projection)
+// MARK: Create from results (normalized projection)
 
 struct FromResultContext: Identifiable {
     let id = UUID()
     var chainId: String?
 }
 
-/// Lets the analyst pick a completed chain and then a normalized result item to base a
-/// finding on. The item carries durable references (asset/evidence/run/provider) — the
-/// prefill is never console text.
+/// Lets the analyst pick a completed run and select one or more normalized result items
+/// to base a finding on. Each item carries durable references (asset/evidence/run/
+/// provider) — the selection is handed to the core, which builds a deterministic draft.
+/// Nothing here parses console text.
 private struct FromResultPicker: View {
     @ObservedObject var model: WorkspaceModel
     let context: FromResultContext
-    let onPick: (ResultItem) -> Void
+    let onCreate: (FindingDraftContext) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var chainId: String?
+    @State private var selected: Set<String> = []
+    @State private var primaryAssetId: String?
     @StateObject private var loader = FindingResultLoader()
     private var selection: [String?] { [model.selectedWorkspaceId, chainId] }
 
     private var chains: [ChainRun] { (model.snapshot?.chains ?? []).reversed() }
 
+    private var visibleItems: [ResultItem] {
+        guard let projection = loader.projection,
+              projection.workspaceId == model.selectedWorkspaceId, projection.chainId == chainId
+        else { return [] }
+        return projection.items
+    }
+
+    /// Distinct assets among the selected result items — the primary chooser's options.
+    private var selectedAssets: [(id: String, label: String)] {
+        var seen = Set<String>()
+        var out: [(String, String)] = []
+        for item in visibleItems where selected.contains(item.observationId) {
+            if seen.insert(item.assetId).inserted {
+                out.append((item.assetId, "\(findingReferenceLabel(item.assetIdentity)) · \(item.assetType)"))
+            }
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Create Finding from a result").font(.title2.weight(.semibold))
-            Text("Pick a run, then the normalized result its finding concerns. MACSPLOIT prefills the affected asset, supporting evidence, and source — you write the conclusion.")
+            Text("Create Finding from results").font(.title2.weight(.semibold))
+            Text("Pick a run, then select the normalized results this finding concerns. MACSPLOIT prefills the affected assets, supporting evidence, and source, and builds a draft — you write the conclusion.")
                 .font(.callout).foregroundStyle(.secondary)
             Picker("Run", selection: $chainId) {
                 Text("Choose a run…").tag(String?.none)
                 ForEach(chains) { c in Text("\(c.name) · \(displayTime(c.createdAt))").tag(Optional(c.id)) }
             }
-            if loader.isLoading { ProgressView().controlSize(.small) }
+            if loader.isLoading {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Loading results…").font(.caption).foregroundStyle(.secondary) }
+            }
             if let error = loader.errorMessage {
                 Text(error).font(.callout).foregroundStyle(.secondary)
                 Button("Retry") { Task { await loadProjection() } }
             }
-            if let projection = loader.projection,
-               projection.workspaceId == model.selectedWorkspaceId, projection.chainId == chainId {
-                if projection.items.isEmpty {
+            if loader.projection != nil {
+                if visibleItems.isEmpty {
                     Text("This run produced no normalized results to base a finding on.").font(.callout).foregroundStyle(.secondary)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(projection.items) { item in
-                                Button { onPick(item); dismiss() } label: {
-                                    HStack(spacing: 8) {
-                                        Text(item.assetType).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
-                                        Text(findingReferenceLabel(item.assetIdentity)).font(.callout.monospaced()).lineLimit(1)
-                                        Spacer()
-                                        Text(findingReferenceLabel(item.discoveredBy)).font(.caption2).foregroundStyle(.secondary)
-                                        if item.evidenceId != nil { Image(systemName: "doc.text.magnifyingglass").foregroundStyle(.secondary) }
-                                    }
-                                    .padding(7).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                                }.buttonStyle(.plain)
-                            }
+                    resultList
+                    if !selectedAssets.isEmpty {
+                        Picker("Primary asset", selection: $primaryAssetId) {
+                            Text("Choose automatically").tag(String?.none)
+                            ForEach(selectedAssets, id: \.id) { asset in Text(asset.label).tag(Optional(asset.id)) }
                         }
-                    }.frame(maxHeight: 300)
+                    }
                 }
             }
-            HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
+            HStack {
+                Button(selected.isEmpty ? "Select results above" : "Create Finding (\(selected.count))") { createFromSelection() }
+                    .buttonStyle(.borderedProminent).disabled(selected.isEmpty)
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
         }
-        .padding(24).frame(width: 620, height: 520)
+        // Size to content: compact when no run is chosen, growing (bounded by the result
+        // list's own maxHeight) once results appear — never a tall, mostly-empty sheet.
+        .padding(24).frame(width: 640)
         .onAppear { chainId = context.chainId }
         .task(id: selection) { await loadProjection() }
+        .onChange(of: selection) { _ in selected = []; primaryAssetId = nil }
         .onDisappear { loader.clear() }
+    }
+
+    private var resultList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(visibleItems) { item in
+                    let isOn = selected.contains(item.observationId)
+                    Button { toggle(item.observationId) } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: isOn ? "checkmark.square.fill" : "square").foregroundStyle(isOn ? Color.accentColor : .secondary)
+                            Text(item.assetType).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                            Text(findingReferenceLabel(item.assetIdentity)).font(.callout.monospaced()).lineLimit(1)
+                            Spacer()
+                            Text(findingReferenceLabel(item.discoveredBy)).font(.caption2).foregroundStyle(.secondary)
+                            if item.evidenceId != nil { Image(systemName: "doc.text.magnifyingglass").foregroundStyle(.secondary) }
+                        }
+                        .padding(7).frame(maxWidth: .infinity, alignment: .leading)
+                        .background((isOn ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)), in: RoundedRectangle(cornerRadius: 6))
+                    }.buttonStyle(.plain)
+                }
+            }
+        }.frame(maxHeight: 280)
+    }
+
+    private func toggle(_ id: String) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+        // Drop a primary choice that is no longer among the selected assets.
+        if let primary = primaryAssetId, !selectedAssets.contains(where: { $0.id == primary }) { primaryAssetId = nil }
+    }
+
+    private func createFromSelection() {
+        guard !selected.isEmpty, let chainId else { return }
+        // Preserve the on-screen order of the selected results.
+        let orderedObservations = visibleItems.map(\.observationId).filter { selected.contains($0) }
+        onCreate(FindingDraftContext(runId: chainId, observationIds: orderedObservations, primaryAssetId: primaryAssetId))
     }
 
     private func loadProjection() async {

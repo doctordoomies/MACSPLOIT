@@ -683,6 +683,12 @@ struct ReconView: View {
                                 .buttonStyle(.link)
                                 .controlSize(.small)
                         }
+                        Button("Create Finding") {
+                            model.beginFinding(result: row.observation.id, inRun: results.chain.id)
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                        .help("Draft a finding from this result; the editor opens prefilled with this asset, its evidence, and the source run.")
                     }
                     .padding(9)
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 7))

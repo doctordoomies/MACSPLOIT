@@ -7,6 +7,23 @@ may include breaking changes).
 
 ## [Unreleased]
 
+- **Deterministic Finding drafts — prefill the editor from durable scan context (#79 and
+  the deterministic Level 1 of #81, parent #68) — owner acceptance pending:** Create
+  Finding — from one result, several selected results, a whole run, or an asset — now opens
+  the structured editor **already populated** instead of blank. A new read-only core op
+  `draft_finding` validates a typed selection (results/assets/evidence/run) against the
+  workspace and run and returns a non-persisted **FindingDraft**; nothing is created until
+  the analyst presses Create (through the existing transactional `create_finding`). Generic
+  reconnaissance/OSINT drafts stay strictly factual and informational — severity
+  INFORMATIONAL, safest confidence, empty remediation, no invented CVE/CWE/tags — so
+  MACSPLOIT never turns an ordinary observation into a vulnerability claim; only a reviewed
+  rule (future TLS/Nuclei/native rules, #83–#85) may propose richer semantics through an
+  internal hint with no wire path. The editor's create mode now edits affected assets
+  (add/remove, change primary) and evidence before Create, shows source/run provenance, and
+  on a drafting failure shows an explicit error and offers a blank finding instead of
+  silently opening empty. Manual "Blank finding" still works. Optional local/cloud AI
+  writing assistance (Level 2/3 of #81) remains future work. Protocol (v1, additive):
+  `draft_finding`. See [docs/findings.md](docs/findings.md).
 - **Durable Findings and normalized result foundation (#76, parent #68) — owner
   acceptance pending:** a first-class, durable **Finding** entity (migration 008) — a
   reviewable analyst security conclusion that *references* durable records (affected

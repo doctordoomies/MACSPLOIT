@@ -635,4 +635,66 @@ import Testing
         #expect(finding.history.contains { $0.kind == "CREATED" })
         #expect(finding.history.contains { $0.kind == "STATUS" })
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"] != nil))
+    func testDraftFindingFromRunPrefillsEditorAndPersistsThroughBridgeOffline() async throws {
+        // The #79 owner-acceptance flow end to end over the real core: run a synthetic
+        // Recon chain, deterministically draft a finding from a selection of its normalized
+        // results, confirm the draft arrives populated (factual, informational, with the
+        // affected assets/evidence/source referenced), create from the — possibly edited —
+        // draft, restart, and confirm every durable reference survives. No network.
+        let binary = try #require(ProcessInfo.processInfo.environment["MACSPLOIT_CORE_BINARY"])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-drafts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        let client = CoreClient(transport: transport)
+        defer { transport.shutdown() }
+        _ = try await client.hello()
+        let workspace = try await client.createWorkspace(name: "Drafts bridge", scope: ["example.test", "*.example.test"])
+        let target = try await client.addTarget(workspace: workspace.id, value: "example.test")
+        let run = try await client.startChain(workspace: workspace.id, target: target.id)
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if (try await client.snapshot(workspace: workspace.id).chains.first { $0.id == run.id })?.status == "COMPLETED" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        // The run's normalized results drive the selection (never console text).
+        let projection = try await client.resultProjection(workspace: workspace.id, chain: run.id)
+        let selected = Array(projection.items.prefix(3))
+        #expect(!selected.isEmpty)
+
+        // Deterministically draft from the selected results.
+        let context = FindingDraftContext(runId: run.id, observationIds: selected.map(\.observationId))
+        let draft = try await client.draftFinding(workspace: workspace.id, context: context)
+        #expect(draft.kind == "GENERIC_OBSERVATION")
+        #expect(draft.severity == .informational)
+        #expect(draft.suggestedStatus == .draft)
+        #expect(draft.remediation.isEmpty)
+        #expect(draft.cveIds.isEmpty && draft.cweIds.isEmpty)
+        #expect(!draft.title.isEmpty && !draft.description.isEmpty)
+        #expect(draft.primaryAssetId != nil)
+        #expect(draft.affectedAssets.contains { $0.isPrimary })
+
+        // Create from the draft (analyst edits the title first, as in the editor).
+        var new = draft.newFinding()
+        new.title = "Reviewed: " + draft.title
+        let created = try await client.createFinding(workspace: workspace.id, finding: new)
+        #expect(created.title == new.title)
+        #expect(created.severity == .informational)
+        #expect(created.primaryAssetId == draft.primaryAssetId)
+        #expect(created.affectedAssets.count == draft.affectedAssets.count)
+        #expect(created.evidenceIds.count == draft.evidence.count)
+
+        // Restart: the finding and all its references survive.
+        transport.shutdown()
+        let reopenedTransport = PipeTransport(executable: URL(fileURLWithPath: binary), dataDirectory: directory)
+        defer { reopenedTransport.shutdown() }
+        let persisted = try await CoreClient(transport: reopenedTransport).snapshot(workspace: workspace.id)
+        let finding = try #require(persisted.findings?.first { $0.id == created.id })
+        #expect(finding.title == new.title)
+        #expect(finding.primaryAssetId == draft.primaryAssetId)
+        #expect(finding.affectedAssets.count == draft.affectedAssets.count)
+        #expect(finding.evidenceIds.count == draft.evidence.count)
+    }
 }
