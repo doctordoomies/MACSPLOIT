@@ -149,3 +149,22 @@ assistance (Level 2/3 of #81) is deliberately deferred, and would enhance the de
 draft rather than replace this pipeline.
 
 See [Findings](findings.md) for limits, links, history, migration and acceptance details.
+
+## Integrated Linux terminal (managed VM, #90)
+
+The optional Linux terminal is a **separate trust boundary** from typed provider execution:
+the user drives an arbitrary guest shell, so terminal commands are never scope-checked, never
+recorded as authorized provider actions, and never auto-imported into Assets/Evidence/
+Findings. It is not routed through the core protocol.
+
+Layering: `TerminalView` → `LinuxEnvironmentModel` (typed lifecycle, persistence, sessions,
+stale-async generation guard) → `LinuxEnvironmentBackend` protocol → `VZLinuxEnvironmentBackend`
+(Apple Virtualization.framework, macOS 13+ Apple Silicon: EFI boot, virtio block/console/
+entropy/balloon, NAT) with a `FakeLinuxEnvironmentBackend` for offline tests. A Swift
+`LinuxImageDownloader` acquires the guest image with the core installer's discipline
+(HTTPS-only, pinned SHA-256, bounded, staged, atomic) but stays off the provider path.
+Persistent VM files live under `Application Support/MACSPLOIT/Virtual Machines/Linux/`,
+isolated from workspace and `Providers/` data; removal deletes only that directory. The VM
+is off by default, never auto-starts, and the app carries `com.apple.security.virtualization`.
+A live boot awaits a verified bootable image and the guest console transport. See
+[terminal.md](terminal.md).
