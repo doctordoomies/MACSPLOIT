@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for the optional, user-started managed Linux terminal VM
+         (Apple Virtualization.framework, Apple Silicon, macOS 13+). The VM is off by
+         default and only boots on an explicit user action. The app is not sandboxed, so
+         no additional file-access entitlements are needed for its Application Support
+         storage. -->
+    <key>com.apple.security.virtualization</key>
+    <true/>
+</dict>
+</plist>
