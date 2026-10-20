@@ -51,6 +51,7 @@ empty request ID; an oversized frame closes the helper session.
 | link_finding_evidence | workspace_id, finding_id, evidence_id | Idempotent same-workspace Evidence link; returns updated Finding |
 | unlink_finding_evidence | workspace_id, finding_id, evidence_id | Removes only the link; retained Evidence is untouched; returns updated Finding |
 | result_projection | workspace_id, chain_id | Bounded read-only normalized projection from durable observations and same-run relationship provenance; no provider execution or raw output |
+| draft_finding | workspace_id, context (`DraftContext`) | Read-only deterministic `FindingDraft` from a validated selection (`run_id?`, `observation_ids[]`, `asset_ids[]`, `evidence_ids[]`, `primary_asset_id?`); validates workspace and run membership, rejects cross-workspace/wrong-run/empty/oversized selections, creates no Finding, no network |
 
 `target_scope_status`, `authorize_target`, `start_install`, `cancel_install`, and
 `install_status` are additive to protocol v1 (no version bump). Installation state is
@@ -169,5 +170,32 @@ Metadata over 32 KiB becomes null with `metadata_omitted: true`; historical abse
 stays null with false. Metadata remains untrusted normalized data. Raw output stays in
 Evidence. Durable events gain `FindingCreated`, `FindingUpdated`, `FindingStatusChanged`,
 with IDs/small status summaries only. Migration 008 is independent of protocol v1.
+
+### Deterministic Finding drafts (v1 compatible, Issue #79 + Level 1 of #81)
+
+`draft_finding` takes a `DraftContext` — optional `run_id` (a chain the UI's run picker
+lists), and `observation_ids`, `asset_ids`, `evidence_ids`, optional `primary_asset_id`.
+It returns a `FindingDraft`: `kind` (`GENERIC_OBSERVATION`/`REVIEWED_RULE`), `title`,
+`severity`, `confidence`, `suggested_status`, `description`, `reproduction`, `remediation`,
+`tags`, `cwe_ids`, `cve_ids`, `primary_asset_id?`, `affected_assets`
+(`[{asset_id, asset_type, asset_identity, is_primary}]`), `evidence`
+(`[{evidence_id, label}]`), `source_provider?`, `source_run_id?`, and `provenance` (notes
+on how fields were derived). The draft is **not persisted**: the store is opened read-only,
+no Finding is created, and there is no network activity. The analyst persists an unedited
+draft with `create_finding` via `FindingDraft::to_new_finding` (primary excluded from the
+additional-asset list; `suggested_status` becomes the initial status).
+
+Generic drafts are factual/informational: severity `INFORMATIONAL`, the safest confidence
+`LOW`, `suggested_status` `DRAFT`, empty remediation, and no CVE/CWE/tags — MACSPLOIT never
+infers a vulnerability or identifier from arbitrary text. Only a `ReviewedFindingHint` (an
+internal type with no wire path, supplied solely by trusted in-core rule metadata; no rule
+emits one yet) may propose richer severity/text/identifiers, yielding `kind`
+`REVIEWED_RULE`. `source_provider`/`source_run_id` are attributed only when every selected
+result shares one provider run, keeping attribution consistent with `create_finding`.
+Empty selections, selections above the bounds (200 results, 20 assets, 50 evidence), a
+`primary_asset_id` not among the affected set, cross-workspace asset/evidence/observation
+references, and observations outside a supplied `run_id` all yield `InvalidRequest`
+(`AssetNotFound` for a missing asset); drafting the same selection twice, or after restart,
+returns an identical draft.
 See [Findings](../docs/findings.md) for enum values, transitions, field bounds and
 owner acceptance; TLS/Nuclei/CVE enrichment/reporting/AI remain deferred.

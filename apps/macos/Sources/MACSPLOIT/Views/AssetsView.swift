@@ -34,7 +34,13 @@ private struct AssetInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text(asset.displayValue).font(.title3.weight(.semibold)).textSelection(.enabled)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(asset.displayValue).font(.title3.weight(.semibold)).textSelection(.enabled)
+                    Spacer()
+                    Button("Create Finding") { model.beginFinding(fromAsset: asset.id) }
+                        .controlSize(.small).disabled(!model.isConnected)
+                        .help("Draft an informational finding for this asset; the editor opens prefilled and you write the conclusion.")
+                }
                 field("Type", asset.assetType)
                 field("Canonical identity", asset.canonicalIdentity)
                 field("First seen", displayTime(asset.firstSeen))

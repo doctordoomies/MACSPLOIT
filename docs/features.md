@@ -70,6 +70,7 @@ projection derives from durable records; existing Recon/OSINT renderers remain i
 | Vulnerability assessment (Nuclei) | PLANNED | Detection-only, conservative defaults |
 | SQL injection assessment (sqlmap) | FUTURE | Detection-only if added; deeper behavior gated behind authorized-validation |
 | Manual Findings foundation | BETA | Issue #76: durable analyst conclusions; independent severity/confidence/lifecycle, multi-Asset/Evidence references, review history and Create Finding from normalized Recon/OSINT results; owner acceptance pending. Automated scanners/dedup remain deferred |
+| Deterministic Finding drafts | BETA | Issue #79 + Level 1 of #81: Create Finding from a result/selection/run/asset builds a non-persisted, read-only `FindingDraft` in the core so the editor opens populated; generic recon/OSINT drafts stay factual/informational (no invented vulnerability); create mode edits affected assets/evidence; optional AI writing assistance (Level 2/3 of #81) deferred; owner acceptance pending |
 | Reporting (JSON/Markdown/HTML) | PLANNED | PDF later |
 
 ## OSINT
