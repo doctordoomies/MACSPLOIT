@@ -23,6 +23,14 @@ import Testing
                        downloader: any LinuxImageDownloader = FakeLinuxImageDownloader()) -> LinuxEnvironmentModel {
         LinuxEnvironmentModel(paths: paths(appSupport), backend: backend, downloader: downloader)
     }
+
+    /// Reports success but stages no disk, so the model's final atomic move fails.
+    private struct StagelessDownloader: LinuxImageDownloader {
+        func fetch(_ manifest: LinuxImageManifest, into paths: LinuxEnvironmentPaths,
+                   progress: @escaping @Sendable (Double) -> Void) async throws {
+            try manifest.validate(); progress(1) // no staged disk written
+        }
+    }
     private func setUp(_ m: LinuxEnvironmentModel) async {
         await m.startSetUp(manifest: fixtureManifest(), resources: m.defaultResources)?.value
     }
@@ -119,20 +127,6 @@ import Testing
         #expect(m.errorMessage != nil)
     }
 
-    @Test func setupCanBeCancelledAndReturnsToATruthfulState() async throws {
-        let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
-        let m = model(appSupport, downloader: FakeLinuxImageDownloader(.success, delay: 0.5))
-        let task = m.startSetUp(manifest: fixtureManifest(), resources: m.defaultResources)
-        #expect(m.state == .settingUp)
-        m.cancelSetup()
-        await task?.value
-        #expect(m.state == .notConfigured)
-        #expect(m.config == nil)
-        #expect(m.errorMessage == "Setup was cancelled.")
-        #expect(!FileManager.default.fileExists(atPath: m.paths.configFile.path))
-        #expect(!FileManager.default.fileExists(atPath: m.paths.diskImage.path))
-    }
-
     // MARK: Persistence / restart
 
     @Test func configurationPersistsAndRelaunchResolvesToStoppedNeverRunning() async throws {
@@ -149,19 +143,62 @@ import Testing
         #expect(!relaunched.hasRunningHandle)
     }
 
-    @Test func corruptOrIncompleteEnvironmentIsDetectedAsFailed() throws {
-        let garbage = tempRoot(); defer { try? FileManager.default.removeItem(at: garbage) }
-        let p1 = paths(garbage)
-        try FileManager.default.createDirectory(at: p1.root, withIntermediateDirectories: true)
-        try Data("not json".utf8).write(to: p1.configFile)
-        #expect(LinuxEnvironmentModel.resolve(paths: p1).0 == .failed)
+    @Test func resolveDetectsEveryIncompleteOrOrphanedEnvironmentAsFailed() throws {
+        func fresh() -> LinuxEnvironmentPaths {
+            let p = paths(tempRoot()); try? FileManager.default.createDirectory(at: p.root, withIntermediateDirectories: true); return p
+        }
+        let validConfig = try JSONEncoder().encode(LinuxEnvironmentConfig(image: fixtureManifest(), resources: .defaults()))
 
-        let noDisk = tempRoot(); defer { try? FileManager.default.removeItem(at: noDisk) }
-        let p2 = paths(noDisk)
-        try FileManager.default.createDirectory(at: p2.root, withIntermediateDirectories: true)
-        let config = LinuxEnvironmentConfig(image: fixtureManifest(), resources: LinuxResources.defaults())
-        try JSONEncoder().encode(config).write(to: p2.configFile)
-        #expect(LinuxEnvironmentModel.resolve(paths: p2).0 == .failed)
+        // corrupt config → FAILED
+        let a = fresh(); try Data("not json".utf8).write(to: a.configFile)
+        #expect(LinuxEnvironmentModel.resolve(paths: a).0 == .failed)
+        // valid config, missing disk → FAILED
+        let b = fresh(); try validConfig.write(to: b.configFile)
+        #expect(LinuxEnvironmentModel.resolve(paths: b).0 == .failed)
+        // disk present, no config → FAILED (orphan)
+        let c = fresh(); try Data("disk".utf8).write(to: c.diskImage)
+        #expect(LinuxEnvironmentModel.resolve(paths: c).0 == .failed)
+        // aux present, no config → FAILED (orphan)
+        let d = fresh(); try Data("aux".utf8).write(to: d.auxStorage)
+        #expect(LinuxEnvironmentModel.resolve(paths: d).0 == .failed)
+        // staging present, no config → FAILED (orphan)
+        let e = fresh(); try FileManager.default.createDirectory(at: e.staging, withIntermediateDirectories: true)
+        #expect(LinuxEnvironmentModel.resolve(paths: e).0 == .failed)
+        // valid config + disk → STOPPED
+        let f = fresh(); try validConfig.write(to: f.configFile); try Data("disk".utf8).write(to: f.diskImage)
+        #expect(LinuxEnvironmentModel.resolve(paths: f).0 == .stopped)
+        // completely empty terminal dir → NOT_CONFIGURED
+        let g = fresh()
+        #expect(LinuxEnvironmentModel.resolve(paths: g).0 == .notConfigured)
+    }
+
+    @Test func setupCannotBeginFromFailed() async throws {
+        let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
+        // An orphaned disk with no config resolves to FAILED; setup must refuse to run over it.
+        let p = paths(appSupport)
+        try FileManager.default.createDirectory(at: p.root, withIntermediateDirectories: true)
+        try Data("orphan".utf8).write(to: p.diskImage)
+        let m = model(appSupport)
+        #expect(m.state == .failed)
+        await setUp(m)
+        #expect(m.state == .failed) // setup did not begin
+        #expect(try String(contentsOf: p.diskImage, encoding: .utf8) == "orphan") // untouched
+    }
+
+    @Test func recreateRemovesIncompleteEnvironmentAndReturnsNotConfigured() async throws {
+        let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
+        let p = paths(appSupport)
+        try FileManager.default.createDirectory(at: p.root, withIntermediateDirectories: true)
+        try Data("orphan-disk".utf8).write(to: p.diskImage)
+        let workspaces = appSupport.appendingPathComponent("workspaces", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaces, withIntermediateDirectories: true)
+        try Data("ws".utf8).write(to: workspaces.appendingPathComponent("ws1.json"))
+        let m = model(appSupport)
+        #expect(m.state == .failed && !m.canRetry)
+        await m.remove()
+        #expect(m.state == .notConfigured)
+        #expect(!FileManager.default.fileExists(atPath: p.root.path))
+        #expect(FileManager.default.fileExists(atPath: workspaces.appendingPathComponent("ws1.json").path))
     }
 
     // MARK: Start / stop / sessions
@@ -325,7 +362,7 @@ import Testing
 
     // MARK: Partial first-time setup cleanup
 
-    @Test func freshSetupPrepareFailureRemovesTheNewlyStagedDisk() async throws {
+    @Test func freshSetupPrepareFailureRemovesAllArtifacts() async throws {
         let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
         let m = model(appSupport, backend: FakeLinuxEnvironmentBackend(failure: .onPrepare))
         await setUp(m)
@@ -335,19 +372,30 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: m.paths.configFile.path))
     }
 
-    @Test func replacementFailurePreservesAPreExistingGoodDisk() async throws {
+    @Test func diskFinalizationFailureRemovesTheNewConfigAndAuxNoFakeConfiguredEnv() async throws {
+        // A downloader that reports success but stages no disk → the final atomic move fails
+        // AFTER config + aux were created. Those must be removed, not left as a fake env.
         let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
-        let p = paths(appSupport)
-        // A pre-existing good disk plus a corrupt config → the model resolves to FAILED with
-        // the disk present (so setUp is permitted and a prior disk exists).
-        try FileManager.default.createDirectory(at: p.root, withIntermediateDirectories: true)
-        try Data("OLD-GOOD".utf8).write(to: p.diskImage)
-        try Data("corrupt".utf8).write(to: p.configFile)
-        let m = model(appSupport, backend: FakeLinuxEnvironmentBackend(failure: .onPrepare))
-        #expect(m.state == .failed)
-        await setUp(m) // prepare fails → finalize never runs → old disk preserved
-        #expect(try String(contentsOf: p.diskImage, encoding: .utf8) == "OLD-GOOD")
-        #expect(!FileManager.default.fileExists(atPath: p.staging.path))
+        let m = model(appSupport, downloader: StagelessDownloader())
+        await setUp(m)
+        #expect(m.state == .notConfigured)
+        #expect(!FileManager.default.fileExists(atPath: m.paths.configFile.path))
+        #expect(!FileManager.default.fileExists(atPath: m.paths.diskImage.path))
+        #expect(!FileManager.default.fileExists(atPath: m.paths.auxStorage.path))
+    }
+
+    @Test func cancellationBeforeFinalizationLeavesNoDiskOrConfig() async throws {
+        let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
+        let m = model(appSupport, downloader: FakeLinuxImageDownloader(.success, delay: 0.5))
+        let task = m.startSetUp(manifest: fixtureManifest(), resources: m.defaultResources)
+        #expect(m.state == .settingUp)
+        m.cancelSetup()
+        await task?.value
+        #expect(m.state == .notConfigured)
+        #expect(m.errorMessage == "Setup was cancelled.")
+        #expect(!FileManager.default.fileExists(atPath: m.paths.configFile.path))
+        #expect(!FileManager.default.fileExists(atPath: m.paths.diskImage.path))
+        #expect(!FileManager.default.fileExists(atPath: m.paths.staging.path))
     }
 
     @Test func streamingSHA256MatchesCryptoKitAndAtomicReplacePreservesGoodArtifact() throws {
