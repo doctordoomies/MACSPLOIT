@@ -73,8 +73,14 @@ STOPPING`, plus `FAILED`. Rules enforced by the model:
   calls a dedicated `forceStop()` (backend forced-stop only) that reaches `STOPPED` on
   confirmed success or stays `FAILED` with the handle on failure;
 - a relaunch resolves state purely from disk and never auto-starts (transient states are
-  never persisted);
-- a failed boot returns to a recoverable state (Retry / Recreate);
+  never persisted); a valid config + its disk → `STOPPED`, while any setup-owned artifact
+  present **without** a complete valid environment (a crash/power-loss mid-setup, a corrupt
+  or missing config, a missing disk, or leftover staging/aux) → `FAILED` so the UI can offer
+  **Recreate** — a possibly multi-GB orphan is never silently reported `NOT_CONFIGURED` nor
+  auto-deleted at launch; only a completely empty terminal directory is `NOT_CONFIGURED`;
+- a failed environment is handled by **Retry** when a valid config + disk exist, otherwise
+  by explicit **Recreate** (remove → `NOT_CONFIGURED` → Set Up again); setup is never run
+  over existing artifacts;
 - **setup is a cancellable, owned task:** while `SETTING_UP` the user can Cancel Setup; the
   cancellation propagates to the downloader/preparation, staging is wiped, any finalized
   good artifact is left intact, and the state returns to `NOT_CONFIGURED`;
@@ -95,12 +101,26 @@ computed by streaming** 1 MiB chunks (never by loading the multi‑GB image into
 **cancellation honoured through download and hashing**. The single network-delivered
 artifact is the pinned root disk — there are no separately delivered, unpinned files.
 
-Crucially, the verified disk is downloaded into **staging** and the environment is finalized
-**last**: `prepare` (small EFI vars) and config persistence happen first, and only then is
-the disk **atomically moved** into place. So a failed, cancelled, or checksum-bad setup
-never orphans a multi‑GB disk and never destroys an existing known-good disk — staging is
-wiped, a fresh setup's partial artifacts are removed, and a pre-existing good environment is
-preserved untouched. No `curl | sh`, no arbitrary remote scripts, no `sudo`, no writes to
+Setup is **fresh-only** (permitted only from `NOT_CONFIGURED`) — it never runs over existing
+artifacts, so there is no prior disk/config to preserve or replace. In-place
+replacement/upgrades are deferred; changing the environment is done with explicit
+**Remove / Recreate**. The exact commit order is:
+
+```
+manifest validation
+→ download + verify into staging
+→ prepare (small EFI aux state)
+→ persist environment config atomically
+→ atomically move the staged disk into root.img LAST
+→ clear staging → STOPPED
+```
+
+Config is committed **before** the disk goes live, and the disk is finalized **last**, so a
+crash after the disk commit always has a matching config (→ STOPPED on relaunch) and any
+earlier failure/crash leaves config-without-disk or bare artifacts (→ FAILED, recreatable) —
+never a silent orphan. On a caught setup failure or cancellation (fresh-only), every
+artifact this run created is removed and the state returns to `NOT_CONFIGURED`; nothing
+unrelated is touched. No `curl | sh`, no arbitrary remote scripts, no `sudo`, no writes to
 system directories, no host package installation.
 
 ## Persistent storage and removal
