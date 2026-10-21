@@ -114,10 +114,16 @@ struct TerminalView: View {
                     // rather than pretending it is gone.
                     Button("Force Stop") { Task { await model.forceStop() } }
                         .buttonStyle(.borderedProminent)
-                } else {
+                } else if model.canRetry {
+                    // A valid config + disk exist — retry the boot, or recreate.
                     Button("Retry") { model.recover(); Task { await model.start() } }
                         .buttonStyle(.borderedProminent)
                     Button("Recreate Environment…", role: .destructive) { confirmingRemove = true }
+                } else {
+                    // Incomplete/corrupt (e.g. a crash mid-setup): the only safe path is to
+                    // recreate. Setup never runs over existing artifacts.
+                    Button("Recreate Environment…", role: .destructive) { confirmingRemove = true }
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }

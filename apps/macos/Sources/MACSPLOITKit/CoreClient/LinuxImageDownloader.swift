@@ -21,10 +21,11 @@ public enum LinuxImageDownloadError: Error, Equatable {
 }
 
 public protocol LinuxImageDownloader: Sendable {
-    /// Download and verify the manifest's single pinned artifact, placing it at its final
-    /// path atomically. Reports 0...1 progress. Throws before finalizing on any status/
-    /// redirect/size/digest/transport failure, honours cancellation, and never destroys an
-    /// existing known-good artifact on failure.
+    /// Download and verify the manifest's single pinned artifact INTO STAGING
+    /// (`paths.stagedDisk`). It does NOT place the disk at its final path — the model owns
+    /// finalization (atomic move into `root.img`) after config is persisted. Reports 0...1
+    /// progress, throws on any status/redirect/size/digest/transport failure, and honours
+    /// cancellation.
     func fetch(_ manifest: LinuxImageManifest, into paths: LinuxEnvironmentPaths,
                progress: @escaping @Sendable (Double) -> Void) async throws
 }

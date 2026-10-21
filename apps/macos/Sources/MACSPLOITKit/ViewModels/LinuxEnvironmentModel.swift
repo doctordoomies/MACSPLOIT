@@ -44,20 +44,33 @@ public final class LinuxEnvironmentModel: ObservableObject {
             let (initialState, loadedConfig) = Self.resolve(paths: paths)
             self.state = initialState
             self.config = loadedConfig
+            if initialState == .failed {
+                self.errorMessage = "The Linux environment is incomplete or corrupt — an earlier setup may not have finished. Recreate it to start over."
+            }
         }
     }
 
-    /// Resolve the on-launch state purely from disk. Configured + intact → STOPPED (never
-    /// auto-started); present-but-undecodable/missing-disk → FAILED; nothing → NOT_CONFIGURED.
+    /// Resolve the on-launch state purely from disk. A valid config + its disk → STOPPED
+    /// (never auto-started). Any setup-owned artifact present WITHOUT a complete valid
+    /// environment → FAILED (an incomplete/corrupt environment, e.g. a crash or power loss
+    /// mid-setup) so the UI can offer Recreate — never silently NOT_CONFIGURED over a
+    /// possibly multi-GB orphan, and never auto-deleted at launch. A completely empty
+    /// terminal directory → NOT_CONFIGURED.
     static func resolve(paths: LinuxEnvironmentPaths) -> (LinuxEnvironmentState, LinuxEnvironmentConfig?) {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: paths.configFile.path) else { return (.notConfigured, nil) }
+        let hasDisk = fm.fileExists(atPath: paths.diskImage.path)
+        let hasAux = fm.fileExists(atPath: paths.auxStorage.path)
+        let hasStaging = fm.fileExists(atPath: paths.staging.path)
+        guard fm.fileExists(atPath: paths.configFile.path) else {
+            // No config: an orphaned artifact means an incomplete setup, not "nothing here".
+            return (hasDisk || hasAux || hasStaging) ? (.failed, nil) : (.notConfigured, nil)
+        }
         guard let data = try? Data(contentsOf: paths.configFile),
               let config = try? JSONDecoder().decode(LinuxEnvironmentConfig.self, from: data),
               config.schemaVersion == LinuxEnvironmentConfig.supportedSchema else {
-            return (.failed, nil)
+            return (.failed, nil) // corrupt/incompatible config
         }
-        guard fm.fileExists(atPath: paths.diskImage.path) else { return (.failed, config) }
+        guard hasDisk else { return (.failed, config) } // config without its disk
         return (.stopped, config)
     }
 
@@ -68,9 +81,17 @@ public final class LinuxEnvironmentModel: ObservableObject {
 
     /// Begin explicit setup in an owned task so it can be cancelled. Safe to call only from
     /// NOT_CONFIGURED or FAILED.
+    /// Whether a FAILED environment can be retried as-is (a valid config + disk exist).
+    /// Otherwise it is incomplete/corrupt and the only option is Recreate.
+    public var canRetry: Bool { running == nil && Self.resolve(paths: paths).0 == .stopped }
+
+    /// Begin explicit setup. **Fresh-only:** permitted only from NOT_CONFIGURED. A FAILED
+    /// environment is handled by Retry (when valid) or explicit Recreate (remove →
+    /// NOT_CONFIGURED → Set Up again); setup never runs over existing artifacts, so there is
+    /// no prior disk/config to preserve or replace.
     @discardableResult
     public func startSetUp(manifest: LinuxImageManifest, resources: LinuxResources) -> Task<Void, Never>? {
-        guard state == .notConfigured || state == .failed else { return nil }
+        guard state == .notConfigured else { return nil }
         generation += 1
         let gen = generation
         state = .settingUp; errorMessage = nil; setupStage = "Preparing setup…"
@@ -91,9 +112,10 @@ public final class LinuxEnvironmentModel: ObservableObject {
     }
 
     private func performSetUp(manifest: LinuxImageManifest, resources: LinuxResources, gen: Int) async {
-        // Was a finalized disk already present before this run? If so, it is pre-existing
-        // and must be preserved on failure; a fresh setup's partial artifacts are removed.
-        let hadExistingDisk = FileManager.default.fileExists(atPath: paths.diskImage.path)
+        // Fresh-only: the terminal directory is empty here, so there is no prior environment
+        // to preserve. The order commits the config durably BEFORE the disk goes live, and
+        // finalizes the disk LAST — so a crash or failure after the disk is live always has
+        // a matching config, and any earlier failure leaves no live disk.
         do {
             try manifest.validate()
             try Task.checkCancellation()
@@ -104,25 +126,27 @@ public final class LinuxEnvironmentModel: ObservableObject {
             guard gen == generation else { return }
             setupStage = "Preparing environment…"
             let config = LinuxEnvironmentConfig(image: manifest, resources: resources)
-            try await backend.prepare(config: config, paths: paths) // aux only; no disk swap
+            try await backend.prepare(config: config, paths: paths) // small aux state only
             try Task.checkCancellation()
             guard gen == generation else { return }
-            // Finalize the big disk LAST (atomic), so no earlier failure orphans/destroys it.
+            try persist(config) // config durably committed BEFORE the disk goes live
+            try Task.checkCancellation()
+            guard gen == generation else { return }
+            // Finalize the disk LAST. A crash after this has a matching config (→ STOPPED);
+            // a crash before it leaves config-without-disk (→ FAILED, recreatable).
             try LinuxImageFetch.atomicReplace(source: paths.stagedDisk, destination: paths.diskImage)
-            try persist(config)
             try? FileManager.default.removeItem(at: paths.staging)
             self.config = config
             state = .stopped
             setupStage = ""
         } catch {
             guard gen == generation else { return }
-            cleanupAfterSetupFailure(hadExistingDisk: hadExistingDisk)
+            // Fresh-only: nothing pre-existing to preserve — remove every artifact this run
+            // created and return to a truthful NOT_CONFIGURED.
+            removeAllArtifacts()
+            config = nil
             setupStage = ""
-            // Re-resolve truthfully: a preserved pre-existing env stays; a fresh one becomes
-            // NOT_CONFIGURED.
-            let (resolved, loaded) = Self.resolve(paths: paths)
-            state = resolved
-            config = loaded
+            state = .notConfigured
             if error is CancellationError || (error as? LinuxImageDownloadError) == .cancelled {
                 errorMessage = "Setup was cancelled."
             } else {
@@ -279,16 +303,12 @@ public final class LinuxEnvironmentModel: ObservableObject {
         try data.write(to: paths.configFile, options: .atomic)
     }
 
-    private func cleanupAfterSetupFailure(hadExistingDisk: Bool) {
-        // Always wipe staging (the new, possibly multi-GB disk lives there until finalized).
+    /// Remove every setup-owned artifact (fresh-only setup never has a prior env to keep).
+    private func removeAllArtifacts() {
         try? FileManager.default.removeItem(at: paths.staging)
-        // Only a fresh, never-configured setup's partial artifacts are removed; a
-        // pre-existing known-good disk/config/aux is preserved untouched.
-        if !hadExistingDisk {
-            try? FileManager.default.removeItem(at: paths.diskImage)
-            try? FileManager.default.removeItem(at: paths.configFile)
-            try? FileManager.default.removeItem(at: paths.auxStorage)
-        }
+        try? FileManager.default.removeItem(at: paths.diskImage)
+        try? FileManager.default.removeItem(at: paths.configFile)
+        try? FileManager.default.removeItem(at: paths.auxStorage)
     }
 
     private static func describe(_ error: Error) -> String {
