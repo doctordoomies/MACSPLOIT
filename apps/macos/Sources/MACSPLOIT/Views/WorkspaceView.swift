@@ -3,6 +3,7 @@ import MACSPLOITKit
 
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
+    @ObservedObject var linux: LinuxEnvironmentModel
     @State private var creatingWorkspace = false
     @State private var editingScope = false
 
@@ -10,12 +11,13 @@ struct WorkspaceView: View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $model.section) {
                 Section("Workspace") {
-                    ForEach(WorkspaceSection.allCases.filter { $0 != .toolManager }) { section in
+                    ForEach(WorkspaceSection.allCases.filter { $0 != .toolManager && $0 != .terminal }) { section in
                         Label(section.rawValue, systemImage: section.symbol).tag(section)
                     }
                 }
                 Section("Tools") {
                     Label("Provider Center", systemImage: "wrench.and.screwdriver").tag(WorkspaceSection.toolManager)
+                    Label("Linux Terminal", systemImage: WorkspaceSection.terminal.symbol).tag(WorkspaceSection.terminal)
                 }
                 Section("Future") {
                     Label("Graph", systemImage: "point.3.filled.connected.trianglepath.dotted")
@@ -42,6 +44,8 @@ struct WorkspaceView: View {
                 }
                 if model.section == .toolManager {
                     ToolManagerView(model: model)
+                } else if model.section == .terminal {
+                    TerminalView(model: linux)
                 } else if model.snapshot != nil {
                     TargetBar(model: model)
                     Divider()
@@ -56,6 +60,7 @@ struct WorkspaceView: View {
                         case .evidence: EvidenceView(model: model)
                         case .activity: ActivityView(model: model)
                         case .toolManager: ToolManagerView(model: model)
+                        case .terminal: TerminalView(model: linux)
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {

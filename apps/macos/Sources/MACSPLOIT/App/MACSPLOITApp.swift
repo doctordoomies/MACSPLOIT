@@ -26,6 +26,7 @@ extension AppearancePreference {
 struct MACSPLOITApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model: WorkspaceModel
+    @StateObject private var linux: LinuxEnvironmentModel
     @StateObject private var setup = SetupModel()
 
     init() {
@@ -39,11 +40,27 @@ struct MACSPLOITApp: App {
         let transport = PipeTransport(executable: executable, dataDirectory: storage)
         AppDelegate.transport = transport
         _model = StateObject(wrappedValue: WorkspaceModel(client: CoreClient(transport: transport)))
+
+        // The managed Linux terminal is app-global and stored separately from workspace
+        // data, so removing it never touches workspaces/providers. It never auto-starts.
+        let linuxPaths = LinuxEnvironmentPaths.standard(applicationSupport: storage)
+        let backend: any LinuxEnvironmentBackend = MACSPLOITApp.makeLinuxBackend()
+        _linux = StateObject(wrappedValue: LinuxEnvironmentModel(
+            paths: linuxPaths, backend: backend, downloader: URLSessionLinuxImageDownloader()))
+    }
+
+    private static func makeLinuxBackend() -> any LinuxEnvironmentBackend {
+        // Production never uses the fake backend. Unsupported hosts fail closed.
+        #if canImport(Virtualization) && arch(arm64)
+        if #available(macOS 13.0, *) { return VZLinuxEnvironmentBackend() }
+        #endif
+        return UnsupportedLinuxEnvironmentBackend(
+            reason: "The managed Linux terminal requires macOS 13 or later on Apple Silicon.")
     }
 
     var body: some Scene {
         Window("MACSPLOIT", id: "main") {
-            AppRootView(model: model, setup: setup)
+            AppRootView(model: model, setup: setup, linux: linux)
                 .frame(minWidth: 1050, minHeight: 680)
                 .preferredColorScheme(setup.appearance.colorScheme)
         }
@@ -63,13 +80,14 @@ struct MACSPLOITApp: App {
 struct AppRootView: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject var setup: SetupModel
+    @ObservedObject var linux: LinuxEnvironmentModel
 
     var body: some View {
         Group {
             if setup.isPresentingSetup {
                 SetupView(model: model, setup: setup)
             } else {
-                WorkspaceView(model: model)
+                WorkspaceView(model: model, linux: linux)
                     .environment(\.interfaceDetail, setup.interfaceDetail)
                     .environment(\.dashboardPreset, setup.dashboardPreset)
                     .overlay(alignment: .bottom) {

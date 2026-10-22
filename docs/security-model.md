@@ -225,3 +225,13 @@ and never execute providers, mutate scope or migrate. Oversized metadata is expl
 flagged as omitted; normalized metadata is still untrusted and must be sanitized for
 presentation. [Field limits and lifecycle](findings.md) are core-enforced, not UI policy.
 TLS scanners, Nuclei, CVE enrichment, reports, AI/MCP and exploitation remain deferred.
+
+The optional integrated Linux terminal (#90) is a deliberate, clearly-labelled **separate
+trust boundary**. Unlike typed providers, the user runs arbitrary guest shell commands, so
+they are not scope-validated, not recorded as authorized provider actions, and their output
+is never imported into Assets/Evidence/Findings; there is no hidden execution and AI cannot
+drive it. The guest image is acquired with the same download discipline as the core
+installer (HTTPS-only, pinned SHA-256, bounded, staged, atomic), the VM is off by default
+and never auto-starts, its storage is isolated and independently removable, and the app
+carries only `com.apple.security.virtualization`. Networking is NAT (normal outbound/
+in-scope TCP/IP), not bare-metal hardware parity. See [terminal.md](terminal.md).

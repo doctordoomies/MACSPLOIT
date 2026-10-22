@@ -4,6 +4,7 @@ import Combine
 public enum WorkspaceSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard", targets = "Targets", assets = "Assets", recon = "Recon", osint = "OSINT", findings = "Findings", evidence = "Evidence", activity = "Activity"
     case toolManager = "Tool Manager"
+    case terminal = "Terminal"
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
@@ -16,6 +17,7 @@ public enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .evidence: return "doc.text.magnifyingglass"
         case .activity: return "waveform.path"
         case .toolManager: return "wrench.and.screwdriver"
+        case .terminal: return "apple.terminal"
         }
     }
 }
