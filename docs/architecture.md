@@ -157,14 +157,24 @@ the user drives an arbitrary guest shell, so terminal commands are never scope-c
 recorded as authorized provider actions, and never auto-imported into Assets/Evidence/
 Findings. It is not routed through the core protocol.
 
-Layering: `TerminalView` → `LinuxEnvironmentModel` (typed lifecycle, persistence, sessions,
-stale-async generation guard) → `LinuxEnvironmentBackend` protocol → `VZLinuxEnvironmentBackend`
-(Apple Virtualization.framework, macOS 13+ Apple Silicon: EFI boot, virtio block/console/
-entropy/balloon, NAT) with a `FakeLinuxEnvironmentBackend` for offline tests. A Swift
-`LinuxImageDownloader` acquires the guest image with the core installer's discipline
-(HTTPS-only, pinned SHA-256, bounded, staged, atomic) but stays off the provider path.
-Persistent VM files live under `Application Support/MACSPLOIT/Virtual Machines/Linux/`,
-isolated from workspace and `Providers/` data; removal deletes only that directory. The VM
-is off by default, never auto-starts, and the app carries `com.apple.security.virtualization`.
-A live boot awaits a verified bootable image and the guest console transport. See
-[terminal.md](terminal.md).
+Layering: `TerminalView` / `NSViewRepresentable` → `LinuxEnvironmentModel` (typed prepare,
+install, owner-confirmed completion, installed boot, stop/quit, stale-operation guards) →
+`LinuxEnvironmentBackend` → `VZLinuxEnvironmentBackend` / owned `VZLinuxRunningEnvironment`.
+A fake backend/download transport keeps CI offline. The real VZ delegate and start/stop
+callbacks are on the main queue; RUNNING is published only after successful start.
+
+The pinned official Kali 2026.3 ARM64 **installer ISO** is downloaded/verified into
+`installer.iso`. `root.img` is created locally, exclusively, as a bounded sparse RAW disk.
+A generic machine identifier and EFI variable store are created once, validated and reused.
+Install mode attaches read-only USB installer media plus writable VirtIO root; normal mode
+omits the ISO. Both have NAT, entropy, balloon, graphics/keyboard/pointer and a reserved
+serial console. `VZVirtualMachineView` displays the real installer/guest, with no fake shell.
+
+VM state lives only under `Application Support/MACSPLOIT/Virtual Machines/Linux/`, separate
+from workspaces and Providers. Config schema 2 records explicit owner-confirmed installation
+status, resource allocation and identity validation metadata. A relaunch resolves incomplete
+installation as INSTALL_READY and installed systems as STOPPED; no automatic boot. Missing/changed identity or
+missing/truncated firmware is FAILED/Recreate rather than silently replaced. A narrow app
+termination hook cancels preparation and performs bounded graceful/forced stop; uncertain
+stop cancels app quit instead of orphaning the guest. Sessions/VT transport remain the next
+#90 slice, not a prerequisite for this graphical install/boot slice. See [terminal.md](terminal.md).

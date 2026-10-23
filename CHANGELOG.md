@@ -7,27 +7,16 @@ may include breaking changes).
 
 ## [Unreleased]
 
-- **Integrated Linux terminal — managed VM foundation (#90, parent #27) — owner acceptance
-  pending; does not boot a live guest yet:** a new optional, explicitly started **Terminal**
-  destination for a managed Linux (Kali ARM64) environment via Apple Virtualization.framework
-  (macOS 13+, Apple Silicon). This slice ships the durable foundation: a typed lifecycle
-  (`NOT_CONFIGURED → SETTING_UP → STOPPED → STARTING → RUNNING → STOPPING`/`FAILED`) that
-  never auto-starts and recomputes state from disk on relaunch; a verified-download pipeline
-  mirroring the core installer (HTTPS-only, pinned SHA-256, bounded, staged, atomic) with an
-  offline fake; persistent storage at `Application Support/MACSPLOIT/Virtual Machines/Linux/`
-  isolated from workspaces/providers (removal deletes only that directory); the real
-  `VZVirtualMachineConfiguration` (EFI boot, virtio block/console/entropy/balloon, NAT)
-  behind a `LinuxEnvironmentBackend` protocol + a fake backend for CI; safe clamped resource
-  defaults; a one-VM/many-tabs session model; the `com.apple.security.virtualization`
-  entitlement; and the full Terminal UI for every state. It is a deliberate **separate trust
-  boundary**: terminal commands are user-controlled, not scope-checked, not recorded as
-  provider actions, and never imported into Assets/Evidence/Findings. A **live boot awaits a
-  verified bootable Kali image and the guest console/VT transport** (documented, not faked) —
-  `VZLinuxEnvironmentBackend.start` validates the real config then surfaces a clear pending
-  state. Comprehensive offline tests cover the state machine, manifest validation, checksum/
-  download failures, persistence/restart (no auto-start), corrupt-environment detection,
-  multi-tab/one-VM, stale-async safety, failed-start recovery, and removal isolation. See
-  [docs/terminal.md](docs/terminal.md).
+- **Linux Terminal — real Kali installer and boot (#90, second slice; owner acceptance
+  pending):** pins the official versioned Kali 2026.3 ARM64 Installer ISO with reviewed
+  signed-metadata provenance, SHA-256 and exact size. Explicit preparation caches installer
+  media separately from an exclusively created sparse writable root disk and persistent
+  machine identifier/EFI variables. Real Virtualization.framework install/normal boot and
+  `VZVirtualMachineView` expose the actual guest. Owner confirmation after Kali reports
+  success is required to mark installed; normal boot omits installer media. Bounded
+  start/stop, delegate lifecycle, cancel-quit-on-uncertain-stop and isolated removal preserve
+  workspace/provider data. PR #92's foundation was owner-accepted; interactive terminal
+  transport remains pending and Issue #90 is not complete. See [Terminal](docs/terminal.md).
 - **Deterministic Finding drafts — prefill the editor from durable scan context (#79 and
   the deterministic Level 1 of #81, parent #68) — owner acceptance pending:** Create
   Finding — from one result, several selected results, a whole run, or an asset — now opens

@@ -235,3 +235,24 @@ installer (HTTPS-only, pinned SHA-256, bounded, staged, atomic), the VM is off b
 and never auto-starts, its storage is isolated and independently removable, and the app
 carries only `com.apple.security.virtualization`. Networking is NAT (normal outbound/
 in-scope TCP/IP), not bare-metal hardware parity. See [terminal.md](terminal.md).
+
+## Kali installer / real VM lifecycle (#90 second slice)
+
+Official versioned Kali 2026.3 ARM64 installer metadata is reviewed against its detached
+signature; runtime verifies the exact pinned SHA-256 and byte count, without runtime GPG.
+Redirect hosts are explicitly reviewed, HTTPS/credential/count/streamed-byte/time bounds
+remain enforced, and cancellation rolls back only the fresh VM setup. No arbitrary root
+image, shell downloader, system directory, sudo or host package installation is involved.
+
+Installer media is read-only USB storage; a bounded sparse RAW root disk is created locally
+with exclusive/no-follow creation. Machine identity and mutable EFI state persist across
+boots; missing/changed identity and missing/truncated EFI state fail closed. Normal boot
+never attaches installer media. Guest files are not inspected to guess installation success:
+only explicit owner confirmation after Kali reports completion can commit installed state,
+after a confirmed guest stop. A real graphical guest view does not imply live shell sessions.
+
+The model retains the real VM through asynchronous start and uncertain stop. Actual backend
+success precedes RUNNING; guest stop/failure events update the model. Graceful then forced
+stop is bounded; failed stop retains ownership and refuses removal/app quit. NAT only, no
+host shares, clipboard/credential forwarding, agents or automatic evidence import. The
+interactive guest terminal remains a future #90 slice. See [Terminal](terminal.md).
