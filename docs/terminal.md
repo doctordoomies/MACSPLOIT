@@ -88,8 +88,9 @@ A new `VZGenericMachineIdentifier` is created during preparation, saved once, an
 from the same bytes for every install/normal boot. Config records its SHA-256; missing,
 changed or undecodable identity is FAILED/Recreate, never silently regenerated. EFI
 variables are likewise created once and reused. Missing/truncated/oversized EFI storage
-fails closed; its contents are mutable firmware data, so they cannot have an immutable
-post-install hash. Further firmware corruption is surfaced by Virtualization.framework
+fails closed; the recorded creation length is a minimum rather than an immutable exact
+size, allowing bounded legitimate firmware-store growth. Its contents are mutable firmware
+data, so they cannot have an immutable post-install hash. Further firmware corruption is surfaced by Virtualization.framework
 validation/boot failure, not repaired heuristically. Legacy schema-1 environments require
 explicit Recreate rather than guessing their identity or installation status.
 

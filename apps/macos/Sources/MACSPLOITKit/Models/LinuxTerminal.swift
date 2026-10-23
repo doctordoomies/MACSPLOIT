@@ -137,6 +137,7 @@ public struct LinuxEnvironmentConfig: Codable, Sendable, Equatable {
     public var createdAt: String
     public var installationStatus: LinuxInstallationStatus = .awaitingOwnerConfirmation
     public var machineIdentifierSHA256: String = ""
+    /// Creation-size floor, not an immutable length: firmware may grow its variable store.
     public var efiStoreByteCount: UInt64 = 0
 
     public init(image: LinuxImageManifest, resources: LinuxResources, createdAt: String = LinuxEnvironment.now()) {

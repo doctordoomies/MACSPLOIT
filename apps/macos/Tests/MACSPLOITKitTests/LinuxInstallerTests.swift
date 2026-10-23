@@ -171,6 +171,19 @@ import Testing
         }
     }
 
+    @Test func mutableEFIVariablesMayGrowWithoutLosingTheInstalledEnvironment() async throws {
+        let root = support(); defer { try? FileManager.default.removeItem(at: root) }
+        let m = model(root); await installed(m)
+        let id = try Data(contentsOf: m.paths.machineIdentifier)
+        let handle = try FileHandle(forWritingTo: m.paths.auxStorage)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("fixture firmware variable update".utf8))
+        try handle.close()
+        let relaunched = model(root)
+        #expect(relaunched.state == .stopped && !relaunched.hasRunningHandle)
+        #expect(try Data(contentsOf: m.paths.machineIdentifier) == id)
+    }
+
     @Test func oldSchemaRequiresRecreateRatherThanFabricatingMachineIdentity() throws {
         let root = support(); defer { try? FileManager.default.removeItem(at: root) }
         let p = LinuxEnvironmentPaths.standard(applicationSupport: root)

@@ -47,10 +47,13 @@ public enum LinuxVMStorage {
               config.memoryBytes >= LinuxEnvironmentLimits.minMemoryBytes,
               config.memoryBytes <= LinuxHostResources.current.maxMemoryBytes,
               config.diskSizeBytes >= LinuxEnvironmentLimits.minDiskBytes,
-              config.diskSizeBytes <= LinuxEnvironmentLimits.maxDiskBytes else { throw LinuxBackendError.notPrepared }
+              config.diskSizeBytes <= LinuxEnvironmentLimits.maxDiskBytes,
+              config.efiStoreByteCount > 0, config.efiStoreByteCount <= 128 * 1024 * 1024 else { throw LinuxBackendError.notPrepared }
         try config.image.validate()
+        // EFI variables are mutable firmware state. Keep the creation size as a lower
+        // bound to detect truncation, while allowing bounded legitimate store growth.
         guard try requireRegularFile(paths.diskImage, maximumBytes: LinuxEnvironmentLimits.maxDiskBytes) == config.diskSizeBytes,
-              try requireRegularFile(paths.auxStorage, maximumBytes: 128 * 1024 * 1024) == config.efiStoreByteCount else {
+              try requireRegularFile(paths.auxStorage, maximumBytes: 128 * 1024 * 1024) >= config.efiStoreByteCount else {
             throw LinuxBackendError.notPrepared
         }
         _ = try requireRegularFile(paths.machineIdentifier, maximumBytes: 4096)

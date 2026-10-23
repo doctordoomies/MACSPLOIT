@@ -25,6 +25,8 @@ import Virtualization
         try require((install.storageDevices[0].attachment as? VZDiskImageStorageDeviceAttachment)?.isReadOnly == true)
         try require((normal.storageDevices[0].attachment as? VZDiskImageStorageDeviceAttachment)?.isReadOnly == false)
         try require(install.graphicsDevices.count == 1 && install.keyboards.count == 1 && install.pointingDevices.count == 1)
+        try require(install.networkDevices.first?.attachment is VZNATNetworkDeviceAttachment)
+        try require(normal.networkDevices.first?.attachment is VZNATNetworkDeviceAttachment)
         try require(install.directorySharingDevices.isEmpty && normal.directorySharingDevices.isEmpty)
         try require((normal.platform as? VZGenericPlatformConfiguration)?.machineIdentifier.dataRepresentation == originalID)
         print("Real install/normal VZ configurations validated: persistent identity/EFI, USB read-only installer, writable VirtIO root, NAT, graphics/input, no host shares. No guest booted.")
