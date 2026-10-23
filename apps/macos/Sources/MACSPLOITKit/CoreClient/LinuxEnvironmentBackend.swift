@@ -17,8 +17,8 @@ public enum LinuxBackendError: Error, Equatable {
     case alreadyRunning
     case sessionLimitReached
     case unsupportedPlatform(String)
-    /// The real VM boot/console transport is not wired yet (pending a verified bootable
-    /// image and the guest console transport — the documented follow-up).
+    /// Reserved interactive terminal transport is a later #90 slice. Real graphical
+    /// installer/installed boot is supported independently of shell sessions.
     case notYetAvailable(String)
     case backendFailure(String)
 }
@@ -32,7 +32,11 @@ public protocol LinuxTerminalSession: AnyObject, Sendable {
 }
 
 /// A running managed environment. Multiple terminal tabs share ONE of these.
+@MainActor
 public protocol LinuxRunningEnvironment: AnyObject, Sendable {
+    var supportsTerminalSessions: Bool { get }
+    var didStop: (@MainActor @Sendable (String?) -> Void)? { get set }
+    func start() async throws
     var sessionCount: Int { get }
     func openSession() throws -> any LinuxTerminalSession
     /// Stop the VM. `graceful: true` requests an orderly shutdown within `timeout`; on
@@ -43,18 +47,24 @@ public protocol LinuxRunningEnvironment: AnyObject, Sendable {
 
 /// Prepares and boots the managed environment. Implementations must never start a VM
 /// except from an explicit `start(...)` call.
+@MainActor
 public protocol LinuxEnvironmentBackend: Sendable {
     /// Non-nil when the host cannot run the managed VM; the reason is shown to the user and
     /// setup/start are blocked. `nil` means the platform is supported.
     var unsupportedReason: String? { get }
-    /// Create the persistent VM disk/aux files from already-verified artifacts in `paths`.
+    /// Create new persistent machine identity and EFI variables. The model creates the
+    /// sparse writable root disk; the downloader handles only installer media.
     func prepare(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws
-    /// Boot the prepared VM and return a running handle.
-    func start(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws -> any LinuxRunningEnvironment
+    /// Validate identity and firmware without mutating or regenerating either.
+    func validate(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) throws
+    /// Return an owned handle BEFORE asynchronous boot, so quit/remove cannot orphan it.
+    func makeEnvironment(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths,
+                         mode: LinuxBootMode) throws -> any LinuxRunningEnvironment
 }
 
 public extension LinuxEnvironmentBackend {
     var unsupportedReason: String? { nil }
+    func validate(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) throws { try LinuxVMStorage.validate(config: config, paths: paths) }
 }
 
 // MARK: - Production fail-closed backend
@@ -67,7 +77,7 @@ public struct UnsupportedLinuxEnvironmentBackend: LinuxEnvironmentBackend {
     public func prepare(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws {
         throw LinuxBackendError.unsupportedPlatform(unsupportedReason ?? "This Mac cannot run the managed Linux VM.")
     }
-    public func start(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws -> any LinuxRunningEnvironment {
+    public func makeEnvironment(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths, mode: LinuxBootMode) throws -> any LinuxRunningEnvironment {
         throw LinuxBackendError.unsupportedPlatform(unsupportedReason ?? "This Mac cannot run the managed Linux VM.")
     }
 }
@@ -86,6 +96,7 @@ public final class FakeLinuxEnvironmentBackend: LinuxEnvironmentBackend, @unchec
     private let forcedStopFailsTimes: Int
     /// The most recent running environment this backend vended (test inspection only).
     public private(set) var lastRunning: FakeRunningEnvironment?
+    public private(set) var bootModes: [LinuxBootMode] = []
     public init(failure: Failure = .none, startDelay: TimeInterval = 0, gracefulStopFails: Bool = false,
                 forcedStopFails: Bool = false, forcedStopFailsTimes: Int = 0) {
         self.failure = failure; self.startDelay = startDelay; self.gracefulStopFails = gracefulStopFails
@@ -94,35 +105,52 @@ public final class FakeLinuxEnvironmentBackend: LinuxEnvironmentBackend, @unchec
 
     public func prepare(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws {
         if failure == .onPrepare { throw LinuxBackendError.backendFailure("Simulated prepare failure.") }
-        // Create only the small aux artifact; the big disk is finalized by the model after
-        // prepare+persist succeed (so a failure here never orphans a disk).
+        // Small offline identity/EFI fixtures; sparse disk creation is shared production code.
         try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
-        try Data("fake-efi-vars".utf8).write(to: paths.auxStorage)
+        try LinuxVMStorage.writeNew(Data("fake-efi-vars".utf8), at: paths.auxStorage)
+        try LinuxVMStorage.writeNew(Data("fake-machine-identifier".utf8), at: paths.machineIdentifier)
     }
 
-    public func start(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths) async throws -> any LinuxRunningEnvironment {
-        if startDelay > 0 { try await Task.sleep(nanoseconds: UInt64(startDelay * 1_000_000_000)) }
-        if failure == .onStart { throw LinuxBackendError.backendFailure("Simulated boot failure.") }
-        guard FileManager.default.fileExists(atPath: paths.diskImage.path) else { throw LinuxBackendError.notPrepared }
+    public func makeEnvironment(config: LinuxEnvironmentConfig, paths: LinuxEnvironmentPaths,
+                                mode: LinuxBootMode) throws -> any LinuxRunningEnvironment {
+        try validate(config: config, paths: paths)
+        bootModes.append(mode)
         let run = FakeRunningEnvironment(gracefulStopFails: gracefulStopFails,
-                                         forcedStopFails: forcedStopFails, forcedStopFailsTimes: forcedStopFailsTimes)
+                                         forcedStopFails: forcedStopFails, forcedStopFailsTimes: forcedStopFailsTimes,
+                                         startDelay: startDelay, startFails: failure == .onStart)
         lastRunning = run
         return run
     }
+
 }
 
+@MainActor
 public final class FakeRunningEnvironment: LinuxRunningEnvironment, @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
+    public let supportsTerminalSessions = true
+    public var didStop: (@MainActor @Sendable (String?) -> Void)?
+    private let startDelay: TimeInterval
+    private let startFails: Bool
+    public private(set) var stopAttempts: [Bool] = []
     private var forcedFailuresRemaining: Int
     private let gracefulStopFails: Bool
     private let forcedStopFails: Bool
     /// Every session this environment vended (test inspection of close-exactly-once).
     public private(set) var vended: [FakeTerminalSession] = []
-    public init(gracefulStopFails: Bool = false, forcedStopFails: Bool = false, forcedStopFailsTimes: Int = 0) {
+    public init(gracefulStopFails: Bool = false, forcedStopFails: Bool = false, forcedStopFailsTimes: Int = 0,
+                startDelay: TimeInterval = 0, startFails: Bool = false) {
+        self.startDelay = startDelay; self.startFails = startFails
         self.gracefulStopFails = gracefulStopFails; self.forcedStopFails = forcedStopFails
         self.forcedFailuresRemaining = forcedStopFailsTimes
     }
+
+    public func start() async throws {
+        if startDelay > 0 { try await Task.sleep(nanoseconds: UInt64(startDelay * 1_000_000_000)) }
+        guard !stopped, !startFails else { throw LinuxBackendError.backendFailure("Simulated boot failure or stopped boot.") }
+    }
+
+    public func simulateGuestStop(error: String? = nil) { stopped = true; didStop?(error) }
 
     public var sessionCount: Int { lock.withLock { vended.count } }
 
@@ -137,6 +165,7 @@ public final class FakeRunningEnvironment: LinuxRunningEnvironment, @unchecked S
     }
 
     public func stop(graceful: Bool, timeout: TimeInterval) async throws {
+        stopAttempts.append(graceful)
         if graceful {
             if gracefulStopFails { throw LinuxBackendError.backendFailure("Simulated graceful-stop failure.") }
         } else {

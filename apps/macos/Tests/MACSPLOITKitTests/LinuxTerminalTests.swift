@@ -16,12 +16,12 @@ import Testing
     }
     private func fixtureManifest() -> LinuxImageManifest {
         LinuxImageManifest(identifier: "kali-arm64-fixture", displayName: "Kali Linux ARM64 (fixture)",
-                           diskImageURL: "https://example.test/kali-arm64.img",
-                           sha256: String(repeating: "a", count: 64), downloadByteCount: 4 * 1024 * 1024)
+                           installerURL: "https://example.test/kali-arm64.img",
+                           sha256: String(repeating: "a", count: 64), downloadByteCount: 18)
     }
-    private func model(_ appSupport: URL, backend: any LinuxEnvironmentBackend = FakeLinuxEnvironmentBackend(),
+    private func model(_ appSupport: URL, backend: (any LinuxEnvironmentBackend)? = nil,
                        downloader: any LinuxImageDownloader = FakeLinuxImageDownloader()) -> LinuxEnvironmentModel {
-        LinuxEnvironmentModel(paths: paths(appSupport), backend: backend, downloader: downloader)
+        LinuxEnvironmentModel(paths: paths(appSupport), backend: backend ?? FakeLinuxEnvironmentBackend(), downloader: downloader)
     }
 
     /// Reports success but stages no disk, so the model's final atomic move fails.
@@ -33,6 +33,7 @@ import Testing
     }
     private func setUp(_ m: LinuxEnvironmentModel) async {
         await m.startSetUp(manifest: fixtureManifest(), resources: m.defaultResources)?.value
+        if m.state == .installReady { _ = await m.confirmInstallationComplete() }
     }
 
     // MARK: Manifest validation (security envelope)
@@ -40,13 +41,13 @@ import Testing
     @Test func manifestValidationEnforcesTheSecurityEnvelope() throws {
         try fixtureManifest().validate()
 
-        var insecure = fixtureManifest(); insecure.diskImageURL = "http://example.test/x.img"
+        var insecure = fixtureManifest(); insecure.installerURL = "http://example.test/x.img"
         #expect(throws: LinuxImageError.self) { try insecure.validate() }
 
         // Assemble a credential-bearing URL from fragments so no embedded-credential URL
         // literal ever exists in source (which repository policy correctly rejects).
         var credential = fixtureManifest()
-        credential.diskImageURL = ["https://", "u", ":", "p", "@", "example.test/x.img"].joined()
+        credential.installerURL = ["https://", "u", ":", "p", "@", "example.test/x.img"].joined()
         #expect(throws: LinuxImageError.self) { try credential.validate() }
 
         var badDigest = fixtureManifest(); badDigest.sha256 = "zz"
@@ -63,7 +64,7 @@ import Testing
 
         let data = try JSONEncoder().encode(fixtureManifest())
         #expect(try JSONDecoder().decode(LinuxImageManifest.self, from: data) == fixtureManifest())
-        #expect(fixtureManifest().format == .efiRawDisk) // the only supported boot format
+        #expect(fixtureManifest().format == .installerISO) // the downloaded artifact is installer media
     }
 
     @Test func resourceDefaultsAndClampingStayWithinSaneBounds() {
@@ -91,7 +92,7 @@ import Testing
         #expect(m.state == .unsupported)
         // The backend itself refuses every operation.
         await #expect(throws: LinuxBackendError.self) { try await backend.prepare(config: LinuxEnvironmentConfig(image: fixtureManifest(), resources: .defaults()), paths: paths(appSupport)) }
-        await #expect(throws: LinuxBackendError.self) { _ = try await backend.start(config: LinuxEnvironmentConfig(image: fixtureManifest(), resources: .defaults()), paths: paths(appSupport)) }
+        await #expect(throws: LinuxBackendError.self) { _ = try backend.makeEnvironment(config: LinuxEnvironmentConfig(image: fixtureManifest(), resources: .defaults()), paths: paths(appSupport), mode: .installed) }
     }
 
     // MARK: Setup lifecycle
@@ -143,33 +144,22 @@ import Testing
         #expect(!relaunched.hasRunningHandle)
     }
 
-    @Test func resolveDetectsEveryIncompleteOrOrphanedEnvironmentAsFailed() throws {
-        func fresh() -> LinuxEnvironmentPaths {
-            let p = paths(tempRoot()); try? FileManager.default.createDirectory(at: p.root, withIntermediateDirectories: true); return p
+    @Test func resolveDetectsEveryIncompleteOrOrphanedEnvironmentAsFailed() async throws {
+        let appSupport = tempRoot(); defer { try? FileManager.default.removeItem(at: appSupport) }
+        let p = paths(appSupport)
+        let m = model(appSupport)
+        await setUp(m)
+        #expect(LinuxEnvironmentModel.resolve(paths: p).0 == .stopped)
+        try Data("invalid".utf8).write(to: p.configFile)
+        #expect(LinuxEnvironmentModel.resolve(paths: p).0 == .failed)
+        await m.remove()
+        for artifact in [p.diskImage, p.auxStorage, p.installerISO, p.machineIdentifier, p.stagedInstaller] {
+            try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("orphan".utf8).write(to: artifact)
+            #expect(LinuxEnvironmentModel.resolve(paths: p).0 == .failed)
+            try FileManager.default.removeItem(at: p.root)
         }
-        let validConfig = try JSONEncoder().encode(LinuxEnvironmentConfig(image: fixtureManifest(), resources: .defaults()))
-
-        // corrupt config → FAILED
-        let a = fresh(); try Data("not json".utf8).write(to: a.configFile)
-        #expect(LinuxEnvironmentModel.resolve(paths: a).0 == .failed)
-        // valid config, missing disk → FAILED
-        let b = fresh(); try validConfig.write(to: b.configFile)
-        #expect(LinuxEnvironmentModel.resolve(paths: b).0 == .failed)
-        // disk present, no config → FAILED (orphan)
-        let c = fresh(); try Data("disk".utf8).write(to: c.diskImage)
-        #expect(LinuxEnvironmentModel.resolve(paths: c).0 == .failed)
-        // aux present, no config → FAILED (orphan)
-        let d = fresh(); try Data("aux".utf8).write(to: d.auxStorage)
-        #expect(LinuxEnvironmentModel.resolve(paths: d).0 == .failed)
-        // staging present, no config → FAILED (orphan)
-        let e = fresh(); try FileManager.default.createDirectory(at: e.staging, withIntermediateDirectories: true)
-        #expect(LinuxEnvironmentModel.resolve(paths: e).0 == .failed)
-        // valid config + disk → STOPPED
-        let f = fresh(); try validConfig.write(to: f.configFile); try Data("disk".utf8).write(to: f.diskImage)
-        #expect(LinuxEnvironmentModel.resolve(paths: f).0 == .stopped)
-        // completely empty terminal dir → NOT_CONFIGURED
-        let g = fresh()
-        #expect(LinuxEnvironmentModel.resolve(paths: g).0 == .notConfigured)
+        #expect(LinuxEnvironmentModel.resolve(paths: p).0 == .notConfigured)
     }
 
     @Test func setupCannotBeginFromFailed() async throws {

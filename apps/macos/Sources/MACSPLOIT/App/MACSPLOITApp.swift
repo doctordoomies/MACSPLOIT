@@ -4,9 +4,28 @@ import MACSPLOITKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var transport: PipeTransport?
+    static var stopLinuxForTermination: (@MainActor () async -> Bool)?
+    private var terminationPending = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPending else { return .terminateLater }
+        guard let stop = Self.stopLinuxForTermination else { return .terminateNow }
+        terminationPending = true
+        Task { @MainActor in
+            let stopped = await stop()
+            terminationPending = false
+            if !stopped {
+                let alert = NSAlert()
+                alert.messageText = "MACSPLOIT could not stop the Linux VM."
+                alert.informativeText = "Quit was cancelled to keep the guest managed. Use Force Stop in Linux Terminal, then quit again."
+                alert.runModal()
+            }
+            sender.reply(toApplicationShouldTerminate: stopped)
+        }
+        return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) { Self.transport?.shutdown() }
 }
@@ -45,8 +64,12 @@ struct MACSPLOITApp: App {
         // data, so removing it never touches workspaces/providers. It never auto-starts.
         let linuxPaths = LinuxEnvironmentPaths.standard(applicationSupport: storage)
         let backend: any LinuxEnvironmentBackend = MACSPLOITApp.makeLinuxBackend()
-        _linux = StateObject(wrappedValue: LinuxEnvironmentModel(
-            paths: linuxPaths, backend: backend, downloader: URLSessionLinuxImageDownloader()))
+        let linuxModel = LinuxEnvironmentModel(paths: linuxPaths, backend: backend, downloader: URLSessionLinuxImageDownloader())
+        _linux = StateObject(wrappedValue: linuxModel)
+        AppDelegate.stopLinuxForTermination = { [weak linuxModel] in
+            guard let linuxModel else { return true }
+            return await linuxModel.shutdownForApplicationTermination()
+        }
     }
 
     private static func makeLinuxBackend() -> any LinuxEnvironmentBackend {

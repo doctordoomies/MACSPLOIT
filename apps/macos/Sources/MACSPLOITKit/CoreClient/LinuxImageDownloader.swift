@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-// Verified acquisition of the guest image, kept OFF the core provider protocol (a separate
+// Verified acquisition of the installer ISO, kept OFF the core provider protocol (a separate
 // trust boundary) but holding to the same download discipline as the core installer:
 // HTTPS-only on the initial request AND every redirect, no credential-bearing URLs, a
 // bounded redirect count, a bounded streamed size, a validated HTTP status, a SHA-256
@@ -14,6 +14,7 @@ public enum LinuxImageDownloadError: Error, Equatable {
     case insecureRedirect
     case tooManyRedirects
     case oversized
+    case sizeMismatch
     case checksumMismatch
     case cancelled
     case transport(String)
@@ -22,8 +23,7 @@ public enum LinuxImageDownloadError: Error, Equatable {
 
 public protocol LinuxImageDownloader: Sendable {
     /// Download and verify the manifest's single pinned artifact INTO STAGING
-    /// (`paths.stagedDisk`). It does NOT place the disk at its final path — the model owns
-    /// finalization (atomic move into `root.img`) after config is persisted. Reports 0...1
+    /// (`paths.stagedInstaller`). The model finalizes `installer.iso`; it never becomes `root.img`. Reports 0...1
     /// progress, throws on any status/redirect/size/digest/transport failure, and honours
     /// cancellation.
     func fetch(_ manifest: LinuxImageManifest, into paths: LinuxEnvironmentPaths,
@@ -57,6 +57,15 @@ public enum LinuxImageFetch {
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Shared production verification boundary, exercised with small offline payloads.
+    public static func verifyInstaller(at file: URL, manifest: LinuxImageManifest) throws {
+        try manifest.validate()
+        let size = try LinuxVMStorage.requireRegularFile(file, maximumBytes: manifest.downloadByteCount)
+        guard size == manifest.downloadByteCount else { throw LinuxImageDownloadError.sizeMismatch }
+        let digest = try streamingSHA256(ofFileAt: file)
+        guard digest == manifest.sha256.lowercased() else { throw LinuxImageDownloadError.checksumMismatch }
     }
 
     /// Replace `destination` with `source` atomically, WITHOUT deleting an existing good
@@ -109,18 +118,16 @@ public struct URLSessionLinuxImageDownloader: LinuxImageDownloader {
         try? fm.removeItem(at: paths.staging)
         try fm.createDirectory(at: paths.staging, withIntermediateDirectories: true)
 
-        guard let url = URL(string: manifest.diskImageURL) else { throw LinuxImageDownloadError.transport("Invalid URL.") }
+        guard let url = URL(string: manifest.installerURL) else { throw LinuxImageDownloadError.transport("Invalid URL.") }
         progress(0)
         let counter = LinuxImageRedirectCounter(allowedHosts: manifest.allowedRedirectHosts)
-        // Download into staging and verify the pinned digest. The model finalizes (atomic
-        // move into the live disk) only after prepare+persist succeed, so a failure here
-        // never destroys an existing good disk.
-        try await LinuxImageDownloadTask.run(url: url, to: paths.stagedDisk, maxBytes: manifest.downloadByteCount,
+        // Verify staged installer media before preparing any VM artifacts. Finalization
+        // and fresh-setup rollback belong to the model; root.img is never downloaded.
+        try await LinuxImageDownloadTask.run(url: url, to: paths.stagedInstaller, maxBytes: manifest.downloadByteCount,
                                              counter: counter, allowedHosts: manifest.allowedRedirectHosts,
                                              progress: progress)
         try Task.checkCancellation()
-        let digest = try LinuxImageFetch.streamingSHA256(ofFileAt: paths.stagedDisk)
-        guard digest == manifest.sha256.lowercased() else { throw LinuxImageDownloadError.checksumMismatch }
+        try LinuxImageFetch.verifyInstaller(at: paths.stagedInstaller, manifest: manifest)
         progress(1)
     }
 }
@@ -132,7 +139,10 @@ private final class LinuxImageDownloadTask: NSObject, URLSessionDownloadDelegate
                     allowedHosts: Set<String>, progress: @escaping @Sendable (Double) -> Void) async throws {
         let delegate = LinuxImageDownloadTask(destination: destination, maxBytes: maxBytes,
                                               counter: counter, allowedHosts: allowedHosts, progress: progress)
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 120
+        configuration.timeoutIntervalForResource = 4 * 60 * 60
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let task = session.downloadTask(with: url)
         try await withTaskCancellationHandler {
@@ -198,10 +208,11 @@ private final class LinuxImageDownloadTask: NSObject, URLSessionDownloadDelegate
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
+        guard lock.withLock({ !finished }) else { return }
         guard let http = downloadTask.response as? HTTPURLResponse else { fail(.transport("No HTTP response.")); return }
         guard http.statusCode == 200 else { fail(.badStatus(http.statusCode)); return }
-        if let final = downloadTask.currentRequest?.url ?? downloadTask.originalRequest?.url,
-           URLComponents(url: final, resolvingAgainstBaseURL: false)?.scheme?.lowercased() != "https" {
+        if !LinuxImageFetch.allowRedirect(to: downloadTask.currentRequest?.url ?? downloadTask.originalRequest?.url,
+                                         allowedHosts: allowedHosts) {
             fail(.insecureRedirect); return
         }
         do {
@@ -220,9 +231,9 @@ private final class LinuxImageDownloadTask: NSObject, URLSessionDownloadDelegate
     }
 }
 
-/// Offline downloader for tests/CI: no network. Writes a placeholder root disk on success
-/// (after an optional cancellable delay), or throws a chosen failure. The destination's
-/// staging is removed on failure; a finalized good disk is never destroyed by a failure.
+/// Offline downloader for tests/CI: no network. Writes a placeholder installer ISO on success
+/// (after an optional cancellable delay), or throws a chosen failure. The model owns
+/// fresh-setup rollback; existing installed environments cannot enter setup.
 public struct FakeLinuxImageDownloader: LinuxImageDownloader {
     public enum Outcome: Sendable, Equatable { case success, checksumMismatch, transportFailure, oversized }
     private let outcome: Outcome
@@ -242,10 +253,9 @@ public struct FakeLinuxImageDownloader: LinuxImageDownloader {
         case .transportFailure: throw LinuxImageDownloadError.transport("Simulated transport failure.")
         case .oversized: throw LinuxImageDownloadError.oversized
         case .success:
-            // Stage the verified disk; the model finalizes it (atomic move) only after
-            // prepare + persist succeed, so a later failure never orphans a new disk.
+            // Model-owned preparation finalizes this as installer.iso, not root.img.
             try FileManager.default.createDirectory(at: paths.staging, withIntermediateDirectories: true)
-            try Data("fake-root-disk".utf8).write(to: paths.stagedDisk)
+            try Data("fake-installer-iso".utf8).write(to: paths.stagedInstaller)
             progress(1)
         }
     }
