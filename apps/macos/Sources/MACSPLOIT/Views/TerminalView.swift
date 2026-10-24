@@ -68,7 +68,11 @@ struct TerminalView: View {
                 Button("Start Kali") { Task { await model.start() } }.buttonStyle(.borderedProminent)
                 removeButton
             }
-        case .starting: busy("Starting the guest…")
+        case .starting:
+            busy(model.bootStage.isEmpty ? "Starting the guest…" : model.bootStage)
+            if model.canCancelBootVerification {
+                Button("Cancel Verification") { Task { await model.cancelBootVerification() } }
+            }
         case .stopping: busy("Stopping the guest…")
         case .running:
             summary("Kali running")

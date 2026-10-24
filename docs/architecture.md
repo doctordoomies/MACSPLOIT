@@ -164,7 +164,14 @@ A fake backend/download transport keeps CI offline. The real VZ delegate and sta
 callbacks are on the main queue; RUNNING is published only after successful start.
 
 The pinned official Kali 2026.3 ARM64 **installer ISO** is downloaded/verified into
-`installer.iso`. `root.img` is created locally, exclusively, as a bounded sparse RAW disk.
+`installer.iso`. Immediately before installation-mode VM construction/start, the persisted
+ISO is verified again against the persisted manifest (regular/no-symlink file, exact size,
+streaming SHA-256) by a cancellable detached worker off MainActor. Failure preserves files
+and installed status, offers FAILED/Recreate, and never creates a VM. Cancellation/quit/removal
+drain verification and invalidate boot intent; late completion cannot start a guest. Normal
+installed boots neither hash nor require the ISO. This is artifact integrity checking, not
+protection against hostile same-user replacement between verification and use.
+`root.img` is created locally, exclusively, as a bounded sparse RAW disk.
 A generic machine identifier and EFI variable store are created once, validated and reused.
 Install mode attaches read-only USB installer media plus writable VirtIO root; normal mode
 omits the ISO. Both have NAT, entropy, balloon, graphics/keyboard/pointer and a reserved

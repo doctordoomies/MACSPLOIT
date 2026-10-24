@@ -8,7 +8,7 @@ import Testing
     private func support() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("macsploit-installer-\(UUID())") }
     private func manifest() -> LinuxImageManifest {
         LinuxImageManifest(identifier: "offline-installer", displayName: "Offline installer fixture", installerURL: "https://example.test/installer.iso",
-                           sha256: String(repeating: "a", count: 64), downloadByteCount: 18)
+                           sha256: SHA256.hash(data: Data("fake-installer-iso".utf8)).map { String(format: "%02x", $0) }.joined(), downloadByteCount: 18)
     }
     private func model(_ root: URL, backend: (any LinuxEnvironmentBackend)? = nil,
                        downloader: any LinuxImageDownloader = FakeLinuxImageDownloader()) -> LinuxEnvironmentModel {

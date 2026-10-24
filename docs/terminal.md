@@ -73,6 +73,22 @@ media and atomically writes config, then removes staging. Failure/cancellation r
 fresh attempt's artifacts; a crash leaves a visible incomplete environment requiring
 Recreate. Setup never runs over an installed or incomplete environment.
 
+Before each **Install Kali** boot, the model rechecks the persisted `installer.iso`
+against the environment's persisted manifest through `LinuxImageFetch.verifyInstaller`:
+regular file/no symlink, exact byte count and streaming SHA-256. Thus verification happens
+both **after acquisition, before preparation/finalization**, and **again immediately before
+installation-mode VM construction/start**. A detached worker performs the 1 MiB streaming
+hash off MainActor while the UI shows “Verifying cached Kali installer…”. Cancel Verification,
+removal and app termination cancel and drain that worker; invalidated/cancelled boot intents
+cannot create a VM even if verification completes late.
+
+A cache verification failure enters FAILED with **Recreate** as recovery. It never creates
+or starts a VM, records installed status, redownloads media or deletes existing files.
+Installed normal boots intentionally neither rehash nor require `installer.iso`.
+This checks the artifact MACSPLOIT intends to execute; it does not protect against a hostile
+same-user process replacing files between verification and use, or promise a TOCTOU-free
+filesystem boundary.
+
 The ISO remains cached until environment removal: allow about 3.77 GiB **plus actual root
 disk usage**, which can grow to the configured logical limit. Removing the environment
 removes the cache too. Installed boots do not require the cached ISO.
@@ -139,7 +155,7 @@ removed/superseded guest.
 Stop requests a graceful shutdown (15 seconds), then forced stop (5 seconds). Handle and
 session resources are released only after a confirmed stopped/error VM state. A failed
 stop retains the handle and offers Force Stop. A narrow AppDelegate termination hook asks
-the model to cancel preparation and stop its guest before replying to macOS's deferred
+the model to cancel/drain preparation or preboot verification and stop its guest before replying to macOS's deferred
 quit. If shutdown cannot be confirmed, **quit is cancelled**, the handle remains managed,
 and the owner sees an error; the next launch never auto-starts a guest.
 
@@ -149,7 +165,9 @@ Default CI uses tiny fixtures and fake backend/downloader only. It never downloa
 or boots a VM. Tests cover manifest/integrity/redirects, sparse allocation/no overwrite,
 installer/root separation, identity/EFI damage, install/normal device intent, installation
 confirmation/persistence, delayed/failed starts, guest stops, cancellation, quit behavior,
-stale operations, and workspace/provider isolation. An opt-in local configuration test
+stale operations, same-size cached ISO tampering after relaunch, cache symlink substitution,
+valid cached media, cache-independent installed boots, and late verification completion after
+UI/caller cancellation, quit or removal, plus workspace/provider isolation. An opt-in local configuration test
 constructs actual VZ configurations with synthetic media **without booting a VM**:
 `./scripts/test-linux-vz-configuration.sh`. It compiles the exact production model/storage/
 backend sources into a temporary build executable, signs that executable with the existing

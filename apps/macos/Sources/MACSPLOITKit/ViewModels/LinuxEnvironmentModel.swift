@@ -8,6 +8,7 @@ public final class LinuxEnvironmentModel: ObservableObject {
     @Published public private(set) var state: LinuxEnvironmentState
     @Published public private(set) var config: LinuxEnvironmentConfig?
     @Published public private(set) var errorMessage: String?
+    @Published public private(set) var bootStage = ""
     @Published public private(set) var setupStage = ""
     @Published public private(set) var setupProgress: Double = 0
     @Published public private(set) var sessionIDs: [UUID] = []
@@ -16,6 +17,9 @@ public final class LinuxEnvironmentModel: ObservableObject {
     public let paths: LinuxEnvironmentPaths
     private let backend: any LinuxEnvironmentBackend
     private let downloader: any LinuxImageDownloader
+    private let installerVerifier: any LinuxInstallerVerifying
+    private var installerVerificationTask: Task<Void, Error>?
+    private var requiresInstallerRecreation = false
     private var running: (any LinuxRunningEnvironment)?
     private var sessions: [any LinuxTerminalSession] = []
     private var setupTask: Task<Void, Never>?
@@ -26,8 +30,10 @@ public final class LinuxEnvironmentModel: ObservableObject {
     public var runningEnvironment: (any LinuxRunningEnvironment)? { running }
 
     public init(paths: LinuxEnvironmentPaths, backend: any LinuxEnvironmentBackend,
-                downloader: any LinuxImageDownloader) {
+                downloader: any LinuxImageDownloader,
+                installerVerifier: any LinuxInstallerVerifying = StreamingLinuxInstallerVerifier()) {
         self.paths = paths; self.backend = backend; self.downloader = downloader
+        self.installerVerifier = installerVerifier
         if let reason = backend.unsupportedReason {
             state = .unsupported; errorMessage = reason
         } else {
@@ -60,8 +66,9 @@ public final class LinuxEnvironmentModel: ObservableObject {
 
     public var defaultResources: LinuxResources { .defaults() }
     public var isSupported: Bool { state != .unsupported }
+    public var canCancelBootVerification: Bool { installerVerificationTask != nil && state == .starting }
     public var canRetry: Bool {
-        guard running == nil else { return false }
+        guard !requiresInstallerRecreation, running == nil else { return false }
         let (resolved, loaded) = Self.resolve(paths: paths)
         guard resolved == .stopped || resolved == .installReady, let loaded else { return false }
         return (try? backend.validate(config: loaded, paths: paths)) != nil
@@ -137,6 +144,9 @@ public final class LinuxEnvironmentModel: ObservableObject {
         guard !isShuttingDown, running == nil, let config else { return }
         generation += 1; let gen = generation
         state = .starting; errorMessage = nil
+        if mode == .installation, !(await verifyCachedInstaller(config: config, gen: gen)) { return }
+        guard gen == generation, !isShuttingDown else { return }
+        if Task.isCancelled { state = restingState; return }
         do {
             try backend.validate(config: config, paths: paths)
             let run = try backend.makeEnvironment(config: config, paths: paths, mode: mode)
@@ -163,6 +173,50 @@ public final class LinuxEnvironmentModel: ObservableObject {
         }
     }
 
+    /// Recheck the persisted artifact immediately before installation VM construction.
+    /// Normal installed boots never enter this boundary or depend on cached media.
+    private func verifyCachedInstaller(config: LinuxEnvironmentConfig, gen: Int) async -> Bool {
+        let verifier = installerVerifier
+        let installerISO = paths.installerISO
+        let task = Task { try await verifier.verify(at: installerISO, manifest: config.image) }
+        installerVerificationTask = task
+        bootStage = "Verifying cached Kali installer…"
+        defer {
+            if gen == generation { installerVerificationTask = nil; bootStage = "" }
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: { task.cancel() }
+            guard gen == generation, !isShuttingDown else { return false }
+            try Task.checkCancellation()
+            if task.isCancelled { throw CancellationError() }
+            return true
+        } catch {
+            guard gen == generation else { return false }
+            if Task.isCancelled || task.isCancelled || error is CancellationError || (error as? LinuxImageDownloadError) == .cancelled {
+                state = restingState; errorMessage = "Installer verification was cancelled."
+            } else {
+                requiresInstallerRecreation = true
+                state = .failed
+                errorMessage = "Cached Kali installer integrity verification failed. Recreate the environment before installing. Existing files were preserved. " + Self.describe(error)
+            }
+            return false
+        }
+    }
+
+    /// Invalidate boot intent before cancelling, then drain verification before removal/quit.
+    /// Even a late successful verifier cannot construct or start a VM afterward.
+    public func cancelBootVerification() async {
+        guard let task = installerVerificationTask else { return }
+        generation += 1; let gen = generation
+        task.cancel()
+        _ = await task.result
+        guard gen == generation else { return }
+        installerVerificationTask = nil; bootStage = ""
+        state = restingState; errorMessage = "Installer verification was cancelled."
+    }
+
     /// Explicit owner attestation after Kali reports success; neither file existence nor
     /// installer shutdown can promote an incomplete environment to installed.
     @discardableResult
@@ -181,7 +235,7 @@ public final class LinuxEnvironmentModel: ObservableObject {
     }
 
     public func recover() {
-        guard state == .failed, running == nil else { return }
+        guard !requiresInstallerRecreation, state == .failed, running == nil else { return }
         let (resolved, loaded) = Self.resolve(paths: paths)
         do {
             if let loaded { try backend.validate(config: loaded, paths: paths) }
@@ -193,6 +247,7 @@ public final class LinuxEnvironmentModel: ObservableObject {
 
     @discardableResult
     public func stop() async -> Bool {
+        if installerVerificationTask != nil { await cancelBootVerification() }
         guard let run = running else { return state == .stopped || state == .installReady }
         guard state != .stopping else { return false }
         generation += 1; let gen = generation
@@ -236,6 +291,7 @@ public final class LinuxEnvironmentModel: ObservableObject {
         guard !isShuttingDown else { return false }
         isShuttingDown = true
         if let setupTask { setupTask.cancel(); await setupTask.value }
+        await cancelBootVerification()
         var stopped = running == nil
         if !stopped { stopped = await stop() }
         if !stopped { isShuttingDown = false }
@@ -260,11 +316,12 @@ public final class LinuxEnvironmentModel: ObservableObject {
     public func remove() async {
         guard !isShuttingDown, state != .stopping else { return }
         if let setupTask { setupTask.cancel(); await setupTask.value }
+        await cancelBootVerification()
         if running != nil, !(await stop()) { errorMessage = "Stop the VM before removing the environment."; return }
         generation += 1
         do {
             if FileManager.default.fileExists(atPath: paths.root.path) { try FileManager.default.removeItem(at: paths.root) }
-            releaseStoppedHandle(); config = nil; errorMessage = nil; setupStage = ""; setupProgress = 0; state = .notConfigured
+            releaseStoppedHandle(); requiresInstallerRecreation = false; config = nil; errorMessage = nil; setupStage = ""; setupProgress = 0; state = .notConfigured
         } catch { state = .failed; errorMessage = Self.describe(error) }
     }
 
