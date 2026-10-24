@@ -1,185 +1,199 @@
-# Integrated Linux terminal (managed VM foundation)
+# Integrated Linux terminal — Kali installer and boot
 
-Status: **FOUNDATION — Issue #90 (parent #27). Owner acceptance pending. Does not boot a
-live guest yet** (see *Remaining blockers*). This slice ships the durable architecture,
-lifecycle, verified-download pipeline, persistent storage, the Virtualization.framework
-adapter, entitlements, and the full Terminal UI — all offline-tested — so the live boot is
-an additive follow-up, not a redesign.
+Status: **EXPERIMENTAL — Issue #90, second implementation slice; owner install/boot
+acceptance pending.** PR #92's foundation was merged and owner-accepted. This slice adds
+real graphical Kali installation and installed-guest boot. **Issue #90 is not complete:**
+interactive terminal transport, a VT emulator and guest shell multiplexing remain pending.
 
-## What this is (and is not)
+MACSPLOIT's typed, scope-aware providers remain the preferred assessment path. The optional
+managed guest is a separate trust boundary: user commands are not core-authorized provider
+actions, are not scope-validated and never auto-import into Assets/Evidence/Findings. There
+is no AI shell access, hidden scan, host filesystem share, clipboard/credential forwarding,
+guest agent, SSH management, tool auto-installation, or wireless/USB passthrough.
 
-MACSPLOIT's structured, scope-aware provider workflows remain the preferred path. The Linux
-terminal is a deliberate **power-user escape hatch**: an optional, explicitly started
-managed Linux (Kali ARM64) environment whose shell the user drives directly, for tools and
-command combinations not yet wrapped as native providers.
+## Reviewed official installer
 
-It is **not** a macOS zsh shell dressed up as Linux, a fake terminal text box, a plugin
-system, an AI agent, a workflow editor, or a Metasploit/exploit-automation feature. It does
-**not** provide Wi‑Fi monitor mode, packet injection, USB/Bluetooth/SDR passthrough, or
-bare‑metal hardware parity — those are separate future hardware milestones.
+The previous claim that no official ARM64 installer artifact exists was stale. Kali
+publishes the **full Installer**, not NetInstaller, used here:
 
-## Trust boundary (important)
+- Release: **Kali Linux 2026.3**; architecture: **arm64**.
+- Artifact: `kali-linux-2026.3-installer-arm64.iso` (installer media, not a root disk).
+- Source: <https://cdimage.kali.org/kali-2026.3/kali-linux-2026.3-installer-arm64.iso>.
+- Exact size: **4,051,513,344 bytes** (about 3.77 GiB).
+- SHA-256: `c4a7f9bf3a0ff07c8263fe9e9b0edba0cc3d9b408f1d8f06c066df0afce23072`.
+- Provenance: official versioned [SHA256SUMS](https://cdimage.kali.org/kali-2026.3/SHA256SUMS)
+  and [detached signature](https://cdimage.kali.org/kali-2026.3/SHA256SUMS.gpg).
+- Review verified the detached RSA/SHA-512 signature using Kali's published archive key
+  fingerprint **827C8569F2518CC677FECA1AED65462EC8D5E4C5** from
+  [Kali's official verification instructions](https://www.kali.org/docs/introduction/download-official-kali-linux-images/)
+  and <https://archive.kali.org/archive-key.asc>. Review date: 2026-10-22 (America/Detroit).
 
-Normal MACSPLOIT execution is: typed request → core scope validation → reviewed provider →
-bounded argv → Evidence → normalized state. The Linux terminal is different: **you** type
-arbitrary guest shell commands. Therefore:
+`LinuxImageManifest` schema 2 identifies the release, architecture, `INSTALLER_ISO` kind,
+exact source, digest/byte count, provenance URL and reviewed redirect hosts. No mutable
+`current` URL, custom root image or third-party VM image is used. Runtime verifies the
+pinned SHA-256; **there is no runtime GPG dependency**. The full installer carries local
+installation packages, reducing dependency on live package mirrors during acceptance.
 
-- commands run in the terminal are **controlled by you** and are **not** restricted by
-  MACSPLOIT's workflow scope controls;
-- they are **not** recorded as core-authorized provider actions;
-- their output is **never** auto-imported into Assets, Evidence, or Findings;
-- there is no hidden command execution, and AI cannot run terminal commands.
+The official cdimage redirector may select an official mirror. The committed allow-list
+contains only explicitly reviewed destinations advertised by that redirector (including
+`kali.download`); no wildcard or arbitrary mirror is accepted. A newly selected unreviewed
+mirror fails closed and requires a manifest review, not an insecure fallback.
 
-The UI states this boundary on the Terminal screen.
+## Explicit setup and storage
 
-## Virtualization architecture
+Nothing downloads or boots on app launch or Terminal navigation. **Set Up Terminal** shows
+the exact release, bytes, source, provenance, pinned SHA-256, disk allocation and location.
+Only **Download & Prepare Installer** begins acquisition. The downloader enforces:
 
-- **Framework:** Apple **Virtualization.framework** (`VZVirtualMachineConfiguration`),
-  chosen because it is the macOS-native, Apple-supported path for a hardware-virtualized
-  ARM64 Linux guest and needs no third-party hypervisor.
-- **Minimum platform:** macOS **13+** on **Apple Silicon** (the app's deployment target is
-  macOS 13; the EFI boot loader used here is macOS 13+). On Intel/unsupported hosts the
-  feature is inert.
-- **Guest:** ARM64 Linux, user-facing identity **Kali Linux ARM64**. The only supported
-  boot format is `EFI_RAW_DISK`: `VZEFIBootLoader` + a single prepared root disk that
-  carries its own boot files. A direct-kernel path is intentionally **not** supported — it
-  would require separately downloaded kernel/initrd artifacts, each needing its own pinned
-  SHA-256, which is out of scope for this foundation. The real backend builds exactly this
-  EFI configuration, so the manifest, model, docs, and backend all agree.
-- **Devices:** virtio block (root disk), **NAT networking** (`VZNATNetworkDeviceAttachment`
-  — the smallest predictable mode; normal outbound/in-scope TCP/IP only, documented as not
-  bare-metal parity), virtio entropy, a memory balloon, and a **virtio console** reserved
-  for the interactive terminal transport.
-- **Separation:** VM management lives in `LinuxEnvironmentModel` → a
-  `LinuxEnvironmentBackend` protocol → the `VZLinuxEnvironmentBackend` adapter. UI,
-  lifecycle, image/disk management, and session handling are separate.
-- **Fail-closed on unsupported hosts:** on a Mac that cannot virtualize (Intel, or
-  macOS < 13) production installs an `UnsupportedLinuxEnvironmentBackend` that reports a
-  clear reason and refuses every operation — the app enters an `UNSUPPORTED` state and
-  never pretends to run a VM. The `FakeLinuxEnvironmentBackend` exists **only** for tests
-  and explicit test injection; it is never used in production.
+- HTTPS on the initial URL and all redirects, no embedded credentials;
+- reviewed redirect hosts, delegate-owned redirect budget (five maximum);
+- HTTP 200, advertised and streamed byte caps, exact final byte count;
+- streaming SHA-256 in 1 MiB chunks and cancellation through download and hashing;
+- 120-second request timeout and four-hour total resource deadline;
+- ephemeral URLSession, staged files, no shell downloader, sudo or host package installer.
 
-## Lifecycle
+The isolated layout is:
 
-Typed states: `UNSUPPORTED`, `NOT_CONFIGURED → SETTING_UP → STOPPED → STARTING → RUNNING →
-STOPPING`, plus `FAILED`. Rules enforced by the model:
-
-- the app launch and merely opening Terminal **never** start the VM;
-- only a configured, `STOPPED` environment can start, and only on explicit user action;
-- **stop** moves to `STOPPING`, attempts a graceful shutdown within a bounded timeout, then
-  a forced stop, and transitions to `STOPPED` (releasing the handle) **only once the backend
-  confirms the stop**. If both fail it goes to `FAILED` while **retaining** the running
-  handle, so a VM is never falsely reported gone; the UI then offers **Force Stop**, which
-  calls a dedicated `forceStop()` (backend forced-stop only) that reaches `STOPPED` on
-  confirmed success or stays `FAILED` with the handle on failure;
-- a relaunch resolves state purely from disk and never auto-starts (transient states are
-  never persisted); a valid config + its disk → `STOPPED`, while any setup-owned artifact
-  present **without** a complete valid environment (a crash/power-loss mid-setup, a corrupt
-  or missing config, a missing disk, or leftover staging/aux) → `FAILED` so the UI can offer
-  **Recreate** — a possibly multi-GB orphan is never silently reported `NOT_CONFIGURED` nor
-  auto-deleted at launch; only a completely empty terminal directory is `NOT_CONFIGURED`;
-- a failed environment is handled by **Retry** when a valid config + disk exist, otherwise
-  by explicit **Recreate** (remove → `NOT_CONFIGURED` → Set Up again); setup is never run
-  over existing artifacts;
-- **setup is a cancellable, owned task:** while `SETTING_UP` the user can Cancel Setup; the
-  cancellation propagates to the downloader/preparation, staging is wiped, any finalized
-  good artifact is left intact, and the state returns to `NOT_CONFIGURED`;
-- a superseded or cancelled async operation can never corrupt state (a monotonic
-  generation gates every post-await mutation).
-
-## Setup and verified download
-
-Setup is explicit: opening Terminal downloads nothing. **Set Up Terminal** shows the plan
-(image, source, SHA‑256 verification, storage location, resources); only on confirmation
-does MACSPLOIT download. The Swift `LinuxImageDownloader` mirrors the core installer's
-discipline and actually enforces it: **HTTPS-only on the initial request and every
-redirect**, **credential-bearing URLs rejected**, redirects confined to a **reviewed host
-allow-list** (the disk URL's host plus any manifest-declared hosts — not an open set), a
-**bounded redirect count held as delegate-owned state** (never a caller-supplied header), a
-validated HTTP status, a **bounded streamed size** (capped mid-download), a **SHA‑256
-computed by streaming** 1 MiB chunks (never by loading the multi‑GB image into memory), and
-**cancellation honoured through download and hashing**. The single network-delivered
-artifact is the pinned root disk — there are no separately delivered, unpinned files.
-
-Setup is **fresh-only** (permitted only from `NOT_CONFIGURED`) — it never runs over existing
-artifacts, so there is no prior disk/config to preserve or replace. In-place
-replacement/upgrades are deferred; changing the environment is done with explicit
-**Remove / Recreate**. The exact commit order is:
-
-```
-manifest validation
-→ download + verify into staging
-→ prepare (small EFI aux state)
-→ persist environment config atomically
-→ atomically move the staged disk into root.img LAST
-→ clear staging → STOPPED
+```text
+~/Library/Application Support/MACSPLOIT/Virtual Machines/Linux/
+├── environment.json       # schema 2, resources, installation status, identity digest
+├── installer.iso          # verified, read-only official installer media
+├── root.img               # locally created writable sparse RAW disk
+├── machine-identifier     # VZGenericMachineIdentifier.dataRepresentation
+├── efi-vars.img           # persistent VZEFIVariableStore
+└── staging/               # only while preparing; never evidence/provider data
 ```
 
-Config is committed **before** the disk goes live, and the disk is finalized **last**, so a
-crash after the disk commit always has a matching config (→ STOPPED on relaunch) and any
-earlier failure/crash leaves config-without-disk or bare artifacts (→ FAILED, recreatable) —
-never a silent orphan. On a caught setup failure or cancellation (fresh-only), every
-artifact this run created is removed and the state returns to `NOT_CONFIGURED`; nothing
-unrelated is touched. No `curl | sh`, no arbitrary remote scripts, no `sudo`, no writes to
-system directories, no host package installation.
+The root disk is created locally with exclusive/no-follow file creation and `ftruncate`:
+32 GiB logical default, bounded to 8–128 GiB, without physically writing zeroes. Existing
+disks are never silently overwritten. New identity files and disk are private to the user;
+setup owns only this directory. Preparation verifies the ISO first, creates the sparse disk,
+creates machine identity/EFI state once, records identity metadata, finalizes installer
+media and atomically writes config, then removes staging. Failure/cancellation removes the
+fresh attempt's artifacts; a crash leaves a visible incomplete environment requiring
+Recreate. Setup never runs over an installed or incomplete environment.
 
-## Persistent storage and removal
+Before each **Install Kali** boot, the model rechecks the persisted `installer.iso`
+against the environment's persisted manifest through `LinuxImageFetch.verifyInstaller`:
+regular file/no symlink, exact byte count and streaming SHA-256. Thus verification happens
+both **after acquisition, before preparation/finalization**, and **again immediately before
+installation-mode VM construction/start**. A detached worker performs the 1 MiB streaming
+hash off MainActor while the UI shows “Verifying cached Kali installer…”. Cancel Verification,
+removal and app termination cancel and drain that worker; invalidated/cancelled boot intents
+cannot create a VM even if verification completes late.
 
-The environment lives at `~/Library/Application Support/MACSPLOIT/Virtual Machines/Linux/`
-(`environment.json`, `root.img`, `efi-vars.img`, `staging/`).
-It is **separate** from workspace storage and `Providers/`, survives replacing
-MACSPLOIT.app, and **removing it deletes only that directory** — workspaces, Assets,
-Evidence, Findings, provider installs, and unrelated settings are untouched.
+A cache verification failure enters FAILED with **Recreate** as recovery. It never creates
+or starts a VM, records installed status, redownloads media or deletes existing files.
+Installed normal boots intentionally neither rehash nor require `installer.iso`.
+This checks the artifact MACSPLOIT intends to execute; it does not protect against a hostile
+same-user process replacing files between verification and use, or promise a TOCTOU-free
+filesystem boundary.
 
-## Resources
+The ISO remains cached until environment removal: allow about 3.77 GiB **plus actual root
+disk usage**, which can grow to the configured logical limit. Removing the environment
+removes the cache too. Installed boots do not require the cached ISO.
 
-Safe typed defaults derived from the host: about half the cores (capped, always leaving the
-host ≥1), a quarter of RAM (reserving several GiB for the host), and a 32 GiB sparse disk.
-All values are clamped to sane minimums/maximums so the VM can never be configured to
-starve the host. User-editable resource settings are a follow-up.
+Only explicit **Remove / Recreate** deletes this Linux directory; it never deletes
+workspaces, Assets, Evidence, Findings, Activity, Providers or unrelated preferences.
+Removal refuses to delete a guest whose stop is uncertain. Source/build changes do not
+replace this directory or the owner's existing TEST workspace.
 
-## Terminal sessions
+## Persistent identity and EFI
 
-Multiple terminal tabs share the **one** running VM (never one VM per tab, never one-off
-command execution). The model **owns the real session handles**: each UI tab corresponds to
-one `LinuxTerminalSession`, closing a tab closes exactly that handle, and stopping or
-removing the VM closes all of them exactly once (no stale sessions survive a stop/restart).
-Tab count is bounded to a small maximum. The on-screen VT emulator binds to the VM's virtio
-console in the follow-up.
+A new `VZGenericMachineIdentifier` is created during preparation, saved once, and loaded
+from the same bytes for every install/normal boot. Config records its SHA-256; missing,
+changed or undecodable identity is FAILED/Recreate, never silently regenerated. EFI
+variables are likewise created once and reused. Missing/truncated/oversized EFI storage
+fails closed; the recorded creation length is a minimum rather than an immutable exact
+size, allowing bounded legitimate firmware-store growth. Its contents are mutable firmware
+data, so they cannot have an immutable post-install hash. Further firmware corruption is surfaced by Virtualization.framework
+validation/boot failure, not repaired heuristically. Legacy schema-1 environments require
+explicit Recreate rather than guessing their identity or installation status.
 
-## Entitlements / signing
+## Real VM configurations and display
 
-The app carries `com.apple.security.virtualization` (`apps/macos/Resources/MACSPLOIT.entitlements`),
-applied at signing (`build-macos.sh`). Ad-hoc signing carries it for local runs; **public
-distribution to other users requires signing/notarizing the app with this entitlement** (a
-consideration for a free, open-source, download-and-run app).
+The adapter follows [Apple's GUI Linux installation pattern](https://developer.apple.com/documentation/virtualization/running-gui-linux-in-a-virtual-machine-on-a-mac).
+On macOS 13+ Apple Silicon, both modes use the same persisted generic machine identifier,
+EFI variable store, bounded CPU/RAM, writable VirtIO root disk, NAT, entropy and memory
+balloon. A VirtIO graphics scanout, USB keyboard and screen-coordinate pointer feed a
+real `VZVirtualMachineView` embedded through `NSViewRepresentable`.
 
-## Remaining blockers to a live boot (documented, not faked)
+- **Install mode:** additionally attaches `installer.iso` **read-only as USB mass storage**.
+- **Normal mode:** has **no installer device**; boots the installed `root.img` only.
 
-1. **A verified, pinned Kali-for-Virtualization.framework image.** No official artifact
-   exists; `LinuxImageCatalog.availableManifest` is `nil`, and the setup UI states this
-   plainly. A follow-up decides the smallest reliable format (prepared root disk we host +
-   pin, or an EFI installer flow) — no fabricated production checksum is committed.
-2. **The guest console transport.** The interactive VT emulator + its binding to the virtio
-   console (and any narrowly-scoped guest helper) land once an image is bootable.
+Graphics remains available in normal mode to prove boot and interact with Kali. The
+reserved virtio serial console and `LinuxTerminalSession` interface remain for the next
+slice; production does **not** fabricate live shell sessions/tabs. The real backend's
+session method explicitly reports transport pending. Unsupported hosts fail closed.
+Networking is NAT only, not direct host-interface access or hardware parity.
 
-Until both land, `VZLinuxEnvironmentBackend.start` builds and **validates the real VM
-configuration** and then surfaces a clear "not available yet" rather than shipping an
-untested, unbootable VM path.
+## Typed lifecycle and truthful installation completion
 
-## What is implemented vs deferred
+```text
+NOT_CONFIGURED → SETTING_UP → INSTALL_READY
+INSTALL_READY → STARTING → INSTALLING → (guest stops) INSTALL_READY
+INSTALL_READY / INSTALLING → owner confirms success → STOPPED
+STOPPED → STARTING → RUNNING → STOPPING → STOPPED
+```
 
-Implemented: Terminal destination + all state UIs (including an `UNSUPPORTED`, fail-closed
-screen); typed lifecycle + model; fail-closed `UnsupportedLinuxEnvironmentBackend` in
-production (fake backend is test-only); the hardened verified download pipeline
-(HTTPS-on-redirects, no credentials, bounded redirects + streamed size, status check,
-streaming SHA‑256, cancellation, non-destructive atomic finalize) with an offline fake;
-EFI-only single-pinned-artifact image model; persistent storage + isolation + removal; the
-real `VZVirtualMachineConfiguration` construction + the backend protocol; resource
-defaults/bounds; a real-handle multi-tab/one-VM session model with exactly-once close;
-graceful→forced→confirmed stop semantics; cancellable owned setup; entitlements; and
-comprehensive offline tests.
+`FAILED` and `UNSUPPORTED` are explicit states. Shutdown of an installer, creation of a
+root disk, or successful VM start **never** marks installation complete. Only after Kali
+reports success may the owner choose **Installation Complete — Boot Installed Kali…** and
+confirm. MACSPLOIT first confirms the installer is stopped, atomically persists the
+installed status, then starts in normal mode without the ISO. If stopping or persistence
+fails, installed status is not committed. An unfinished installer remains INSTALL_READY
+on relaunch and can be resumed; an installed environment always relaunches STOPPED.
+Neither ever starts automatically.
 
-Deferred: a verified bootable image, the live boot + VT console transport, user-editable
-resources, and any later Evidence import / plugin / AI / hardware work (explicitly out of
-scope here).
+The model owns the VM handle **before** async start. `VZVirtualMachine` gets its delegate
+before its actual start API is called; no RUNNING/INSTALLING claim precedes framework
+success. Start has a 30-second bound; timeout/failure attempts a forced stop and retains
+ownership if that stop is uncertain. Delegate guest-stop/error events update the model.
+Generation and handle checks prevent late start/setup/stop results from resurrecting a
+removed/superseded guest.
+
+Stop requests a graceful shutdown (15 seconds), then forced stop (5 seconds). Handle and
+session resources are released only after a confirmed stopped/error VM state. A failed
+stop retains the handle and offers Force Stop. A narrow AppDelegate termination hook asks
+the model to cancel/drain preparation or preboot verification and stop its guest before replying to macOS's deferred
+quit. If shutdown cannot be confirmed, **quit is cancelled**, the handle remains managed,
+and the owner sees an error; the next launch never auto-starts a guest.
+
+## Validation and owner acceptance
+
+Default CI uses tiny fixtures and fake backend/downloader only. It never downloads Kali
+or boots a VM. Tests cover manifest/integrity/redirects, sparse allocation/no overwrite,
+installer/root separation, identity/EFI damage, install/normal device intent, installation
+confirmation/persistence, delayed/failed starts, guest stops, cancellation, quit behavior,
+stale operations, same-size cached ISO tampering after relaunch, cache symlink substitution,
+valid cached media, cache-independent installed boots, and late verification completion after
+UI/caller cancellation, quit or removal, plus workspace/provider isolation. An opt-in local configuration test
+constructs actual VZ configurations with synthetic media **without booting a VM**:
+`./scripts/test-linux-vz-configuration.sh`. It compiles the exact production model/storage/
+backend sources into a temporary build executable, signs that executable with the existing
+virtualization entitlement, and checks both real device configurations. This avoids
+SwiftPM's unsigned system test host; no toolchain binary is modified. The check is separate
+from live owner acceptance and is not part of CI.
+
+Owner acceptance (after current-head CI and Advanced CodeQL pass):
+
+1. Keep the existing TEST workspace and providers; remove only an old Terminal environment
+   if one exists. Open Linux Terminal and confirm it is unconfigured.
+2. Open Set Up Terminal. Verify Kali 2026.3 ARM64 Installer, exact source/provenance, size
+   and SHA-256. Explicitly select Download & Prepare Installer.
+3. Wait for verification and preparation. Confirm INSTALL_READY, persistent machine/EFI
+   files and sparse `root.img`. Nothing should have booted yet.
+4. Click Install Kali. Confirm the **real Kali ARM64 installer** appears in MACSPLOIT.
+   Complete its normal installation onto the virtual writable disk. Guest installer
+   choices/credentials belong to the owner; MACSPLOIT never supplies or forwards them.
+5. Only after Kali reports success, choose Installation Complete — Boot Installed Kali
+   and confirm. Verify installed Kali boots **without installer media**.
+6. Stop Kali. Quit/reopen MACSPLOIT: the environment must remain STOPPED. Start Kali again
+   and verify the installed system persists. Confirm the TEST workspace remains intact.
+7. Remove/recreate only the Linux environment; verify workspace/Evidence/Findings/Activity
+   and host providers remain intact.
+
+Do not call Issue #90 complete after this slice. Its remaining exit gate is a real
+interactive guest terminal with bounded multiple sessions over one VM, followed by owner
+terminal acceptance. VT transport/emulator, SSH/guest agents, AI execution, tool
+installation, Evidence import, plugins and workflows are not implemented by this PR.

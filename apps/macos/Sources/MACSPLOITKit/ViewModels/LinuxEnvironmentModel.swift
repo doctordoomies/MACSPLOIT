@@ -1,332 +1,343 @@
 import Foundation
 import Combine
 
-/// Orchestrates the managed Linux terminal environment: the typed lifecycle, verified
-/// setup, start/stop, interactive sessions (tabs), and persistence — all on top of a
-/// `LinuxEnvironmentBackend` and `LinuxImageDownloader` so it is fully testable offline.
-///
-/// Guarantees: an unsupported host fails closed (never a fake VM); nothing starts a VM
-/// except an explicit `start()`; a relaunch resolves to a non-running state; a superseded
-/// or cancelled async operation never corrupts state (a monotonic generation gates every
-/// post-await mutation); stop is graceful-then-forced and only reports STOPPED once the
-/// backend confirms it (otherwise FAILED, retaining the handle); each UI tab owns one real
-/// session handle that is closed exactly once; and removal deletes only this directory.
+/// Owns one VM across preparation, installer boot, and installed boot. No workspace/provider
+/// mutations, no implicit download/boot, and no inferred installation success.
 @MainActor
 public final class LinuxEnvironmentModel: ObservableObject {
     @Published public private(set) var state: LinuxEnvironmentState
     @Published public private(set) var config: LinuxEnvironmentConfig?
     @Published public private(set) var errorMessage: String?
-    @Published public private(set) var setupStage: String = ""
-    /// Open terminal tabs (presentation mirror of the real session handles below).
+    @Published public private(set) var bootStage = ""
+    @Published public private(set) var setupStage = ""
+    @Published public private(set) var setupProgress: Double = 0
     @Published public private(set) var sessionIDs: [UUID] = []
-    /// True while a running VM handle is held (used to offer a forced stop from FAILED).
     @Published public private(set) var hasRunningHandle = false
-
+    @Published public private(set) var isShuttingDown = false
     public let paths: LinuxEnvironmentPaths
     private let backend: any LinuxEnvironmentBackend
     private let downloader: any LinuxImageDownloader
+    private let installerVerifier: any LinuxInstallerVerifying
+    private var installerVerificationTask: Task<Void, Error>?
+    private var requiresInstallerRecreation = false
     private var running: (any LinuxRunningEnvironment)?
     private var sessions: [any LinuxTerminalSession] = []
     private var setupTask: Task<Void, Never>?
     private var generation = 0
 
-    public init(paths: LinuxEnvironmentPaths,
-                backend: any LinuxEnvironmentBackend,
-                downloader: any LinuxImageDownloader) {
-        self.paths = paths
-        self.backend = backend
-        self.downloader = downloader
+    /// The presentation bridge may expose the real VM's graphical console, never a fake
+    /// shell. Lifecycle operations still go exclusively through this model.
+    public var runningEnvironment: (any LinuxRunningEnvironment)? { running }
+
+    public init(paths: LinuxEnvironmentPaths, backend: any LinuxEnvironmentBackend,
+                downloader: any LinuxImageDownloader,
+                installerVerifier: any LinuxInstallerVerifying = StreamingLinuxInstallerVerifier()) {
+        self.paths = paths; self.backend = backend; self.downloader = downloader
+        self.installerVerifier = installerVerifier
         if let reason = backend.unsupportedReason {
-            self.state = .unsupported
-            self.config = nil
-            self.errorMessage = reason
+            state = .unsupported; errorMessage = reason
         } else {
-            let (initialState, loadedConfig) = Self.resolve(paths: paths)
-            self.state = initialState
-            self.config = loadedConfig
-            if initialState == .failed {
-                self.errorMessage = "The Linux environment is incomplete or corrupt — an earlier setup may not have finished. Recreate it to start over."
+            let (resolved, loaded) = Self.resolve(paths: paths)
+            state = resolved; config = loaded
+            if let loaded, resolved != .failed {
+                do { try backend.validate(config: loaded, paths: paths) }
+                catch { state = .failed }
             }
+            if state == .failed { errorMessage = "The Linux environment is incomplete or corrupt. Recreate it to start over; existing VM identity is never silently replaced." }
         }
     }
 
-    /// Resolve the on-launch state purely from disk. A valid config + its disk → STOPPED
-    /// (never auto-started). Any setup-owned artifact present WITHOUT a complete valid
-    /// environment → FAILED (an incomplete/corrupt environment, e.g. a crash or power loss
-    /// mid-setup) so the UI can offer Recreate — never silently NOT_CONFIGURED over a
-    /// possibly multi-GB orphan, and never auto-deleted at launch. A completely empty
-    /// terminal directory → NOT_CONFIGURED.
     static func resolve(paths: LinuxEnvironmentPaths) -> (LinuxEnvironmentState, LinuxEnvironmentConfig?) {
         let fm = FileManager.default
-        let hasDisk = fm.fileExists(atPath: paths.diskImage.path)
-        let hasAux = fm.fileExists(atPath: paths.auxStorage.path)
-        let hasStaging = fm.fileExists(atPath: paths.staging.path)
-        guard fm.fileExists(atPath: paths.configFile.path) else {
-            // No config: an orphaned artifact means an incomplete setup, not "nothing here".
-            return (hasDisk || hasAux || hasStaging) ? (.failed, nil) : (.notConfigured, nil)
-        }
-        guard let data = try? Data(contentsOf: paths.configFile),
+        guard fm.fileExists(atPath: paths.root.path) else { return (.notConfigured, nil) }
+        guard (try? paths.root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+              let children = try? fm.contentsOfDirectory(atPath: paths.root.path) else { return (.failed, nil) }
+        if children.isEmpty { return (.notConfigured, nil) }
+        guard (try? LinuxVMStorage.requireRegularFile(paths.configFile, maximumBytes: 64 * 1024)) != nil,
+              let data = try? Data(contentsOf: paths.configFile),
               let config = try? JSONDecoder().decode(LinuxEnvironmentConfig.self, from: data),
-              config.schemaVersion == LinuxEnvironmentConfig.supportedSchema else {
-            return (.failed, nil) // corrupt/incompatible config
-        }
-        guard hasDisk else { return (.failed, config) } // config without its disk
-        return (.stopped, config)
+              config.schemaVersion == LinuxEnvironmentConfig.supportedSchema else { return (.failed, nil) }
+        do {
+            try LinuxVMStorage.validate(config: config, paths: paths)
+            guard !fm.fileExists(atPath: paths.staging.path) else { return (.failed, config) }
+            return (config.installationStatus == .installed ? .stopped : .installReady, config)
+        } catch { return (.failed, config) }
     }
 
-    public var defaultResources: LinuxResources { LinuxResources.defaults() }
+    public var defaultResources: LinuxResources { .defaults() }
     public var isSupported: Bool { state != .unsupported }
+    public var canCancelBootVerification: Bool { installerVerificationTask != nil && state == .starting }
+    public var canRetry: Bool {
+        guard !requiresInstallerRecreation, running == nil else { return false }
+        let (resolved, loaded) = Self.resolve(paths: paths)
+        guard resolved == .stopped || resolved == .installReady, let loaded else { return false }
+        return (try? backend.validate(config: loaded, paths: paths)) != nil
+    }
 
-    // MARK: - Setup (owned, cancellable)
-
-    /// Begin explicit setup in an owned task so it can be cancelled. Safe to call only from
-    /// NOT_CONFIGURED or FAILED.
-    /// Whether a FAILED environment can be retried as-is (a valid config + disk exist).
-    /// Otherwise it is incomplete/corrupt and the only option is Recreate.
-    public var canRetry: Bool { running == nil && Self.resolve(paths: paths).0 == .stopped }
-
-    /// Begin explicit setup. **Fresh-only:** permitted only from NOT_CONFIGURED. A FAILED
-    /// environment is handled by Retry (when valid) or explicit Recreate (remove →
-    /// NOT_CONFIGURED → Set Up again); setup never runs over existing artifacts, so there is
-    /// no prior disk/config to preserve or replace.
     @discardableResult
     public func startSetUp(manifest: LinuxImageManifest, resources: LinuxResources) -> Task<Void, Never>? {
-        guard state == .notConfigured else { return nil }
+        guard !isShuttingDown, state == .notConfigured, Self.resolve(paths: paths).0 == .notConfigured else { return nil }
         generation += 1
         let gen = generation
-        state = .settingUp; errorMessage = nil; setupStage = "Preparing setup…"
-        let clamped = resources.clamped()
+        state = .settingUp; errorMessage = nil; setupStage = "Preparing setup…"; setupProgress = 0
         let task = Task { [weak self] in
-            await self?.performSetUp(manifest: manifest, resources: clamped, gen: gen)
-            await MainActor.run { self?.setupTask = nil }
+            guard let self else { return }
+            await self.performSetUp(manifest: manifest, resources: resources.clamped(), gen: gen)
+            if gen == self.generation { self.setupTask = nil }
         }
         setupTask = task
         return task
     }
 
-    /// Cancel an in-progress setup: cancels the download/preparation task, wipes staging,
-    /// leaves any finalized good state intact, and returns to a truthful state.
-    public func cancelSetup() {
-        guard state == .settingUp else { return }
-        setupTask?.cancel()
-    }
+    public func cancelSetup() { if state == .settingUp { setupTask?.cancel() } }
 
     private func performSetUp(manifest: LinuxImageManifest, resources: LinuxResources, gen: Int) async {
-        // Fresh-only: the terminal directory is empty here, so there is no prior environment
-        // to preserve. The order commits the config durably BEFORE the disk goes live, and
-        // finalizes the disk LAST — so a crash or failure after the disk is live always has
-        // a matching config, and any earlier failure leaves no live disk.
         do {
-            try manifest.validate()
-            try Task.checkCancellation()
+            try manifest.validate(); try Task.checkCancellation()
             guard gen == generation else { return }
-            setupStage = "Downloading \(manifest.displayName)…"
-            try await downloader.fetch(manifest, into: paths) { _ in } // verifies into staging
-            try Task.checkCancellation()
-            guard gen == generation else { return }
-            setupStage = "Preparing environment…"
-            let config = LinuxEnvironmentConfig(image: manifest, resources: resources)
-            try await backend.prepare(config: config, paths: paths) // small aux state only
-            try Task.checkCancellation()
-            guard gen == generation else { return }
-            try persist(config) // config durably committed BEFORE the disk goes live
-            try Task.checkCancellation()
-            guard gen == generation else { return }
-            // Finalize the disk LAST. A crash after this has a matching config (→ STOPPED);
-            // a crash before it leaves config-without-disk (→ FAILED, recreatable).
-            try LinuxImageFetch.atomicReplace(source: paths.stagedDisk, destination: paths.diskImage)
-            try? FileManager.default.removeItem(at: paths.staging)
-            self.config = config
-            state = .stopped
-            setupStage = ""
-        } catch {
-            guard gen == generation else { return }
-            // Fresh-only: nothing pre-existing to preserve — remove every artifact this run
-            // created and return to a truthful NOT_CONFIGURED.
-            removeAllArtifacts()
-            config = nil
-            setupStage = ""
-            state = .notConfigured
-            if error is CancellationError || (error as? LinuxImageDownloadError) == .cancelled {
-                errorMessage = "Setup was cancelled."
-            } else {
-                errorMessage = Self.describe(error)
+            try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o700])
+            setupStage = "Downloading and verifying \(manifest.displayName)…"
+            try await downloader.fetch(manifest, into: paths) { [weak self] progress in
+                Task { @MainActor in
+                    guard let self, self.generation == gen, self.state == .settingUp else { return }
+                    self.setupProgress = min(1, max(0, progress))
+                }
             }
-        }
-    }
-
-    // MARK: - Start / stop
-
-    /// Boot the VM — only from an explicit user action on a STOPPED environment.
-    public func start() async {
-        guard state.canStart, let config else { return }
-        generation += 1
-        let gen = generation
-        state = .starting; errorMessage = nil
-        do {
-            let run = try await backend.start(config: config, paths: paths)
-            guard gen == generation else { try? await run.stop(graceful: false, timeout: 5); return }
-            running = run
-            hasRunningHandle = true
-            state = .running
-            try openSessionLocked() // first tab
+            try Task.checkCancellation(); guard gen == generation else { return }
+            setupStage = "Creating sparse disk and persistent VM identity…"
+            try LinuxVMStorage.createSparseDisk(at: paths.diskImage, byteCount: resources.diskSizeBytes)
+            var prepared = LinuxEnvironmentConfig(image: manifest, resources: resources)
+            try await backend.prepare(config: prepared, paths: paths)
+            try Task.checkCancellation(); guard gen == generation else { return }
+            try LinuxVMStorage.recordIdentity(in: &prepared, paths: paths)
+            // The download is installer media, never the installed root disk.
+            guard !FileManager.default.fileExists(atPath: paths.installerISO.path) else { throw LinuxBackendError.notPrepared }
+            try FileManager.default.moveItem(at: paths.stagedInstaller, to: paths.installerISO)
+            try backend.validate(config: prepared, paths: paths)
+            try Task.checkCancellation()
+            try persist(prepared) // commit only after all owned artifacts are ready
+            try FileManager.default.removeItem(at: paths.staging)
+            config = prepared; state = .installReady; setupStage = ""; setupProgress = 1
         } catch {
             guard gen == generation else { return }
-            running = nil
-            hasRunningHandle = false
-            closeAllSessions()
-            state = .failed
-            errorMessage = Self.describe(error)
+            // Setup is fresh-only; never remove/overwrite a previously installed disk.
+            for url in [paths.staging, paths.diskImage, paths.installerISO, paths.machineIdentifier, paths.auxStorage, paths.configFile] {
+                if FileManager.default.fileExists(atPath: url.path) { try? FileManager.default.removeItem(at: url) }
+            }
+            config = nil; state = Self.resolve(paths: paths).0; setupStage = ""
+            errorMessage = error is CancellationError ? "Setup was cancelled." : Self.describe(error)
         }
     }
 
-    /// Return a FAILED-but-configured environment (with no live handle) to STOPPED.
-    public func recover() {
-        guard state == .failed, running == nil else { return }
-        let (resolved, loaded) = Self.resolve(paths: paths)
-        state = resolved
-        config = loaded ?? config
-        errorMessage = nil
+    public func installKali() async {
+        guard state == .installReady, config?.installationStatus == .awaitingOwnerConfirmation else { return }
+        await boot(mode: .installation)
     }
 
-    /// Stop the VM: attempt graceful shutdown, then a forced stop, and only report STOPPED
-    /// once the backend confirms. If both fail, go to FAILED while RETAINING the handle so
-    /// the VM is never falsely reported gone. Returns whether the VM is confirmed stopped.
+    public func start() async {
+        guard state == .stopped, config?.installationStatus == .installed else { return }
+        await boot(mode: .installed)
+    }
+
+    private func boot(mode: LinuxBootMode) async {
+        guard !isShuttingDown, running == nil, let config else { return }
+        generation += 1; let gen = generation
+        state = .starting; errorMessage = nil
+        if mode == .installation, !(await verifyCachedInstaller(config: config, gen: gen)) { return }
+        guard gen == generation, !isShuttingDown else { return }
+        if Task.isCancelled { state = restingState; return }
+        do {
+            try backend.validate(config: config, paths: paths)
+            let run = try backend.makeEnvironment(config: config, paths: paths, mode: mode)
+            running = run; hasRunningHandle = true // own it even during asynchronous start
+            run.didStop = { [weak self, weak run] error in
+                guard let self, let run, self.running === run else { return }
+                self.generation += 1
+                self.releaseStoppedHandle()
+                self.state = error == nil ? self.restingState : .failed
+                self.errorMessage = error
+            }
+            try await run.start()
+            guard gen == generation, running === run else { return }
+            state = mode == .installation ? .installing : .running
+            // Real VT transport is a later slice. Never turn a fake session into a live shell.
+            if mode == .installed, run.supportsTerminalSessions { try openSessionLocked() }
+        } catch {
+            guard gen == generation else { return }
+            if let run = running {
+                if await attemptStop(run, graceful: false, timeout: 5) { releaseStoppedHandle() }
+            }
+            guard gen == generation else { return }
+            state = .failed; errorMessage = Self.describe(error)
+        }
+    }
+
+    /// Recheck the persisted artifact immediately before installation VM construction.
+    /// Normal installed boots never enter this boundary or depend on cached media.
+    private func verifyCachedInstaller(config: LinuxEnvironmentConfig, gen: Int) async -> Bool {
+        let verifier = installerVerifier
+        let installerISO = paths.installerISO
+        let task = Task { try await verifier.verify(at: installerISO, manifest: config.image) }
+        installerVerificationTask = task
+        bootStage = "Verifying cached Kali installer…"
+        defer {
+            if gen == generation { installerVerificationTask = nil; bootStage = "" }
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: { task.cancel() }
+            guard gen == generation, !isShuttingDown else { return false }
+            try Task.checkCancellation()
+            if task.isCancelled { throw CancellationError() }
+            return true
+        } catch {
+            guard gen == generation else { return false }
+            if Task.isCancelled || task.isCancelled || error is CancellationError || (error as? LinuxImageDownloadError) == .cancelled {
+                state = restingState; errorMessage = "Installer verification was cancelled."
+            } else {
+                requiresInstallerRecreation = true
+                state = .failed
+                errorMessage = "Cached Kali installer integrity verification failed. Recreate the environment before installing. Existing files were preserved. " + Self.describe(error)
+            }
+            return false
+        }
+    }
+
+    /// Invalidate boot intent before cancelling, then drain verification before removal/quit.
+    /// Even a late successful verifier cannot construct or start a VM afterward.
+    public func cancelBootVerification() async {
+        guard let task = installerVerificationTask else { return }
+        generation += 1; let gen = generation
+        task.cancel()
+        _ = await task.result
+        guard gen == generation else { return }
+        installerVerificationTask = nil; bootStage = ""
+        state = restingState; errorMessage = "Installer verification was cancelled."
+    }
+
+    /// Explicit owner attestation after Kali reports success; neither file existence nor
+    /// installer shutdown can promote an incomplete environment to installed.
+    @discardableResult
+    public func confirmInstallationComplete() async -> Bool {
+        guard !isShuttingDown, config?.installationStatus == .awaitingOwnerConfirmation,
+              state == .installReady || state == .installing else { return false }
+        if running != nil, !(await stop()) { return false }
+        guard running == nil, var updated = config else { return false }
+        do {
+            try backend.validate(config: updated, paths: paths)
+            updated.installationStatus = .installed
+            try persist(updated)
+            config = updated; state = .stopped; errorMessage = nil
+            return true
+        } catch { state = .failed; errorMessage = Self.describe(error); return false }
+    }
+
+    public func recover() {
+        guard !requiresInstallerRecreation, state == .failed, running == nil else { return }
+        let (resolved, loaded) = Self.resolve(paths: paths)
+        do {
+            if let loaded { try backend.validate(config: loaded, paths: paths) }
+            state = resolved; config = loaded; errorMessage = resolved == .failed ? "Recreate the incomplete environment." : nil
+        } catch { errorMessage = Self.describe(error) }
+    }
+
+    private var restingState: LinuxEnvironmentState { config?.installationStatus == .installed ? .stopped : .installReady }
+
     @discardableResult
     public func stop() async -> Bool {
-        guard let run = running, state == .running || state == .starting else { return state == .stopped }
-        generation += 1
-        let gen = generation
+        if installerVerificationTask != nil { await cancelBootVerification() }
+        guard let run = running else { return state == .stopped || state == .installReady }
+        guard state != .stopping else { return false }
+        generation += 1; let gen = generation
         state = .stopping; errorMessage = nil
-
-        if await attemptStop(run, graceful: true, timeout: 15, gen: gen) { return finishStopped(gen: gen) }
-        guard gen == generation else { return false }
-        if await attemptStop(run, graceful: false, timeout: 5, gen: gen) { return finishStopped(gen: gen) }
-        guard gen == generation else { return false }
-
-        // Both failed: the VM may still be running. Do not pretend it is gone.
-        state = .failed
-        errorMessage = "The Linux VM did not stop. The environment is still held; try Force Stop."
+        if await attemptStop(run, graceful: true, timeout: 15) { return finishStopped(run: run, gen: gen) }
+        guard gen == generation else { return running == nil }
+        if await attemptStop(run, graceful: false, timeout: 5) { return finishStopped(run: run, gen: gen) }
+        guard gen == generation else { return running == nil }
+        state = .failed; errorMessage = "The VM did not stop. Its handle is retained; try Force Stop."
         return false
     }
 
-    /// Explicit forced stop, used from FAILED while a handle is still held (a stop that did
-    /// not confirm). Attempts only the backend forced-stop path; on confirmed success it
-    /// releases the handle and goes STOPPED, otherwise it remains FAILED with the handle.
     @discardableResult
     public func forceStop() async -> Bool {
-        guard let run = running,
-              state == .failed || state == .running || state == .starting || state == .stopping else { return false }
-        generation += 1
-        let gen = generation
-        state = .stopping; errorMessage = nil
-        if await attemptStop(run, graceful: false, timeout: 5, gen: gen) { return finishStopped(gen: gen) }
-        guard gen == generation else { return false }
-        state = .failed
-        errorMessage = "Forced stop did not complete. The Linux VM is still held."
+        guard let run = running else { return false }
+        generation += 1; let gen = generation; state = .stopping
+        if await attemptStop(run, graceful: false, timeout: 5) { return finishStopped(run: run, gen: gen) }
+        guard gen == generation else { return running == nil }
+        state = .failed; errorMessage = "Forced stop did not complete. The VM is still held."
         return false
     }
 
-    private func attemptStop(_ run: any LinuxRunningEnvironment, graceful: Bool, timeout: TimeInterval, gen: Int) async -> Bool {
-        do { try await run.stop(graceful: graceful, timeout: timeout); return true }
-        catch { return false }
+    private func attemptStop(_ run: any LinuxRunningEnvironment, graceful: Bool, timeout: TimeInterval) async -> Bool {
+        do { try await run.stop(graceful: graceful, timeout: timeout); return true } catch { return false }
     }
 
-    private func finishStopped(gen: Int) -> Bool {
-        guard gen == generation else { return false }
-        closeAllSessions()
-        running = nil
-        hasRunningHandle = false
-        state = .stopped
+    private func finishStopped(run: any LinuxRunningEnvironment, gen: Int) -> Bool {
+        guard gen == generation else { return running == nil }
+        if running === run { releaseStoppedHandle() }
+        state = restingState
         return true
     }
 
-    // MARK: - Sessions (real handle ownership)
+    private func releaseStoppedHandle() {
+        running?.didStop = nil; closeAllSessions(); running = nil; hasRunningHandle = false
+    }
+
+    /// Called by the app's narrow termination hook. Refuse quit on an uncertain stop;
+    /// cancelling a quit is preferable to abandoning a live managed guest.
+    public func shutdownForApplicationTermination() async -> Bool {
+        guard !isShuttingDown else { return false }
+        isShuttingDown = true
+        if let setupTask { setupTask.cancel(); await setupTask.value }
+        await cancelBootVerification()
+        var stopped = running == nil
+        if !stopped { stopped = await stop() }
+        if !stopped { isShuttingDown = false }
+        return stopped
+    }
 
     @discardableResult
     public func openSession() -> Bool {
-        guard state == .running else { return false }
-        do { try openSessionLocked(); return true }
-        catch { errorMessage = Self.describe(error); return false }
+        guard state == .running, running?.supportsTerminalSessions == true else { return false }
+        do { try openSessionLocked(); return true } catch { errorMessage = Self.describe(error); return false }
     }
-
     public func closeSession(_ id: UUID) {
-        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
-        sessions[index].close()
-        sessions.remove(at: index)
-        sessionIDs = sessions.map(\.id)
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[i].close(); sessions.remove(at: i); sessionIDs = sessions.map(\.id)
     }
-
     private func openSessionLocked() throws {
-        guard let run = running else { throw LinuxBackendError.notPrepared }
-        let session = try run.openSession()
-        sessions.append(session)
-        sessionIDs = sessions.map(\.id)
+        guard let running else { throw LinuxBackendError.notPrepared }
+        sessions.append(try running.openSession()); sessionIDs = sessions.map(\.id)
     }
+    private func closeAllSessions() { sessions.forEach { $0.close() }; sessions = []; sessionIDs = [] }
 
-    private func closeAllSessions() {
-        sessions.forEach { $0.close() }
-        sessions.removeAll()
-        sessionIDs = []
-    }
-
-    // MARK: - Removal
-
-    /// Remove the managed environment entirely. Stops a running VM first; if it cannot be
-    /// stopped, removal is refused (never delete files out from under a live VM). Deletes
-    /// ONLY the terminal's own directory — workspaces/Assets/Evidence/Findings/providers
-    /// and other settings are untouched.
     public func remove() async {
-        if running != nil {
-            _ = await stop()
-            if running != nil {
-                errorMessage = "Stop the VM before removing the environment."
-                return
-            }
-        }
+        guard !isShuttingDown, state != .stopping else { return }
+        if let setupTask { setupTask.cancel(); await setupTask.value }
+        await cancelBootVerification()
+        if running != nil, !(await stop()) { errorMessage = "Stop the VM before removing the environment."; return }
         generation += 1
-        closeAllSessions()
-        try? FileManager.default.removeItem(at: paths.root)
-        running = nil
-        hasRunningHandle = false
-        config = nil
-        errorMessage = nil
-        setupStage = ""
-        state = .notConfigured
+        do {
+            if FileManager.default.fileExists(atPath: paths.root.path) { try FileManager.default.removeItem(at: paths.root) }
+            releaseStoppedHandle(); requiresInstallerRecreation = false; config = nil; errorMessage = nil; setupStage = ""; setupProgress = 0; state = .notConfigured
+        } catch { state = .failed; errorMessage = Self.describe(error) }
     }
-
-    // MARK: - Persistence helpers
 
     private func persist(_ config: LinuxEnvironmentConfig) throws {
-        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(config)
-        try data.write(to: paths.configFile, options: .atomic)
+        try JSONEncoder().encode(config).write(to: paths.configFile, options: .atomic)
     }
-
-    /// Remove every setup-owned artifact (fresh-only setup never has a prior env to keep).
-    private func removeAllArtifacts() {
-        try? FileManager.default.removeItem(at: paths.staging)
-        try? FileManager.default.removeItem(at: paths.diskImage)
-        try? FileManager.default.removeItem(at: paths.configFile)
-        try? FileManager.default.removeItem(at: paths.auxStorage)
-    }
-
     private static func describe(_ error: Error) -> String {
         switch error {
-        case let e as LinuxImageError: return "Image error: \(e)"
-        case LinuxImageDownloadError.checksumMismatch: return "The downloaded image failed its integrity check. Nothing was installed."
-        case LinuxImageDownloadError.oversized: return "The image exceeded the allowed download size. Nothing was installed."
-        case LinuxImageDownloadError.cancelled: return "Setup was cancelled."
-        case let LinuxImageDownloadError.badStatus(code): return "Download failed with HTTP status \(code)."
-        case LinuxImageDownloadError.insecureRedirect: return "The download attempted an insecure or credential-bearing redirect and was refused."
-        case LinuxImageDownloadError.tooManyRedirects: return "The download exceeded the allowed number of redirects."
-        case let LinuxImageDownloadError.transport(message): return "Download failed: \(message)"
-        case let LinuxImageDownloadError.writeFailed(message): return "Could not write the environment: \(message)"
-        case let LinuxBackendError.unsupportedPlatform(message): return message
-        case let LinuxBackendError.notYetAvailable(message): return message
-        case let LinuxBackendError.backendFailure(message): return message
-        case LinuxBackendError.sessionLimitReached: return "The maximum number of terminal tabs is open."
-        case LinuxBackendError.notPrepared: return "The environment is not prepared."
+        case is CancellationError, LinuxImageDownloadError.cancelled: return "Setup was cancelled."
+        case LinuxImageDownloadError.checksumMismatch: return "The installer failed its SHA-256 integrity check. Nothing was installed."
+        case LinuxImageDownloadError.sizeMismatch: return "The installer size did not match the reviewed release."
+        case LinuxImageDownloadError.oversized: return "The installer exceeded the allowed download size."
+        case LinuxImageDownloadError.insecureRedirect: return "An unreviewed, insecure or credential-bearing redirect was refused."
+        case LinuxImageDownloadError.tooManyRedirects: return "The download exceeded the allowed redirect count."
+        case let LinuxBackendError.unsupportedPlatform(message), let LinuxBackendError.notYetAvailable(message),
+             let LinuxBackendError.backendFailure(message): return message
         default: return error.localizedDescription
         }
     }

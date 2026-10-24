@@ -226,6 +226,12 @@ owner-approved flexibility detour.
 
 **Status: ACTIVE — Issue #90**
 
+PR #92's managed VM foundation is merged and owner-accepted. The second slice implements
+pinned official Kali 2026.3 ARM64 installer media, local sparse disk/identity, real graphical
+installation and installed boot; live install/boot owner acceptance is still required.
+Interactive terminal transport remains the next slice, so the overall #90 exit gate is
+still open. See [Terminal](terminal.md).
+
 MACSPLOIT's structured providers and presets remain important, but they cannot be the
 only way an advanced analyst works. This detour adds an optional real Linux terminal so
 the user can run Linux security tooling directly when MACSPLOIT does not yet expose the

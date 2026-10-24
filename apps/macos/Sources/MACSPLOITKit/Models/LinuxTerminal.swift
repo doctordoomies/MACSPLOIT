@@ -24,6 +24,8 @@ public enum LinuxEnvironmentState: String, Codable, Sendable, Equatable {
     case unsupported = "UNSUPPORTED"
     case notConfigured = "NOT_CONFIGURED"
     case settingUp = "SETTING_UP"
+    case installReady = "INSTALL_READY"
+    case installing = "INSTALLING"
     case stopped = "STOPPED"
     case starting = "STARTING"
     case running = "RUNNING"
@@ -33,25 +35,23 @@ public enum LinuxEnvironmentState: String, Codable, Sendable, Equatable {
     /// A VM may only be started from a fully configured, stopped environment.
     public var canStart: Bool { self == .stopped }
     /// Stop is offered only while the VM is live.
-    public var canStop: Bool { self == .running || self == .starting }
+    public var canStop: Bool { self == .running || self == .installing || self == .starting }
     /// The environment exists on disk (configured), regardless of run state.
     public var isConfigured: Bool {
         switch self {
         case .unsupported, .notConfigured, .settingUp: return false
-        case .stopped, .starting, .running, .stopping, .failed: return true
+        case .installReady, .installing, .stopped, .starting, .running, .stopping, .failed: return true
         }
     }
 }
 
-/// The format MACSPLOIT boots the guest with. The first production design supports exactly
-/// one: Virtualization.framework's EFI boot loader (macOS 13+) booting a prepared ARM64
-/// root disk that carries its own boot files. A direct-kernel path is intentionally NOT
-/// supported here: it would require separately downloaded kernel/initrd artifacts, each of
-/// which would need its own pinned SHA-256 — out of scope for this foundation.
+/// Downloaded media is an installer, never the writable installed root disk.
 public enum LinuxImageFormat: String, Codable, Sendable, Equatable {
-    /// `VZEFIBootLoader` + a prepared root disk. The only supported format.
-    case efiRawDisk = "EFI_RAW_DISK"
+    case installerISO = "INSTALLER_ISO"
 }
+
+public enum LinuxBootMode: String, Sendable, Equatable { case installation, installed }
+public enum LinuxInstallationStatus: String, Codable, Sendable { case awaitingOwnerConfirmation, installed }
 
 public enum LinuxImageError: Error, Equatable {
     case insecureURL(String)
@@ -63,40 +63,43 @@ public enum LinuxImageError: Error, Equatable {
 
 /// A reviewed, pinned description of the guest image MACSPLOIT will download and verify.
 /// Mirrors the core installer's manifest discipline (HTTPS-only, pinned SHA-256, bounded
-/// size) rather than trusting an ad hoc URL. No production Kali artifact is bundled yet;
-/// tests use a fixture manifest and never a fabricated production checksum.
+/// size) rather than trusting an ad hoc URL. The production catalog pins official versioned Kali installer media; tests use offline fixtures.
 public struct LinuxImageManifest: Codable, Sendable, Equatable {
-    public static let supportedSchema = 1
+    public static let supportedSchema = 2
     /// Largest guest artifact MACSPLOIT will download (defense in depth over a real ~2-8 GiB image).
     public static let maxArtifactBytes: UInt64 = 12 * 1024 * 1024 * 1024
 
     public var schemaVersion: Int
     public var identifier: String
     public var displayName: String
+    public var release: String
+    public var architecture: String
+    public var provenanceURL: String
     public var format: LinuxImageFormat
-    /// The single network-delivered boot artifact (the prepared root disk), its pinned
-    /// SHA-256, and its bounded expected size. Every network-delivered artifact in this
-    /// design is this one disk — there are no separately delivered, unpinned files.
-    public var diskImageURL: String
+    /// The installer ISO, its exact pinned SHA-256, and expected byte count.
+    /// The writable sparse root disk is always created locally.
+    public var installerURL: String
     public var sha256: String
     public var downloadByteCount: UInt64
-    /// Hosts a redirect may land on, in addition to the disk URL's own host. Redirects to
+    /// Hosts a redirect may land on, in addition to the installer URL's own host. Redirects to
     /// any other host are refused — redirect targets are not an open set.
     public var redirectAllowedHosts: [String]
 
     public init(schemaVersion: Int = LinuxImageManifest.supportedSchema, identifier: String,
-                displayName: String, format: LinuxImageFormat = .efiRawDisk, diskImageURL: String,
+                displayName: String, release: String = "fixture", architecture: String = "arm64",
+                provenanceURL: String = "", format: LinuxImageFormat = .installerISO, installerURL: String,
                 sha256: String, downloadByteCount: UInt64, redirectAllowedHosts: [String] = []) {
         self.schemaVersion = schemaVersion; self.identifier = identifier; self.displayName = displayName
-        self.format = format; self.diskImageURL = diskImageURL; self.sha256 = sha256
+        self.release = release; self.architecture = architecture; self.provenanceURL = provenanceURL
+        self.format = format; self.installerURL = installerURL; self.sha256 = sha256
         self.downloadByteCount = downloadByteCount; self.redirectAllowedHosts = redirectAllowedHosts
     }
 
-    /// The reviewed set of hosts a redirect may reach: the disk URL's host plus any
+    /// The reviewed set of hosts a redirect may reach: the installer URL's host plus any
     /// explicitly allow-listed hosts.
     public var allowedRedirectHosts: Set<String> {
         var hosts = Set(redirectAllowedHosts)
-        if let host = URLComponents(string: diskImageURL)?.host { hosts.insert(host) }
+        if let host = URLComponents(string: installerURL)?.host { hosts.insert(host) }
         return hosts
     }
 
@@ -105,10 +108,17 @@ public struct LinuxImageManifest: Codable, Sendable, Equatable {
     /// (HTTPS, a pinned 64-hex SHA-256, and a positive, bounded size).
     public func validate() throws {
         guard schemaVersion == Self.supportedSchema else { throw LinuxImageError.unsupportedSchema(schemaVersion) }
-        guard let parsed = URLComponents(string: diskImageURL), parsed.scheme?.lowercased() == "https",
+        guard let parsed = URLComponents(string: installerURL), parsed.scheme?.lowercased() == "https",
               !(parsed.host ?? "").isEmpty, parsed.user == nil, parsed.password == nil else {
-            throw LinuxImageError.insecureURL(diskImageURL)
+            throw LinuxImageError.insecureURL(installerURL)
         }
+        guard architecture == "arm64", !release.isEmpty, format == .installerISO else {
+            throw LinuxImageError.missingArtifact("Expected ARM64 installer ISO metadata.")
+        }
+        guard redirectAllowedHosts.allSatisfy({ host in
+            !host.isEmpty && host == host.lowercased() && !host.contains("*") &&
+            URLComponents(string: "https://" + host)?.host == host && !host.contains(":") && !host.contains("/")
+        }) else { throw LinuxImageError.insecureURL("Invalid redirect allow-list.") }
         let digest = sha256.lowercased()
         guard digest.count == 64, digest.allSatisfy({ $0.isHexDigit }) else { throw LinuxImageError.badChecksum }
         guard downloadByteCount > 0, downloadByteCount <= Self.maxArtifactBytes else { throw LinuxImageError.oversized }
@@ -118,13 +128,17 @@ public struct LinuxImageManifest: Codable, Sendable, Equatable {
 /// Persisted metadata for a configured environment. Only this is written to disk; the run
 /// state is always recomputed on launch so MACSPLOIT never auto-starts a VM.
 public struct LinuxEnvironmentConfig: Codable, Sendable, Equatable {
-    public static let supportedSchema = 1
+    public static let supportedSchema = 2
     public var schemaVersion: Int
     public var image: LinuxImageManifest
     public var cpuCount: Int
     public var memoryBytes: UInt64
     public var diskSizeBytes: UInt64
     public var createdAt: String
+    public var installationStatus: LinuxInstallationStatus = .awaitingOwnerConfirmation
+    public var machineIdentifierSHA256: String = ""
+    /// Creation-size floor, not an immutable length: firmware may grow its variable store.
+    public var efiStoreByteCount: UInt64 = 0
 
     public init(image: LinuxImageManifest, resources: LinuxResources, createdAt: String = LinuxEnvironment.now()) {
         self.schemaVersion = Self.supportedSchema
@@ -216,12 +230,14 @@ public struct LinuxEnvironmentPaths: Sendable {
 
     public var configFile: URL { root.appendingPathComponent("environment.json") }
     public var diskImage: URL { root.appendingPathComponent("root.img") }
+    public var installerISO: URL { root.appendingPathComponent("installer.iso") }
+    public var machineIdentifier: URL { root.appendingPathComponent("machine-identifier") }
     public var auxStorage: URL { root.appendingPathComponent("efi-vars.img") }
     /// Download staging, finalized atomically only after prepare+persist succeed; safe to
     /// wipe on cancel/failure without touching an existing finalized disk.
     public var staging: URL { root.appendingPathComponent("staging", isDirectory: true) }
-    /// The verified disk waits here until it is atomically moved into `diskImage` last.
-    public var stagedDisk: URL { staging.appendingPathComponent("root.img") }
+    /// Verified installer media waits here until setup commits it to `installerISO`.
+    public var stagedInstaller: URL { staging.appendingPathComponent("installer.iso") }
 }
 
 public enum LinuxEnvironment {
@@ -231,12 +247,21 @@ public enum LinuxEnvironment {
     }
 }
 
-/// The reviewed guest image MACSPLOIT would install. There is **no bundled production Kali
-/// artifact yet** — a verified, pinned Kali-for-Virtualization.framework image and the
-/// app's `com.apple.security.virtualization` signing are the two remaining blockers to a
-/// live boot, so this returns `nil` and the setup UI explains the pending state honestly.
-/// Tests inject a fixture manifest to exercise the full setup/verify/prepare pipeline
-/// offline; no fabricated production checksum is ever committed.
+/// Reviewed official versioned installer. No mutable `current` URL and no custom root image.
+/// SHA256SUMS.gpg was checked against Kali's 2025 archive signing key:
+/// 827C8569F2518CC677FECA1AED65462EC8D5E4C5. Runtime uses the pinned SHA-256, not GPG.
 public enum LinuxImageCatalog {
-    public static var availableManifest: LinuxImageManifest? { nil }
+    public static var availableManifest: LinuxImageManifest? {
+        LinuxImageManifest(
+            identifier: "kali-2026.3-installer-arm64", displayName: "Kali Linux 2026.3 ARM64 Installer",
+            release: "2026.3", provenanceURL: "https://cdimage.kali.org/kali-2026.3/SHA256SUMS",
+            installerURL: "https://cdimage.kali.org/kali-2026.3/kali-linux-2026.3-installer-arm64.iso",
+            sha256: "c4a7f9bf3a0ff07c8263fe9e9b0edba0cc3d9b408f1d8f06c066df0afce23072",
+            downloadByteCount: 4_051_513_344,
+            // Reviewed official destinations advertised by cdimage's release redirector.
+            // Other mirrors fail closed until separately reviewed; no wildcard domains.
+            redirectAllowedHosts: ["kali.download", "us.mirror.ionos.com", "volico.mm.fcix.net",
+                                   "mirror.xenyth.net", "ohioix.mm.fcix.net", "nocix.mm.fcix.net",
+                                   "mirror.us.cdn-perfprod.com", "mirror.quantum5.ca", "southfront.mm.fcix.net"])
+    }
 }
